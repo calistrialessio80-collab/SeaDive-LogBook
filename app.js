@@ -394,9 +394,9 @@ function profileCerts() {
 
 function certRowHtml(c = {}) {
   return `<div class="cert-row" data-certrow>
-    <input name="certName" placeholder="Brevetto (es. Nitrox, Rescue)" value="${escapeHtml(c.name || "")}" />
-    <input name="certNo" placeholder="N° brevetto" value="${escapeHtml(c.number || "")}" />
-    <button class="btn ghost" type="button" data-delcert aria-label="Rimuovi">×</button>
+    <input class="cert-name" name="certName" placeholder="Brevetto (es. Nitrox)" value="${escapeHtml(c.name || "")}" autocomplete="off" />
+    <input class="cert-no" name="certNo" placeholder="N°" value="${escapeHtml(c.number || "")}" autocomplete="off" />
+    <button class="btn ghost cert-del" type="button" data-delcert aria-label="Rimuovi">×</button>
   </div>`;
 }
 
@@ -1435,38 +1435,74 @@ function renderStats() {
 
 function renderProfile() {
   const frag = document.createDocumentFragment();
-  frag.append(topbar("dati del subacqueo"));
+  frag.append(topbar("profilo"));
   const form = document.createElement("form");
-  form.className = "card";
+  form.className = "card profile-form";
   const p = state.profile;
   form.innerHTML = `
-    <h2 class="serif" style="margin-top:0">Profilo</h2>
-    <div class="form-grid">
-      ${field("name", "Nome e cognome", p.name, true)}
-      ${field("certLevel", "Brevetto principale / didattica", p.certLevel)}
-      ${field("certNumber", "N° brevetto principale", p.certNumber)}
-      ${field("certDate", "Data conseguimento", p.certDate, false, "date")}
-      ${field("medicalExpiry", "Certificato medico scadenza", p.medicalExpiry, false, "date")}
-      ${field("insurance", "Assicurazione", p.insurance)}
-      ${field("emergencyName", "Contatto di emergenza", p.emergencyName)}
-      ${field("emergencyPhone", "Telefono", p.emergencyPhone, false, "tel")}
-      ${field("specialties", "Note su specialità", p.specialties, true)}
-      ${field("equipment", "Attrezzatura personale", p.equipment, true, "textarea")}
-      ${field("recoverPhone", "Se lo trovi, restituisci a — telefono", p.recoverPhone, false, "tel")}
-      ${field("recoverEmail", "Email", p.recoverEmail, false, "email")}
-    </div>
-    <div class="certs-box">
-      <h3 class="serif" style="margin:16px 0 6px">Altri brevetti</h3>
-      <p class="hint">Aggiungi Rescue, Nitrox, Deep e gli altri con il numero. Il brevetto principale resta sopra. In nuova immersione li trovi già pronti.</p>
+    <h2 class="serif profile-title">Il tuo profilo</h2>
+    <section class="profile-block">
+      <h3>Anagrafica</h3>
+      <div class="form-grid">
+        ${field("name", "Nome e cognome", p.name, true)}
+      </div>
+    </section>
+    <section class="profile-block">
+      <h3>Brevetto principale</h3>
+      <div class="form-grid">
+        ${field("certLevel", "Didattica / livello", p.certLevel, true)}
+        <div class="form-pair">
+          ${field("certNumber", "N° brevetto", p.certNumber)}
+          ${field("certDate", "Conseguito il", p.certDate, false, "date")}
+        </div>
+      </div>
+    </section>
+    <section class="profile-block">
+      <h3>Medico e assicurazione</h3>
+      <div class="form-grid">
+        <div class="form-pair">
+          ${field("medicalExpiry", "Scadenza medico", p.medicalExpiry, false, "date")}
+          ${field("insurance", "Assicurazione", p.insurance)}
+        </div>
+      </div>
+    </section>
+    <section class="profile-block">
+      <h3>Emergenza</h3>
+      <div class="form-grid">
+        <div class="form-pair">
+          ${field("emergencyName", "Contatto", p.emergencyName)}
+          ${field("emergencyPhone", "Telefono", p.emergencyPhone, false, "tel")}
+        </div>
+      </div>
+    </section>
+    <section class="profile-block">
+      <h3>Attrezzatura e note</h3>
+      <div class="form-grid">
+        ${field("specialties", "Specialità", p.specialties, true)}
+        ${field("equipment", "Attrezzatura personale", p.equipment, true, "textarea")}
+      </div>
+    </section>
+    <section class="profile-block">
+      <h3>Se trovi il diario</h3>
+      <div class="form-grid">
+        <div class="form-pair">
+          ${field("recoverPhone", "Telefono", p.recoverPhone, false, "tel")}
+          ${field("recoverEmail", "Email", p.recoverEmail, false, "email")}
+        </div>
+      </div>
+    </section>
+    <section class="profile-block certs-box">
+      <h3>Altri brevetti</h3>
+      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
       <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
-      <button class="btn ghost" type="button" data-addcert>+ Aggiungi brevetto</button>
-    </div>
-    <div class="actions">
+      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
+    </section>
+    <div class="actions profile-actions">
       <button class="btn primary" type="submit">Salva profilo</button>
       <button class="btn ghost" type="button" data-out>Esci</button>
       <a class="btn ghost" href="./logbook_immersioni.pdf" target="_blank" rel="noopener">PDF cartaceo originale</a>
     </div>
-    <p class="hint">Account: ${escapeHtml(loadSession()?.email || "—")}. Backup automatico sul tuo Google. Gli amici hanno diari separati.</p>
+    <p class="hint profile-account">Account: ${escapeHtml(loadSession()?.email || "—")}. Backup sul tuo Google.</p>
   `;
   const certsBox = form.querySelector("[data-certs]");
   const bindDel = (row) => {
