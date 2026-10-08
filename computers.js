@@ -403,11 +403,16 @@ function parseUDDF(xml) {
     waypoints.forEach((w) => {
       const t = secToMin(txt(w, ["divetime", "time"]));
       const depth = num(txt(w, ["depth"]));
-      if (t !== "" && depth !== "") profilePoints.push({ t: Number(t), d: Number(depth) });
-      const p = txt(w, ["tankpressure", "pressure"]);
-      if (p) wpPress.push(p);
       const tw = txt(w, ["temperature"]);
       if (tw) wpTemp.push(tw);
+      if (t !== "" && depth !== "") {
+        const pt = { t: Number(t), d: Number(depth) };
+        const c = sampleTemp({ c: tempC(tw) });
+        if (c != null) pt.c = c;
+        profilePoints.push(pt);
+      }
+      const p = txt(w, ["tankpressure", "pressure"]);
+      if (p) wpPress.push(p);
     });
     const siteRef = findOne(before, "link")?.getAttribute("ref") || findOne(node, "link")?.getAttribute("ref") || "";
     const siteInfo = sites.get(siteRef) || {};
@@ -488,7 +493,12 @@ function parseSuuntoXml(xml) {
       const depth = num(txt(s, ["depth", "maxdepth"]));
       const tRaw = txt(s, ["time", "timestamp", "divetime"]);
       const t = tRaw ? durationToMin(tRaw) : i;
-      if (depth !== "") profilePoints.push({ t: Number(t) || i, d: Number(depth) });
+      if (depth !== "") {
+        const pt = { t: Number(t) || i, d: Number(depth) };
+        const c = sampleTemp({ c: tempC(txt(s, ["temperature", "temp", "watertemp"])) });
+        if (c != null) pt.c = c;
+        profilePoints.push(pt);
+      }
     });
     const model = txt(xml, ["computer", "devicemodel", "model"]) || "Suunto EON Core";
     const geo = geoFromXml(node);
@@ -725,9 +735,23 @@ function parseEonSteelLog(bytes, instrument) {
   });
 }
 
+function sampleTemp(p) {
+  if (!p || typeof p !== "object") return null;
+  const raw = p.c ?? p.temp ?? p.temperature;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= -5 || n >= 45) return null;
+  return Math.round(n * 10) / 10;
+}
+
 function downsampleProfile(pts) {
   const cleaned = (pts || [])
-    .map((p) => ({ t: Number(p.t), d: Number(p.d) }))
+    .map((p) => {
+      const c = sampleTemp(p);
+      const row = { t: Number(p.t), d: Number(p.d) };
+      if (c != null) row.c = c;
+      return row;
+    })
     .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.d) && p.d >= 0 && p.t >= 0)
     .sort((a, b) => a.t - b.t || a.d - b.d);
   if (cleaned.length <= 1) return cleaned;
@@ -735,7 +759,8 @@ function downsampleProfile(pts) {
   cleaned.forEach((p) => {
     const prev = uniq[uniq.length - 1];
     if (!prev || Math.abs(prev.t - p.t) > 0.04 || Math.abs(prev.d - p.d) > 0.05) uniq.push(p);
-    else if (p.d > prev.d) uniq[uniq.length - 1] = p;
+    else if (p.d > prev.d) uniq[uniq.length - 1] = { ...p, c: p.c != null ? p.c : prev.c };
+    else if (prev.c == null && p.c != null) prev.c = p.c;
   });
   if (uniq.length <= 100) return uniq;
   let deepI = 0;
@@ -823,7 +848,10 @@ function jsonProfile(obj) {
       let t = num(pickKey(p, ["t", "time", "divetime", "offset", "minute", "min"]));
       if (t === "") t = i;
       if (t > 180) t = Math.round((t / 60) * 10) / 10;
-      return { t: Number(t), d: Number(depth) };
+      const pt = { t: Number(t), d: Number(depth) };
+      const c = sampleTemp({ c: tempC(pickKey(p, ["c", "temp", "temperature", "watertemp"])) });
+      if (c != null) pt.c = c;
+      return pt;
     })
     .filter(Boolean);
 }
@@ -1052,6 +1080,15 @@ function fitDepthM(v) {
   return Math.round(n * 10) / 10;
 }
 
+function fitSampleTemp(v) {
+  if (v == null || v === "") return null;
+  let n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  if (n > 200 && n < 400) n -= 273.15;
+  if (n > 50 && n < 450) n /= 10;
+  return sampleTemp({ c: n });
+}
+
 function fitMinutes(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff) return "";
@@ -1176,10 +1213,7 @@ function parseFitBlock(bytes, origin) {
 
   bag.samples.forEach((s) => {
     if (!(s.depth > 0)) s.depth = fitDepthM(pickDev(s.dev, desc, ["depth"]));
-    if (s.temp == null) {
-      const t = Number(pickDev(s.dev, desc, ["temperature", "temp"]));
-      if (t > -5 && t < 45) s.temp = t;
-    }
+    if (s.temp == null) s.temp = fitSampleTemp(pickDev(s.dev, desc, ["temperature", "temp", "watertemp"]));
   });
   const bindDev = (row) => {
     if (!row) return row;
@@ -1216,11 +1250,18 @@ function parseFitBlock(bytes, origin) {
     const use = samples.length ? samples : bag.samples;
     const t0 = use[0]?.ts || start;
     const span = (use[use.length - 1]?.ts || 0) - t0;
+    let lastC = null;
     const profilePoints = use.some((x) => x.depth > 0)
-      ? use.map((x, i) => ({
-          t: Math.max(0, Math.round(((span > 1 ? (x.ts - t0) / 60 : (i * 10) / 60) * 10)) / 10),
-          d: Math.round((x.depth || 0) * 10) / 10,
-        }))
+      ? use.map((x, i) => {
+          const c = sampleTemp({ c: x.temp });
+          if (c != null) lastC = c;
+          const pt = {
+            t: Math.max(0, Math.round(((span > 1 ? (x.ts - t0) / 60 : (i * 10) / 60) * 10)) / 10),
+            d: Math.round((x.depth || 0) * 10) / 10,
+          };
+          if (lastC != null) pt.c = lastC;
+          return pt;
+        })
       : [];
     const depths = use.map((x) => x.depth).filter((n) => n > 0);
     const temps = use.map((x) => x.temp).filter((n) => n != null && n > -5 && n < 45);
@@ -1310,12 +1351,12 @@ function collectFit(global, rec, bag, desc) {
     if (!depth && rec[73] > 110000 && rec[73] < 2500000) {
       depth = Math.max(0, Math.round(((rec[73] - 101325) / 10000) * 10) / 10);
     }
-    const temp = rec[13];
-    if (temp != null && temp > -5 && temp < 45) bag.temps.push(temp);
+    const temp = fitSampleTemp(rec[13]);
+    if (temp != null) bag.temps.push(temp);
     bag.samples.push({
       ts: ts || 0,
       depth,
-      temp: temp != null && temp > -5 && temp < 45 ? temp : null,
+      temp,
       lat,
       lng,
       dev: rec.dev,

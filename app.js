@@ -541,6 +541,17 @@ function profileFor(d) {
   return auto.length ? auto : d.profilePoints || [];
 }
 
+function pointTemp(p) {
+  const raw = p?.c ?? p?.temp;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > -5 && n < 45 ? n : null;
+}
+
+function thermoPoints(points) {
+  return (points || []).filter((p) => pointTemp(p) != null && Number.isFinite(Number(p.d)) && p.d >= 0);
+}
+
 function satMapHtml(d, cls) {
   const g = coordsForDive(d);
   if (!g) return "";
@@ -1049,6 +1060,12 @@ function diveCard(d) {
   const art = document.createElement("article");
   const map = satMapHtml(d, "sat-place bare");
   const dur = diveDuration(d);
+  const pts = profileFor(d);
+  const thermo = thermoPoints(pts);
+  const temps = thermo.map(pointTemp);
+  const tMin = temps.length ? Math.min(...temps) : null;
+  const tMax = temps.length ? Math.max(...temps) : null;
+  const tLabel = tMin != null ? (tMin === tMax ? `${fmtDepth(tMin)} °C` : `${fmtDepth(tMin)}–${fmtDepth(tMax)} °C`) : "";
   art.className = "log-card";
   art.innerHTML = `
     <header class="log-head">
@@ -1062,11 +1079,20 @@ function diveCard(d) {
     </div>
     <div class="log-viz">
       <div class="log-profile">
-        <span>Profilo profondità</span>
+        <span>${thermo.length >= 3 ? "Profondità + temp" : "Profilo profondità"}</span>
         <canvas class="spark"></canvas>
         <strong>${fmtDepth(d.maxDepth)} m</strong>
       </div>
       <div class="log-map">${map || (d.photo ? `<img alt="" src="${d.photo}" />` : `<div class="map-fallback">Mappa</div>`)}</div>
+      ${
+        thermo.length >= 3
+          ? `<div class="log-thermo">
+        <span>Temperatura / profondità</span>
+        <canvas class="thermo"></canvas>
+        <strong>${escapeHtml(tLabel)}</strong>
+      </div>`
+          : ""
+      }
     </div>
   `;
   art.onclick = () => {
@@ -1075,7 +1101,9 @@ function diveCard(d) {
   };
   queueMicrotask(() => {
     const c = art.querySelector("canvas.spark");
-    if (c) drawSpark(c, profileFor(d));
+    if (c) drawSpark(c, pts);
+    const th = art.querySelector("canvas.thermo");
+    if (th) drawTempDepth(th, thermo);
   });
   return art;
 }
@@ -1117,6 +1145,78 @@ function drawSpark(canvas, points) {
   });
   ctx.beginPath();
   ctx.arc(x(deep.t), y(deep.d), 5 * dpr, 0, Math.PI * 2);
+  ctx.fillStyle = "#3dcf6a";
+  ctx.fill();
+  const temps = pts.map(pointTemp).filter((n) => n != null);
+  if (temps.length >= 3) {
+    const lo = Math.min(...temps) - 0.4;
+    const hi = Math.max(...temps) + 0.4;
+    const yT = (c) => h - ((c - lo) / Math.max(0.6, hi - lo)) * h * 0.72 - h * 0.1;
+    ctx.beginPath();
+    let started = false;
+    pts.forEach((p) => {
+      const c = pointTemp(p);
+      if (c == null) return;
+      if (!started) {
+        ctx.moveTo(x(p.t), yT(c));
+        started = true;
+      } else ctx.lineTo(x(p.t), yT(c));
+    });
+    ctx.strokeStyle = "#ffb45a";
+    ctx.lineWidth = 2 * dpr;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+}
+
+function drawTempDepth(canvas, points) {
+  if (!canvas) return;
+  const pts = thermoPoints(points);
+  const r = canvas.getBoundingClientRect();
+  const dpr = devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(r.width * dpr));
+  canvas.height = Math.max(1, Math.floor(r.height * dpr));
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const bg = ctx.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, "#1a2744");
+  bg.addColorStop(1, "#101624");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  if (pts.length < 2) return;
+  const temps = pts.map(pointTemp);
+  const minC = Math.min(...temps) - 0.5;
+  const maxC = Math.max(...temps) + 0.5;
+  const maxD = Math.max(8, ...pts.map((p) => Number(p.d)));
+  const padL = 8 * dpr;
+  const padR = 8 * dpr;
+  const padT = 22 * dpr;
+  const padB = 22 * dpr;
+  const x = (c) => padL + ((c - minC) / Math.max(0.6, maxC - minC)) * (w - padL - padR);
+  const y = (d) => padT + (Number(d) / maxD) * (h - padT - padB);
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = dpr;
+  for (let i = 1; i < 4; i++) {
+    const yy = padT + ((h - padT - padB) / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(padL, yy);
+    ctx.lineTo(w - padR, yy);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    const fn = i ? "lineTo" : "moveTo";
+    ctx[fn](x(pointTemp(p)), y(p.d));
+  });
+  ctx.strokeStyle = "#ffb45a";
+  ctx.lineWidth = 2.2 * dpr;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  const deep = pts.reduce((a, p) => (p.d >= a.d ? p : a), pts[0]);
+  ctx.beginPath();
+  ctx.arc(x(pointTemp(deep)), y(deep.d), 4.5 * dpr, 0, Math.PI * 2);
   ctx.fillStyle = "#3dcf6a";
   ctx.fill();
 }
@@ -1460,6 +1560,13 @@ function renderDetail() {
     </div>
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-readonly="1"></canvas>
+    ${
+      thermoPoints(profileFor(d)).length >= 3
+        ? `<h3 class="serif">Temperatura / profondità</h3>
+    <canvas class="profile thermo-detail" data-thermo="1"></canvas>
+    <p class="hint">Curva dal computer: profondità in verticale, temperatura in orizzontale.</p>`
+        : ""
+    }
     <h3 class="serif">Note e sensazioni</h3>
     <p>${escapeHtml(d.notes || "—")}</p>
     <h3 class="serif">Firme — L. 70/2026</h3>
@@ -1511,7 +1618,11 @@ function renderDetail() {
     };
   });
   frag.append(card);
-  queueMicrotask(() => drawProfile(card.querySelector("canvas"), profileFor(d), false));
+  queueMicrotask(() => {
+    drawProfile(card.querySelector("canvas.profile:not([data-thermo])"), profileFor(d), false);
+    const th = card.querySelector("[data-thermo]");
+    if (th) drawTempDepth(th, profileFor(d));
+  });
   return frag;
 }
 
@@ -2032,12 +2143,33 @@ function drawProfile(canvas, points, editable, onChange) {
     ctx.closePath();
     ctx.fillStyle = "rgba(42,212,201,0.12)";
     ctx.fill();
-    pts.forEach((p) => {
+    if (pts.length <= 24) {
+      pts.forEach((p) => {
+        ctx.beginPath();
+        ctx.arc(x(p.t), y(p.d), 4 * devicePixelRatio, 0, Math.PI * 2);
+        ctx.fillStyle = "#edd9a3";
+        ctx.fill();
+      });
+    }
+    const temps = pts.map(pointTemp).filter((n) => n != null);
+    if (temps.length >= 3) {
+      const lo = Math.min(...temps) - 0.4;
+      const hi = Math.max(...temps) + 0.4;
+      const yT = (c) => h - ((c - lo) / Math.max(0.6, hi - lo)) * h * 0.8 - h * 0.08;
       ctx.beginPath();
-      ctx.arc(x(p.t), y(p.d), 4 * devicePixelRatio, 0, Math.PI * 2);
-      ctx.fillStyle = "#edd9a3";
-      ctx.fill();
-    });
+      let started = false;
+      pts.forEach((p) => {
+        const c = pointTemp(p);
+        if (c == null) return;
+        if (!started) {
+          ctx.moveTo(x(p.t), yT(c));
+          started = true;
+        } else ctx.lineTo(x(p.t), yT(c));
+      });
+      ctx.strokeStyle = "#ff8a4a";
+      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.stroke();
+    }
   };
   fit();
   if (!editable) return;
