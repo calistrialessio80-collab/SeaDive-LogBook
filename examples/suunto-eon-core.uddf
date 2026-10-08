@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<uddf version="3.2.0">
+  <generator>
+    <name>SeaDive example</name>
+    <manufacturer>
+      <name>Suunto</name>
+    </manufacturer>
+  </generator>
+  <divesite>
+    <site id="s1">
+      <name>Secca di Cala Coticcio</name>
+      <geography>
+        <location>Caprera</location>
+        <country>Italia</country>
+      </geography>
+    </site>
+  </divesite>
+  <profiledata>
+    <repetitiongroup>
+      <dive>
+        <informationbeforedive>
+          <datetime>2025-09-14T09:18:00</datetime>
+          <link ref="s1"/>
+        </informationbeforedive>
+        <tankdata>
+          <tankvolume>0.012</tankvolume>
+        </tankdata>
+        <mix>
+          <o2>0.21</o2>
+        </mix>
+        <samples>
+          <waypoint><divetime>0</divetime><depth>0</depth></waypoint>
+          <waypoint><divetime>120</divetime><depth>12.4</depth></waypoint>
+          <waypoint><divetime>480</divetime><depth>21.8</depth></waypoint>
+          <waypoint><divetime>1500</divetime><depth>18.0</depth></waypoint>
+          <waypoint><divetime>2400</divetime><depth>5.0</depth></waypoint>
+          <waypoint><divetime>2580</divetime><depth>0</depth></waypoint>
+        </samples>
+        <informationafterdive>
+          <diveduration>2580</diveduration>
+          <greatestdepth>21.8</greatestdepth>
+          <lowesttemperature>22</lowesttemperature>
+        </informationafterdive>
+      </dive>
+    </repetitiongroup>
+  </profiledata>
+</uddf>

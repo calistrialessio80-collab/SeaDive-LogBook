@@ -1,0 +1,20 @@
+{
+  "name": "SeaDive LogBook",
+  "short_name": "SeaDive",
+  "description": "Diario immersioni digitale dal tuo logbook cartaceo",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#031820",
+  "theme_color": "#031820",
+  "lang": "it",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
