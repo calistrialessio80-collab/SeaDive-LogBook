@@ -330,24 +330,6 @@ function daysSinceBackup() {
   return Math.floor((Date.now() - new Date(t).getTime()) / 86400000);
 }
 
-function isStandalone() {
-  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-}
-
-function installHint() {
-  const ua = navigator.userAgent || "";
-  const ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  if (ios) return "iPhone: Safari → Condividi → Aggiungi a Home. Così il diario resta sull’icona anche offline.";
-  return "Android: menu Chrome → Installa app / Aggiungi a schermata Home. Poi apri sempre l’icona SeaDive.";
-}
-
-let deferredInstall = null;
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  deferredInstall = e;
-  if (view?.name === "home") render();
-});
-
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
@@ -561,33 +543,6 @@ function renderHome() {
     };
   });
   frag.append(dash);
-
-  const setup = document.createElement("section");
-  setup.className = "card section glass-lite";
-  const acc = loadSession();
-  setup.innerHTML = `
-    <h3 class="serif" style="margin:0 0 8px">Account</h3>
-    <p class="meta">Accesso Google · ${escapeHtml(acc?.email || acc?.name || "account")}. Backup automatico sul tuo Drive.</p>
-    <p class="meta">${isStandalone() ? "" : installHint()}</p>
-    <div class="actions">
-      ${!isStandalone() && deferredInstall ? `<button class="btn primary" type="button" data-install>Installa SeaDive</button>` : ""}
-      <button class="btn primary" type="button" data-ble>Scarica dal computer</button>
-    </div>
-  `;
-  setup.querySelector("[data-ble]").onclick = () => {
-    view = { ...view, name: "computer" };
-    render();
-  };
-  const inst = setup.querySelector("[data-install]");
-  if (inst) {
-    inst.onclick = async () => {
-      deferredInstall?.prompt();
-      await deferredInstall?.userChoice;
-      deferredInstall = null;
-      render();
-    };
-  }
-  frag.append(setup);
 
   const listWrap = document.createElement("section");
   listWrap.className = "section";
