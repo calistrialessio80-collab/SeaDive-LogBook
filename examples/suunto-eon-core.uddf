@@ -12,6 +12,8 @@
       <geography>
         <location>Caprera</location>
         <country>Italia</country>
+        <latitude>41.215</latitude>
+        <longitude>9.361</longitude>
       </geography>
     </site>
   </divesite>

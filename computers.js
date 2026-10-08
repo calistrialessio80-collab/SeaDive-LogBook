@@ -4,50 +4,50 @@ const COMPUTERS = [
     id: "suunto-eon-core",
     brand: "Suunto",
     models: "EON Core (priorità), EON Steel, D5, D4i Novo, Vyper, Zoop",
-    how: "Bluetooth sperimentale: Chrome Android + computer acceso e visibile. Non è l’app ufficiale Suunto e può fallire. Alternativa: app Suunto → file UDDF e aprilo qui.",
+    how: "Carica UDDF, XML, JSON o LOG dall’app Suunto. Bluetooth sperimentale solo su Chrome Android.",
     ble: true,
   },
   {
     id: "shearwater",
     brand: "Shearwater",
     models: "Perdix 2, Teric, Peregrine, Petrel",
-    how: "Niente Bluetooth in SeaDive. Shearwater Cloud → Export UDDF (o XML) e aprilo qui.",
+    how: "Shearwater Cloud: esporta UDDF, XML o JSON e caricalo qui.",
   },
   {
     id: "garmin",
     brand: "Garmin",
     models: "Descent Mk / G1",
-    how: "Niente Bluetooth in SeaDive. Garmin Connect / Dive → UDDF o CSV (i FIT vanno convertiti).",
+    how: "Garmin Connect / Dive: carica il file FIT, UDDF, JSON o GPX così com’è.",
   },
   {
     id: "mares",
     brand: "Mares",
     models: "Puck, Quad, Genius, Sirius",
-    how: "Niente Bluetooth in SeaDive. App Mares o Dive Organizer → UDDF / CSV.",
+    how: "App Mares / Dive Organizer: UDDF, XML, CSV o JSON.",
   },
   {
     id: "cressi",
     brand: "Cressi",
     models: "Leonardo, Goa, Donatello, Neon",
-    how: "Niente Bluetooth in SeaDive. App Cressi o software PC → UDDF.",
+    how: "App Cressi: UDDF, XML, CSV o JSON.",
   },
   {
     id: "scubapro",
     brand: "Scubapro / Uwatec",
     models: "G2, G3, Aladin, Galileo",
-    how: "Niente Bluetooth in SeaDive. LogTRAK o app Scubapro → UDDF.",
+    how: "LogTRAK / Scubapro: UDDF, XML o CSV.",
   },
   {
     id: "oceanic",
     brand: "Oceanic / Aqualung",
     models: "Geo, Veo, i330R, Aqualung",
-    how: "Niente Bluetooth in SeaDive. DiverLog+ / Oceanic+ → UDDF o CSV.",
+    how: "DiverLog+ / Oceanic+: UDDF, XML, CSV o JSON.",
   },
   {
     id: "ratio",
     brand: "Ratio / Tusa / Seac",
     models: "iX3M, IQ, Screen",
-    how: "Niente Bluetooth in SeaDive. Software del produttore → UDDF.",
+    how: "Software del produttore: UDDF, FIT, JSON, XML, CSV o GPX.",
   },
 ];
 
@@ -94,6 +94,17 @@ function durationToMin(raw) {
   return Math.round(n);
 }
 
+function geoFromXml(root) {
+  if (!root) return {};
+  const geo = findOne(root, "geography") || findOne(root, "gps") || root;
+  const lat = num(txt(geo, ["latitude", "lat"]) || geo.getAttribute?.("lat") || "");
+  const lng = num(txt(geo, ["longitude", "long", "lon", "lng"]) || geo.getAttribute?.("lon") || geo.getAttribute?.("lng") || "");
+  return {
+    lat: lat === "" ? "" : lat,
+    lng: lng === "" ? "" : lng,
+  };
+}
+
 function splitDateTime(raw) {
   const s = String(raw || "").trim();
   const m = s.match(/(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
@@ -120,7 +131,8 @@ function parseUDDF(xml) {
   findAll(xml, "site").forEach((site) => {
     const id = site.getAttribute("id") || "";
     const name = txt(site, ["name"]) || txt(site, ["sitename"]);
-    if (id) sites.set(id, name);
+    const geo = geoFromXml(site);
+    if (id) sites.set(id, { name, ...geo });
   });
 
   diveNodes.forEach((node) => {
@@ -139,6 +151,8 @@ function parseUDDF(xml) {
       })
       .filter(Boolean);
     const siteRef = findOne(before, "link")?.getAttribute("ref") || "";
+    const siteInfo = sites.get(siteRef) || {};
+    const geo = geoFromXml(node) || geoFromXml(before) || { lat: siteInfo.lat, lng: siteInfo.lng };
     const tank = findOne(node, "tankdata") || findOne(node, "tank");
     const mixEl = findOne(node, "mix") || tank;
     const o2 = num(txt(mixEl || node, ["o2", "oxygen"]));
@@ -150,8 +164,10 @@ function parseUDDF(xml) {
         bottomTime: totalTime === "" ? "" : String(totalTime),
         totalTime: totalTime === "" ? "" : String(totalTime),
         waterTemp: txt(after, ["lowesttemperature", "temperature"]).replace(/[^\d.,-]/g, ""),
-        site: sites.get(siteRef) || txt(before, ["name", "site", "divesite"]) || "Import UDDF",
+        site: siteInfo.name || txt(before, ["name", "site", "divesite"]) || "Import UDDF",
         location: txt(xml, ["country", "location"]) || "",
+        lat: geo.lat ?? "",
+        lng: geo.lng ?? "",
         mix: o2 === "" ? "21" : String(Math.round(o2 > 1 ? o2 : o2 * 100)),
         tank: txt(tank || node, ["tankvolume", "volume"]) || "12",
         instruments: "Computer (UDDF)",
@@ -183,6 +199,7 @@ function parseSuuntoXml(xml) {
       if (depth !== "") profilePoints.push({ t: Number(t) || i, d: Number(depth) });
     });
     const model = txt(xml, ["computer", "devicemodel", "model"]) || "Suunto EON Core";
+    const geo = geoFromXml(node);
     return baseImported({
       date: dt.date,
       timeIn: dt.time,
@@ -191,6 +208,8 @@ function parseSuuntoXml(xml) {
       totalTime: totalTime === "" ? "" : String(totalTime),
       site: txt(node, ["site", "location", "spot", "divename"]) || "Suunto",
       location: txt(node, ["city", "country", "place"]) || "",
+      lat: geo.lat,
+      lng: geo.lng,
       waterTemp: String(num(txt(node, ["watertemp", "temperature", "mintemp"])) || ""),
       mix: String(num(txt(node, ["o2", "oxygen", "nitrox"])) || 21),
       pressureStart: String(num(txt(node, ["startpressure", "cylpressure", "pressure"])) || ""),
@@ -216,6 +235,8 @@ function parseCsv(text) {
   const iDur = idx(["duration", "tempo", "bottom", "fondo", "min"]);
   const iSite = idx(["site", "sito", "location", "spot"]);
   const iLoc = idx(["country", "località", "localita", "place"]);
+  const iLat = idx(["lat", "latitude"]);
+  const iLng = idx(["lng", "lon", "long", "longitude"]);
   return lines.slice(1).map((line) => {
     const cols = split(line);
     const dt = splitDateTime(`${cols[iDate] || ""} ${cols[iTime] || ""}`.trim());
@@ -227,6 +248,8 @@ function parseCsv(text) {
       totalTime: String(durationToMin(cols[iDur]) || ""),
       site: cols[iSite] || "Import CSV",
       location: cols[iLoc] || "",
+      lat: iLat >= 0 ? num(cols[iLat]) : "",
+      lng: iLng >= 0 ? num(cols[iLng]) : "",
       instruments: "Computer (CSV)",
       sourceComputer: "csv",
     });
@@ -380,21 +403,311 @@ function applyEonField(desc, data, hooks) {
   }
 }
 
+function pickKey(obj, names) {
+  if (!obj || typeof obj !== "object") return "";
+  const keys = Object.keys(obj);
+  for (const name of names) {
+    const hit = keys.find((k) => k.toLowerCase() === name.toLowerCase());
+    if (hit != null && obj[hit] != null && obj[hit] !== "") return obj[hit];
+  }
+  return "";
+}
+
+function geoFromObj(obj) {
+  if (!obj || typeof obj !== "object") return { lat: "", lng: "" };
+  const nested = obj.gps || obj.geo || obj.geography || obj.position || obj.coordinates || obj.location || {};
+  const lat = num(
+    pickKey(obj, ["lat", "latitude", "gpslat", "dive_lat"]) ||
+      pickKey(nested, ["lat", "latitude"]) ||
+      (Array.isArray(nested) ? nested[0] : "")
+  );
+  const lng = num(
+    pickKey(obj, ["lng", "lon", "long", "longitude", "gpslon", "dive_lon"]) || pickKey(nested, ["lng", "lon", "long", "longitude"])
+  );
+  return { lat: lat === "" ? "" : lat, lng: lng === "" ? "" : lng };
+}
+
+function looksLikeDive(obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+  const blob = Object.keys(obj).join(" ").toLowerCase();
+  if (/maxdepth|greatestdepth|bottomtime|divetime|divedate/.test(blob)) return true;
+  return /depth/.test(blob) && /date|time/.test(blob);
+}
+
+function jsonDive(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const dt = splitDateTime(
+    String(
+      pickKey(obj, ["datetime", "starttime", "date", "divedate", "time", "timestamp", "start"]) ||
+        `${pickKey(obj, ["date", "divedate"])} ${pickKey(obj, ["time", "starttime", "timein"])}`.trim()
+    )
+  );
+  const depth = num(pickKey(obj, ["maxdepth", "max_depth", "depth", "greatestdepth", "max"]));
+  const dur = pickKey(obj, ["bottomtime", "bottom_time", "duration", "diveduration", "divetime", "totaltime", "minutes"]);
+  const geo = geoFromObj(obj);
+  const siteObj = typeof obj.site === "object" ? obj.site : null;
+  return baseImported({
+    date: dt.date,
+    timeIn: dt.time,
+    maxDepth: depth === "" ? "" : String(depth),
+    bottomTime: String(durationToMin(dur) || ""),
+    totalTime: String(durationToMin(dur) || ""),
+    site: String(pickKey(obj, ["site", "sitename", "name", "spot", "divename", "title"]) || siteObj?.name || "Import JSON"),
+    location: String(pickKey(obj, ["location", "place", "country", "city"]) || (typeof obj.location === "string" ? obj.location : "") || ""),
+    lat: geo.lat || (siteObj ? geoFromObj(siteObj).lat : ""),
+    lng: geo.lng || (siteObj ? geoFromObj(siteObj).lng : ""),
+    waterTemp: String(num(pickKey(obj, ["watertemp", "water_temp", "temperature", "temp"])) || ""),
+    mix: String(num(pickKey(obj, ["mix", "o2", "oxygen", "nitrox"])) || 21),
+    instruments: String(pickKey(obj, ["computer", "device", "model", "instruments"]) || "Computer (JSON)"),
+    sourceComputer: "json",
+    notes: String(pickKey(obj, ["notes", "comment", "remarks", "description"]) || ""),
+  });
+}
+
+function collectJsonDives(data, acc = []) {
+  if (!data) return acc;
+  if (Array.isArray(data)) {
+    data.forEach((item) => {
+      if (looksLikeDive(item)) acc.push(jsonDive(item));
+      else collectJsonDives(item, acc);
+    });
+    return acc;
+  }
+  if (typeof data !== "object") return acc;
+  if (looksLikeDive(data) && (data.dives == null || !Array.isArray(data.dives))) acc.push(jsonDive(data));
+  ["dives", "Dives", "logs", "activities", "records", "Records", "diveLog", "data", "items"].forEach((k) => {
+    if (data[k]) collectJsonDives(data[k], acc);
+  });
+  return acc;
+}
+
+function parseDiveJson(text) {
+  const data = JSON.parse(text);
+  const dives = collectJsonDives(data).filter((d) => d && (d.date || d.maxDepth));
+  if (!dives.length) throw new Error("JSON senza immersioni riconoscibili.");
+  return dives;
+}
+
+function parseGpx(xml) {
+  const pts = [...xml.querySelectorAll("trkpt, wpt")];
+  if (!pts.length) return [];
+  const first = pts[0];
+  const lat = num(first.getAttribute("lat"));
+  const lng = num(first.getAttribute("lon"));
+  const when = splitDateTime(txt(first, ["time"]) || txt(xml, ["time"]));
+  const name = txt(xml, ["name"]) || "Traccia GPX";
+  return [
+    baseImported({
+      date: when.date,
+      timeIn: when.time,
+      site: name,
+      lat,
+      lng,
+      instruments: "GPX",
+      sourceComputer: "gpx",
+      notes: `${pts.length} punti GPS.`,
+    }),
+  ];
+}
+
+function isFit(bytes) {
+  if (bytes.length < 14) return false;
+  return String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) === ".FIT";
+}
+
+function fitU16(b, i, le) {
+  return le ? b[i] | (b[i + 1] << 8) : (b[i] << 8) | b[i + 1];
+}
+function fitU32(b, i, le) {
+  return le
+    ? (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0
+    : ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
+}
+function fitS32(b, i, le) {
+  return fitU32(b, i, le) | 0;
+}
+
+function fitTime(v) {
+  if (!v || v === 0xffffffff) return null;
+  return new Date((v + 631065600) * 1000);
+}
+
+function fitReadFields(bytes, i, def) {
+  const rec = {};
+  let o = i;
+  def.fields.forEach((f) => {
+    let val;
+    if (f.size === 1) val = bytes[o];
+    else if (f.size === 2) val = fitU16(bytes, o, def.le);
+    else if (f.size === 4) val = f.base === 0x85 || f.base === 0x86 ? fitS32(bytes, o, def.le) : fitU32(bytes, o, def.le);
+    else val = null;
+    rec[f.num] = val;
+    o += f.size;
+  });
+  return rec;
+}
+
+function parseFit(bytes) {
+  const headerSize = bytes[0] || 14;
+  const dataSize = fitU32(bytes, 4, true);
+  const end = Math.min(bytes.length - 2, headerSize + dataSize);
+  const defs = {};
+  let i = headerSize;
+  let lastTs = 0;
+  const sessions = [];
+  const summaries = [];
+  const gps = [];
+  const depths = [];
+
+  while (i < end) {
+    const h = bytes[i++];
+    if (h & 0x80) {
+      const local = (h >> 5) & 3;
+      const def = defs[local];
+      if (!def) break;
+      lastTs += h & 0x1f;
+      const rec = fitReadFields(bytes, i, def);
+      rec[253] = lastTs;
+      i += def.dataSize;
+      collectFit(def.global, rec, sessions, summaries, gps, depths);
+      continue;
+    }
+    const isDef = h & 0x40;
+    const local = h & 0x0f;
+    const hasDev = h & 0x20;
+    if (isDef) {
+      i += 1;
+      const le = bytes[i++] === 0;
+      const global = fitU16(bytes, i, le);
+      i += 2;
+      const nfields = bytes[i++];
+      const fields = [];
+      let dataSize = 0;
+      for (let f = 0; f < nfields; f++) {
+        const num = bytes[i++];
+        const size = bytes[i++];
+        const base = bytes[i++];
+        fields.push({ num, size, base });
+        dataSize += size;
+      }
+      if (hasDev) {
+        const nd = bytes[i++];
+        for (let f = 0; f < nd; f++) {
+          i += 1;
+          const size = bytes[i++];
+          i += 1;
+          dataSize += size;
+        }
+      }
+      defs[local] = { global, fields, dataSize, le };
+      continue;
+    }
+    const def = defs[local];
+    if (!def) break;
+    const rec = fitReadFields(bytes, i, def);
+    if (rec[253]) lastTs = rec[253];
+    i += def.dataSize;
+    collectFit(def.global, rec, sessions, summaries, gps, depths);
+  }
+
+  const dives = [];
+  const sources = summaries.length ? summaries : sessions;
+  sources.forEach((s, idx) => {
+    const when = fitTime(s.start || s.ts);
+    const maxM = s.maxDepth != null ? s.maxDepth / (s.maxDepth > 200 ? 1000 : 1) : depths[idx] || Math.max(0, ...depths);
+    const mins = s.bottom != null ? Math.round(s.bottom / (s.bottom > 180 ? 60000 : 1)) : s.elapsed ? Math.round(s.elapsed / 1000 / 60) : "";
+    const g = gps[0] || {};
+    dives.push(
+      baseImported({
+        date: when ? when.toISOString().slice(0, 10) : "",
+        timeIn: when ? when.toISOString().slice(11, 16) : "",
+        maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
+        bottomTime: mins ? String(mins) : "",
+        totalTime: mins ? String(mins) : "",
+        site: "Garmin FIT",
+        lat: g.lat ?? "",
+        lng: g.lng ?? "",
+        instruments: "Garmin (FIT)",
+        sourceComputer: "fit",
+      })
+    );
+  });
+  if (!dives.length && (gps.length || depths.length)) {
+    const when = fitTime(sessions[0]?.start);
+    const g = gps[0] || {};
+    dives.push(
+      baseImported({
+        date: when ? when.toISOString().slice(0, 10) : "",
+        timeIn: when ? when.toISOString().slice(11, 16) : "",
+        maxDepth: depths.length ? String(Math.max(...depths)) : "",
+        site: "Garmin FIT",
+        lat: g.lat ?? "",
+        lng: g.lng ?? "",
+        instruments: "Garmin (FIT)",
+        sourceComputer: "fit",
+      })
+    );
+  }
+  if (!dives.length) throw new Error("File FIT senza immersioni (sessioni / dive summary).");
+  return dives;
+}
+
+function collectFit(global, rec, sessions, summaries, gps, depths) {
+  const ts = rec[253];
+  if (global === 20) {
+    if (rec[0] != null && rec[1] != null && rec[0] !== 0x7fffffff && rec[1] !== 0x7fffffff) {
+      gps.push({
+        lat: rec[0] * (180 / 2147483648),
+        lng: rec[1] * (180 / 2147483648),
+      });
+    }
+    if (rec[14] != null && rec[14] < 20000) depths.push(rec[14] / (rec[14] > 200 ? 100 : 1));
+  }
+  if (global === 18) {
+    sessions.push({
+      ts,
+      start: rec[2] || ts,
+      sport: rec[5],
+      elapsed: rec[7],
+    });
+  }
+  if (global === 268) {
+    summaries.push({
+      ts,
+      start: rec[14] || rec[253] || ts,
+      maxDepth: rec[4],
+      bottom: rec[13],
+    });
+  }
+}
+
 function parseComputerFile(name, text) {
   const lower = name.toLowerCase();
-  const trimmed = text.trim();
+  const trimmed = (text || "").trim().replace(/^\uFEFF/, "");
   if (!trimmed) return { dives: [], format: "vuoto" };
-  if (lower.endsWith(".csv") || /^[\w ;,\t]+[\r\n]/.test(trimmed) && trimmed.includes(",") && !trimmed.startsWith("<")) {
+  if (lower.endsWith(".json") || trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return { dives: parseDiveJson(trimmed), format: "JSON" };
+  }
+  if (lower.endsWith(".csv") || (!trimmed.startsWith("<") && trimmed.includes(",") && /date|data|depth|prof/i.test(trimmed.slice(0, 200)))) {
     return { dives: parseCsv(trimmed), format: "CSV" };
   }
-  if (trimmed.startsWith("<") || trimmed.startsWith("\uFEFF<")) {
+  if (trimmed.startsWith("<") || /\.(uddf|xml|gpx|ssrf|sml|zxu)$/i.test(lower)) {
     const xml = new DOMParser().parseFromString(trimmed, "application/xml");
     if (xml.querySelector("parsererror")) throw new Error(`XML non valido in ${name}`);
+    if (lower.endsWith(".gpx") || xml.querySelector("gpx, trkpt")) return { dives: parseGpx(xml), format: "GPX" };
     const uddfHits = findAll(xml, "uddf").length || findAll(xml, "profiledata").length;
-    if (uddfHits || lower.endsWith(".uddf")) return { dives: parseUDDF(xml), format: "UDDF" };
-    return { dives: parseSuuntoXml(xml), format: "XML Suunto / computer" };
+    if (uddfHits || lower.endsWith(".uddf") || lower.endsWith(".ssrf")) return { dives: parseUDDF(xml), format: "UDDF" };
+    return { dives: parseSuuntoXml(xml), format: "XML computer" };
   }
-  throw new Error(`Formato non riconosciuto: ${name}. Usa UDDF, XML Suunto o CSV.`);
+  throw new Error(`Formato non riconosciuto: ${name}. Prova UDDF, FIT, JSON, XML, CSV o GPX.`);
+}
+
+function parseComputerBytes(name, buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".fit") || isFit(bytes)) return { dives: parseFit(bytes), format: "Garmin FIT" };
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  return parseComputerFile(name, text);
 }
 
 function diveKey(d) {
@@ -420,6 +733,7 @@ async function scanSuuntoBluetooth() {
 window.SeaDiveComputers = {
   COMPUTERS,
   parseComputerFile,
+  parseComputerBytes,
   parseEonSteelLog,
   diveKey,
   scanSuuntoBluetooth,

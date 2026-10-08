@@ -21,6 +21,8 @@ $mime = @{
   ".css"  = "text/css; charset=utf-8"
   ".js"   = "text/javascript; charset=utf-8"
   ".json" = "application/json"
+  ".fit"  = "application/octet-stream"
+  ".gpx"  = "application/gpx+xml"
   ".svg"  = "image/svg+xml"
   ".pdf"  = "application/pdf"
   ".uddf" = "application/xml"

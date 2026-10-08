@@ -74,6 +74,8 @@ const emptyDive = () => ({
   centerSign: "",
   sigMeta: { buddy: null, guide: null, center: null },
   profilePoints: [],
+  lat: "",
+  lng: "",
 });
 
 const SESSION_KEY = "seadive-google-session";
@@ -110,6 +112,8 @@ const seed = () => ({
       date: "2024-07-12",
       site: "Secca di Isuela",
       location: "Portofino, Italia",
+      lat: "44.3056",
+      lng: "9.2139",
       timeIn: "09:40",
       timeOut: "10:28",
       maxDepth: "18",
@@ -148,6 +152,8 @@ const seed = () => ({
       date: "2024-08-03",
       site: "Punta del Diavolo",
       location: "Ustica, Italia",
+      lat: "38.703",
+      lng: "13.193",
       timeIn: "16:10",
       timeOut: "17:02",
       maxDepth: "24",
@@ -186,6 +192,8 @@ const seed = () => ({
       date: "2025-06-21",
       site: "Relitto Anna Bianca",
       location: "Isola d'Elba, Italia",
+      lat: "42.76",
+      lng: "10.30",
       timeIn: "10:05",
       timeOut: "10:51",
       maxDepth: "21",
@@ -361,6 +369,31 @@ function escapeHtml(v) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function geoCoords(lat, lng) {
+  const a = Number(String(lat ?? "").replace(",", "."));
+  const b = Number(String(lng ?? "").replace(",", "."));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  if (Math.abs(a) > 90 || Math.abs(b) > 180 || (a === 0 && b === 0)) return null;
+  return { lat: a, lng: b };
+}
+
+function geoText(d) {
+  const g = geoCoords(d?.lat, d?.lng);
+  if (!g) return "";
+  return `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`;
+}
+
+function geoMapHtml(lat, lng) {
+  const g = geoCoords(lat, lng);
+  if (!g) return "";
+  const pad = 0.045;
+  const bbox = `${g.lng - pad},${g.lat - pad},${g.lng + pad},${g.lat + pad}`;
+  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${g.lat}%2C${g.lng}`;
+  const open = `https://www.openstreetmap.org/?mlat=${g.lat}&mlon=${g.lng}#map=14/${g.lat}/${g.lng}`;
+  return `<iframe class="geo-map" title="Mappa del sito" src="${src}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    <p class="meta"><a href="${open}" target="_blank" rel="noopener">Apri in OpenStreetMap</a></p>`;
 }
 
 function setPageSkin() {
@@ -585,7 +618,7 @@ function diveCard(d) {
     <div class="shot-body">
       <p class="eyebrow">${escapeHtml(d.date || "—")} · n° ${escapeHtml(d.number)}</p>
       <h4>${escapeHtml(d.site || "Sito da nominare")}</h4>
-      <p class="meta">${escapeHtml(d.location || "—")}</p>
+      <p class="meta">${escapeHtml(d.location || "—")}${geoText(d) ? " · " + escapeHtml(geoText(d)) : ""}</p>
       <div class="shot-metrics">
         <span><b>${escapeHtml(d.maxDepth || "—")}</b> m</span>
         <span><b>${escapeHtml(d.bottomTime || "—")}</b> min</span>
@@ -681,30 +714,15 @@ function renderComputer() {
   hero.className = "card hero";
   hero.innerHTML = `
     <h2>Dal polso al diario</h2>
-    <p class="tagline">Il Bluetooth nel browser <strong>non è ufficiale</strong> e non vale per tutti i computer. Solo Suunto EON Core / Steel / D5, e solo da <strong>Chrome su Android</strong> (HTTPS o localhost). Su iPhone Safari il Bluetooth web non esiste: esporta un file UDDF dall’app del produttore.</p>
+    <p class="tagline">Carica il file esportato dall’app del computer: <strong>UDDF, FIT, JSON, XML, CSV, GPX</strong> (Suunto, Garmin, Shearwater, Mares, Cressi e altri). Il Bluetooth resta una prova solo per EON su Chrome Android.</p>
     <div class="actions">
-      <button class="btn primary" type="button" data-ble>Prova Bluetooth (EON)</button>
-      <label class="btn ghost">Apri file UDDF / XML / CSV
-        <input type="file" accept=".uddf,.xml,.csv,.txt,application/xml,text/xml,text/csv" multiple hidden data-files />
+      <label class="btn primary">Carica file
+        <input type="file" accept=".uddf,.xml,.csv,.txt,.json,.fit,.gpx,.log,.sml,.ssrf,.zxu,.divelog,application/json,application/xml,application/gpx+xml,*/*" multiple hidden data-files />
       </label>
+      <button class="btn ghost" type="button" data-ble>Prova Bluetooth (EON)</button>
     </div>
-    <p class="hint" data-hint>${escapeHtml(view.computerHint || window.SeaDiveBle?.bleUnavailableReason?.() || "Accendi Bluetooth sul computer, tieni il telefono vicino, scegli il dispositivo. Se fallisce, usa il file UDDF.")}</p>
+    <p class="hint" data-hint>${escapeHtml(view.computerHint || "Scegli uno o più file dal telefono o dal computer. Se un formato non si apre, esporta UDDF o JSON dall’app del produttore.")}</p>
   `;
-  const drop = document.createElement("section");
-  drop.className = "card section drop";
-  drop.innerHTML = `<p style="margin:0"><strong>Trascina qui i file</strong><br><span class="meta">UDDF (universale), XML Suunto DM5 / EON Core, CSV</span></p>`;
-  ["dragenter", "dragover"].forEach((ev) => {
-    drop.addEventListener(ev, (e) => {
-      e.preventDefault();
-      drop.classList.add("over");
-    });
-  });
-  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-  drop.addEventListener("drop", (e) => {
-    e.preventDefault();
-    drop.classList.remove("over");
-    ingestFiles(e.dataTransfer.files);
-  });
   hero.querySelector("[data-files]").onchange = (e) => ingestFiles(e.target.files);
   hero.querySelector("[data-ble]").onclick = async () => {
     try {
@@ -723,7 +741,6 @@ function renderComputer() {
     render();
   };
   frag.append(hero);
-  frag.append(drop);
 
   const brands = document.createElement("section");
   brands.className = "section";
@@ -775,8 +792,8 @@ async function ingestFiles(fileList) {
   const notes = [];
   for (const file of files) {
     try {
-      const text = await file.text();
-      const { dives, format } = api.parseComputerFile(file.name, text);
+      const buf = await file.arrayBuffer();
+      const { dives, format } = api.parseComputerBytes(file.name, buf);
       notes.push(`${file.name}: ${dives.length} immersioni (${format})`);
       found.push(...dives);
     } catch (err) {
@@ -933,13 +950,15 @@ function renderDetail() {
       <div>
         <p class="meta" style="margin:0 0 4px">${escapeHtml(d.date)} · ${escapeHtml(d.timeIn || "—")} → ${escapeHtml(d.timeOut || "—")}</p>
         <h2 class="serif" style="margin:0">${escapeHtml(d.site || "Senza nome")}</h2>
-        <p class="meta">${escapeHtml(d.location)} ${d.feeling ? " · " + stars : ""}</p>
+        <p class="meta">${escapeHtml(d.location)}${geoText(d) ? " · " + escapeHtml(geoText(d)) : ""}${d.feeling ? " · " + stars : ""}</p>
         <div class="pills" style="margin-top:10px">${(d.types || []).map((t) => `<span class="pill">${escapeHtml(t)}</span>`).join("")}</div>
       </div>
       <div class="num">${escapeHtml(d.number)}</div>
     </div>
     ${d.photo ? `<img class="cover" alt="" src="${d.photo}" />` : ""}
+    ${geoMapHtml(d.lat, d.lng)}
     <div class="kv">
+      <div><b>Coordinate</b>${escapeHtml(geoText(d) || "—")}</div>
       <div><b>Prof. max</b>${escapeHtml(d.maxDepth || "—")} m</div>
       <div><b>Prof. programmata</b>${escapeHtml(d.plannedDepth || "—")} m</div>
       <div><b>Tempo di fondo</b>${escapeHtml(d.bottomTime || "—")} min</div>
@@ -1014,6 +1033,15 @@ function renderEdit() {
       ${field("date", "Data", d.date, false, "date")}
       ${field("site", "Sito di immersione", d.site, true)}
       ${field("location", "Località / paese", d.location, true)}
+      ${field("lat", "Latitudine", d.lat)}
+      ${field("lng", "Longitudine", d.lng)}
+    </div>
+    <div class="actions" style="margin-top:4px">
+      <button class="btn ghost" type="button" data-geo>Usa posizione attuale</button>
+    </div>
+    <p class="hint" data-geohint>Coordinate del sito: GPS del telefono a riva, oppure valori dal file del computer.</p>
+    ${geoMapHtml(d.lat, d.lng)}
+    <div class="form-grid">
       ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
       ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
       ${field("maxDepth", "Prof. max (m)", d.maxDepth, false, "number")}
@@ -1098,6 +1126,41 @@ function renderEdit() {
     };
     stars.append(b);
   }
+  form.querySelector("[data-geo]").onclick = () => {
+    const hint = form.querySelector("[data-geohint]");
+    if (!navigator.geolocation) {
+      hint.textContent = "GPS non disponibile in questo browser.";
+      return;
+    }
+    hint.textContent = "Rilevo la posizione…";
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude.toFixed(5);
+        const lng = pos.coords.longitude.toFixed(5);
+        d.lat = lat;
+        d.lng = lng;
+        form.querySelector("[name=lat]").value = lat;
+        form.querySelector("[name=lng]").value = lng;
+        hint.textContent = "Posizione salvata. Puoi correggere le coordinate a mano.";
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`
+          );
+          const info = await res.json();
+          const a = info.address || {};
+          const loc = [a.village || a.town || a.city || a.municipality, a.country].filter(Boolean).join(", ");
+          const locField = form.querySelector("[name=location]");
+          if (loc && locField && !String(locField.value || "").trim()) locField.value = loc;
+        } catch {
+          /* la mappa resta sulle coordinate */
+        }
+      },
+      () => {
+        hint.textContent = "Posizione non disponibile. Inserisci latitudine e longitudine a mano.";
+      },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  };
   form.querySelector('input[name="photoFile"]').onchange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1177,6 +1240,8 @@ async function diveDigest(d) {
     date: d.date,
     site: d.site,
     location: d.location,
+    lat: d.lat,
+    lng: d.lng,
     timeIn: d.timeIn,
     timeOut: d.timeOut,
     maxDepth: d.maxDepth,
