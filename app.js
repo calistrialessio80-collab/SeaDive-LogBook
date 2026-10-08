@@ -42,6 +42,7 @@ const emptyDive = () => ({
   timeIn: "",
   timeOut: "",
   maxDepth: "",
+  avgDepth: "",
   plannedDepth: "",
   bottomTime: "",
   totalTime: "",
@@ -1452,8 +1453,9 @@ function fillOcean(ctx, w, h) {
 
 function profileExtent(pts) {
   const maxT = Math.max(0.5, ...pts.map((p) => Number(p.t) || 0));
-  const maxD = Math.max(1, ...pts.map((p) => Number(p.d) || 0));
-  return { maxT: maxT * 1.03, maxD: maxD * 1.08 };
+  const rawD = Math.max(1, ...pts.map((p) => Number(p.d) || 0));
+  const maxD = Math.max(5, Math.ceil((rawD * 1.04) / 5) * 5);
+  return { maxT: maxT * 1.01, maxD };
 }
 
 function drawSpark(canvas, points) {
@@ -1971,6 +1973,7 @@ function renderDetail() {
     <div class="kv">
       <div><b>Coordinate</b>${escapeHtml(geoText(d) || "—")}</div>
       <div><b>Prof. max</b>${escapeHtml(d.maxDepth || "—")} m</div>
+      <div><b>Prof. media</b>${escapeHtml(d.avgDepth || d.computerLog?.avgDepth || "—")} m</div>
       <div><b>Prof. programmata</b>${escapeHtml(d.plannedDepth || "—")} m</div>
       <div><b>Tempo di fondo</b>${escapeHtml(d.bottomTime || "—")} min</div>
       <div><b>Tempo totale</b>${escapeHtml(d.totalTime || "—")} min</div>
@@ -1992,6 +1995,7 @@ function renderDetail() {
       <div><b>Pressione</b>${escapeHtml(d.pressureStart || "—")} → ${escapeHtml(d.pressureEnd || "—")} bar</div>
       <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
       <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
+      <div><b>GF</b>${escapeHtml(d.computerLog?.gf || "—")}</div>
       <div><b>Strumentazione</b>${escapeHtml(d.instruments || "—")}</div>
       <div><b>Brevetto in scheda</b>${escapeHtml(d.certOnDive || "—")}</div>
     </div>
@@ -2102,6 +2106,7 @@ function renderEdit() {
       ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
       ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
       ${field("maxDepth", "Prof. max (m)", d.maxDepth, false, "number")}
+      ${field("avgDepth", "Prof. media (m)", d.avgDepth || d.computerLog?.avgDepth || "", false, "number")}
       ${field("plannedDepth", "Prof. programmata (m)", d.plannedDepth, false, "number")}
       ${field("bottomTime", "Tempo di fondo (min)", d.bottomTime, false, "number")}
       ${field("totalTime", "Durata totale (min)", d.totalTime, false, "number")}
@@ -2153,7 +2158,7 @@ function renderEdit() {
       <h3 class="serif">Fisiologia e computer</h3>
       <div class="kv">
         <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "—"))}</div>
-        <div><b>Prof. media</b>${escapeHtml(log.avgDepth ? log.avgDepth + " m" : "—")}</div>
+        <div><b>Prof. media</b>${escapeHtml(d.avgDepth || log.avgDepth ? (d.avgDepth || log.avgDepth) + " m" : "—")}</div>
         <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
         <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
         <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
