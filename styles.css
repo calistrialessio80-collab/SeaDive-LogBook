@@ -546,8 +546,23 @@ canvas.thermo-detail {
   display: block;
   position: relative;
   z-index: 2;
+  cursor: crosshair;
+  overflow: hidden;
 }
+.dive-edit .site-map > img { width: 100%; height: 240px; object-fit: cover; display: block; }
 .dive-edit .site-map .leaflet-container { width: 100%; height: 100%; }
+.map-pin {
+  position: absolute; left: 50%; top: 50%;
+  width: 20px; height: 20px;
+  margin: -18px 0 0 -10px;
+  background: #ef7a5a;
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 4px 12px rgba(0,0,0,.35);
+  pointer-events: none;
+  z-index: 4;
+}
 .form-grid > input[type="hidden"] { display: none !important; }
 .computer-log { margin: 16px 0 8px; }
 .computer-log h3 { margin: 0 0 8px; font-size: 18px; }

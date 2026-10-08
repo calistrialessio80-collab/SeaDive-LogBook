@@ -57,6 +57,10 @@ const emptyDive = () => ({
   mix: "21",
   pressureStart: "200",
   pressureEnd: "",
+  bottomTemp: "",
+  cns: "",
+  otu: "",
+  tss: "",
   regulator: "",
   instruments: "",
   certOnDive: "",
@@ -552,6 +556,20 @@ function thermoPoints(points) {
   return (points || []).filter((p) => pointTemp(p) != null && Number.isFinite(Number(p.d)) && p.d >= 0);
 }
 
+function ensureThermoProfile(d) {
+  const pts = profileFor(d).map((p) => ({ ...p }));
+  if (thermoPoints(pts).length >= 3) return pts;
+  const bottom = Number(d.bottomTemp || d.waterTemp);
+  const air = Number(d.airTemp || d.waterTemp || bottom);
+  if (!pts.length || !Number.isFinite(bottom)) return pts;
+  const maxD = Math.max(1, ...pts.map((p) => Number(p.d) || 0));
+  return pts.map((p) => {
+    const mix = Math.min(1, (Number(p.d) || 0) / maxD);
+    const c = air * (1 - mix) + bottom * mix;
+    return { ...p, c: Math.round(c * 10) / 10 };
+  });
+}
+
 function satMapHtml(d, cls) {
   const g = coordsForDive(d);
   if (!g) return "";
@@ -766,20 +784,43 @@ let mapPick = null;
 
 function loadLeaflet() {
   if (window.L) return Promise.resolve();
+  const cssHref = [
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css",
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+  ];
+  const jsHref = [
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js",
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
+  ];
+  const addCss = (href) => {
+    if (document.querySelector("link[data-leaflet]")) return;
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = href;
+    css.dataset.leaflet = "1";
+    document.head.appendChild(css);
+  };
+  addCss(cssHref[0]);
   return new Promise((resolve, reject) => {
-    if (!document.querySelector("link[data-leaflet]")) {
-      const css = document.createElement("link");
-      css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.dataset.leaflet = "1";
-      document.head.appendChild(css);
-    }
-    const s = document.createElement("script");
-    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("Impossibile caricare la mappa."));
-    document.body.appendChild(s);
+    let i = 0;
+    const tryJs = () => {
+      if (window.L) return resolve();
+      if (i >= jsHref.length) return reject(new Error("Impossibile caricare la mappa."));
+      const s = document.createElement("script");
+      s.src = jsHref[i++];
+      s.onload = () => (window.L ? resolve() : tryJs());
+      s.onerror = tryJs;
+      document.body.appendChild(s);
+    };
+    tryJs();
   });
+}
+
+function satBboxUrl(lat, lng, pad) {
+  const bbox = `${lng - pad},${lat - pad},${lng + pad},${lat + pad}`;
+  return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(
+    bbox
+  )}&bboxSR=4326&imageSR=4326&size=900,480&format=jpg&f=image`;
 }
 
 function addSatTiles(map) {
@@ -847,41 +888,78 @@ function bindDiveSiteMap(form, d) {
   const hint = form.querySelector("[data-geohint]");
   if (!el) return;
   destroyDiveSiteMap();
+  let pad = coordsForDive(d) ? 0.032 : 6;
+  const paintStatic = (lat, lng, opts = {}) => {
+    writeDiveCoords(form, d, lat, lng);
+    const p = opts.wide ? 7 : pad;
+    el.innerHTML = `<img alt="Mappa del sito" src="${satBboxUrl(Number(lat), Number(lng), p)}"><i class="map-pin" aria-hidden="true"></i>`;
+    if (hint) {
+      hint.textContent =
+        opts.hint || "Tocca la mappa per spostare il pin sul punto esatto. Poi salva l’immersione.";
+    }
+    if (!opts.skipGeo) reverseFillLocation(form, d, lat, lng);
+  };
+  const start = coordsForDive(d) || { lat: 41.9, lng: 12.48 };
+  form._placePin = (lat, lng, opts = {}) => {
+    if (opts.zoom && opts.zoom >= 14) pad = 0.018;
+    else if (opts.zoom && opts.zoom >= 10) pad = 0.08;
+    if (diveSiteMap && window.L) {
+      writeDiveCoords(form, d, lat, lng);
+      const ll = [Number(lat), Number(lng)];
+      if (!diveSiteMarker) {
+        diveSiteMarker = L.marker(ll, { draggable: true }).addTo(diveSiteMap);
+        diveSiteMarker.on("dragend", () => {
+          const p = diveSiteMarker.getLatLng();
+          form._placePin(p.lat, p.lng, { hint: "Pin spostato. Salva l’immersione per tenerlo." });
+        });
+      } else diveSiteMarker.setLatLng(ll);
+      diveSiteMap.setView(ll, opts.zoom || Math.max(diveSiteMap.getZoom(), 13));
+      if (hint && opts.hint) hint.textContent = opts.hint;
+      if (!opts.skipGeo) reverseFillLocation(form, d, lat, lng);
+      return;
+    }
+    paintStatic(lat, lng, opts);
+  };
+  paintStatic(start.lat, start.lng, {
+    skipGeo: true,
+    wide: !coordsForDive(d),
+    hint: coordsForDive(d)
+      ? "Tocca la mappa per spostare il pin, senza scrivere le coordinate."
+      : "Tocca una zona, oppure Cerca sito / posizione attuale.",
+  });
+  el.onclick = (e) => {
+    if (diveSiteMap) return;
+    const g = geoCoords(d.lat, d.lng) || start;
+    const p = geoCoords(d.lat, d.lng) ? pad : 7;
+    const r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / Math.max(1, r.width);
+    const y = (e.clientY - r.top) / Math.max(1, r.height);
+    const nLng = Number(g.lng) - p + x * 2 * p;
+    const nLat = Number(g.lat) + p - y * 2 * p;
+    pad = Math.min(pad, 0.06);
+    paintStatic(nLat, nLng);
+  };
   loadLeaflet()
     .then(() => {
       if (!form.isConnected || !window.L) return;
       const known = coordsForDive(d);
-      const start = known || { lat: 40.2, lng: 12.5 };
-      const zoom = known ? 15 : 5;
-      diveSiteMap = L.map(el, { scrollWheelZoom: true, worldCopyJump: true }).setView([start.lat, start.lng], zoom);
+      const here = known || start;
+      el.onclick = null;
+      el.innerHTML = "";
+      diveSiteMap = L.map(el, { scrollWheelZoom: true, worldCopyJump: true }).setView([here.lat, here.lng], known ? 15 : 5);
       addSatTiles(diveSiteMap);
-      const apply = (lat, lng, opts = {}) => {
-        writeDiveCoords(form, d, lat, lng);
-        const ll = [Number(lat), Number(lng)];
-        if (!diveSiteMarker) {
-          diveSiteMarker = L.marker(ll, { draggable: true }).addTo(diveSiteMap);
-          diveSiteMarker.on("dragend", () => {
-            const p = diveSiteMarker.getLatLng();
-            apply(p.lat, p.lng, { hint: "Pin spostato. Salva l’immersione per tenerlo." });
-          });
-        } else {
-          diveSiteMarker.setLatLng(ll);
-        }
-        diveSiteMap.setView(ll, opts.zoom || Math.max(diveSiteMap.getZoom(), 13));
-        if (hint) {
-          hint.textContent =
-            opts.hint || "Punto del sito aggiornato. Trascina il pin o tocca un altro punto.";
-        }
-        if (!opts.skipGeo) reverseFillLocation(form, d, lat, lng);
-      };
-      form._placePin = apply;
-      diveSiteMap.on("click", (ev) => apply(ev.latlng.lat, ev.latlng.lng));
-      if (known) apply(start.lat, start.lng, { skipGeo: true, zoom, hint: "Trascina il pin sul punto esatto, senza scrivere le coordinate." });
-      else if (hint) hint.textContent = "Scorri la mappa e tocca il sito per piantare il pin.";
-      [80, 300, 700].forEach((ms) => setTimeout(() => diveSiteMap?.invalidateSize(), ms));
+      diveSiteMap.on("click", (ev) => form._placePin(ev.latlng.lat, ev.latlng.lng));
+      form._placePin(here.lat, here.lng, {
+        skipGeo: true,
+        zoom: known ? 15 : 5,
+        hint: known ? "Trascina il pin sul punto esatto." : "Scorri e tocca il sito per piantare il pin.",
+      });
+      [80, 250, 600].forEach((ms) => setTimeout(() => diveSiteMap?.invalidateSize(), ms));
     })
-    .catch((err) => {
-      el.textContent = err.message || "Mappa non disponibile.";
+    .catch(() => {
+      if (hint && !String(hint.textContent || "").includes("Tocca")) {
+        hint.textContent = "Tocca la foto-mappa per spostare il pin (senza digitare coordinate).";
+      }
     });
 }
 
@@ -1061,7 +1139,7 @@ function diveCard(d) {
   const art = document.createElement("article");
   const map = satMapHtml(d, "sat-place bare");
   const dur = diveDuration(d);
-  const pts = profileFor(d);
+  const pts = ensureThermoProfile(d);
   const thermo = thermoPoints(pts);
   const temps = thermo.map(pointTemp);
   const tMin = temps.length ? Math.min(...temps) : null;
@@ -1077,6 +1155,7 @@ function diveCard(d) {
       <div><small>Profondità max</small><b>${fmtDepth(d.maxDepth)} m</b></div>
       <div><small>Durata</small><b>${dur ? dur + " min" : "—"}</b></div>
       <div><small>Acqua</small><b>${d.waterTemp ? fmtDepth(d.waterTemp) + " °C" : "—"}</b></div>
+      ${d.totalTime ? `<div><small>Durata tot.</small><b>${escapeHtml(d.totalTime)} min</b></div>` : ""}
     </div>
     <div class="log-viz">
       <div class="log-profile">
@@ -1085,15 +1164,11 @@ function diveCard(d) {
         <strong>${fmtDepth(d.maxDepth)} m</strong>
       </div>
       <div class="log-map">${map || (d.photo ? `<img alt="" src="${d.photo}" />` : `<div class="map-fallback">Mappa</div>`)}</div>
-      ${
-        thermo.length >= 3
-          ? `<div class="log-thermo">
+      <div class="log-thermo">
         <span>Temperatura / profondità</span>
         <canvas class="thermo"></canvas>
-        <strong>${escapeHtml(tLabel)}</strong>
-      </div>`
-          : ""
-      }
+        <strong>${escapeHtml(tLabel || (d.bottomTemp ? d.bottomTemp + " °C fondo" : "—"))}</strong>
+      </div>
     </div>
   `;
   art.onclick = () => {
@@ -1102,9 +1177,10 @@ function diveCard(d) {
   };
   queueMicrotask(() => {
     const c = art.querySelector("canvas.spark");
-    if (c) drawSpark(c, pts);
+    const drawn = ensureThermoProfile(d);
+    if (c) drawSpark(c, drawn);
     const th = art.querySelector("canvas.thermo");
-    if (th) drawTempDepth(th, thermo);
+    if (th) drawTempDepth(th, drawn);
   });
   return art;
 }
@@ -1353,6 +1429,7 @@ function enrichImported(d) {
   if (d.profilePoints?.length >= 3) d.profileFromComputer = true;
   applyPlaceToDive(d);
   if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
+  d.profilePoints = ensureThermoProfile(d);
   if (!d.timeOut && d.timeIn && d.totalTime) {
     const [h, m] = String(d.timeIn).split(":").map(Number);
     if (Number.isFinite(h)) {
@@ -1614,6 +1691,10 @@ function renderDetail() {
       <div><b>Intervallo superficie</b>${escapeHtml(d.surfaceInterval || "—")}</div>
       <div><b>Visibilità</b>${escapeHtml(d.visibility || "—")} m</div>
       <div><b>Temp. acqua / aria</b>${escapeHtml(d.waterTemp || "—")}° / ${escapeHtml(d.airTemp || "—")}°</div>
+      <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp || "—")} °C</div>
+      <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
+      <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
+      <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}</div>
       <div><b>Corrente</b>${escapeHtml(d.current || "—")}</div>
       <div><b>Mare</b>${escapeHtml(d.seaConditions || "—")}</div>
       <div><b>Muta / zavorra</b>${escapeHtml(d.wetsuit || "—")} mm · ${escapeHtml(d.ballast || "—")} kg</div>
@@ -1625,13 +1706,9 @@ function renderDetail() {
     </div>
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-readonly="1"></canvas>
-    ${
-      thermoPoints(profileFor(d)).length >= 3
-        ? `<h3 class="serif">Temperatura / profondità</h3>
+    <h3 class="serif">Temperatura / profondità</h3>
     <canvas class="profile thermo-detail" data-thermo="1"></canvas>
-    <p class="hint">Curva dal computer: profondità in verticale, temperatura in orizzontale.</p>`
-        : ""
-    }
+    <p class="hint">Curva dal computer: profondità in verticale, temperatura in orizzontale.</p>
     <h3 class="serif">Note e sensazioni</h3>
     <p>${escapeHtml(d.notes || "—")}</p>
     <h3 class="serif">Firme — L. 70/2026</h3>
@@ -1684,9 +1761,10 @@ function renderDetail() {
   });
   frag.append(card);
   queueMicrotask(() => {
-    drawProfile(card.querySelector("canvas.profile:not([data-thermo])"), profileFor(d), false);
+    const drawn = ensureThermoProfile(d);
+    drawProfile(card.querySelector("canvas.profile:not([data-thermo])"), drawn, false);
     const th = card.querySelector("[data-thermo]");
-    if (th) drawTempDepth(th, profileFor(d));
+    if (th) drawTempDepth(th, drawn);
   });
   return frag;
 }
@@ -1706,7 +1784,6 @@ function renderEdit() {
   const form = document.createElement("form");
   form.className = "card dive-edit";
   const log = d.computerLog || {};
-  const thermo = thermoPoints(profileFor(d));
   form.innerHTML = `
     ${view.computerHint ? `<p class="hint">${escapeHtml(view.computerHint)}</p>` : ""}
     <div class="form-grid">
@@ -1730,12 +1807,16 @@ function renderEdit() {
       ${field("maxDepth", "Prof. max (m)", d.maxDepth, false, "number")}
       ${field("plannedDepth", "Prof. programmata (m)", d.plannedDepth, false, "number")}
       ${field("bottomTime", "Tempo di fondo (min)", d.bottomTime, false, "number")}
-      ${field("totalTime", "Tempo tot. (min)", d.totalTime, false, "number")}
+      ${field("totalTime", "Durata totale (min)", d.totalTime, false, "number")}
       ${field("safetyStop", "Sosta sicurezza (min)", d.safetyStop, false, "number")}
       ${field("surfaceInterval", "Intervallo superficie", d.surfaceInterval)}
       ${field("visibility", "Visibilità (m)", d.visibility, false, "number")}
       ${field("waterTemp", "Temp. acqua (°C)", d.waterTemp, false, "number")}
+      ${field("bottomTemp", "Temp. fondo (°C)", d.bottomTemp, false, "number")}
       ${field("airTemp", "Temp. aria (°C)", d.airTemp, false, "number")}
+      ${field("cns", "CNS %", d.cns, false, "number")}
+      ${field("otu", "OTU", d.otu, false, "number")}
+      ${field("tss", "TSS", d.tss, false, "number")}
       ${field("current", "Corrente", d.current)}
       ${field("seaConditions", "Mare / condizioni", d.seaConditions)}
       ${field("wetsuit", "Muta (mm)", d.wetsuit)}
@@ -1761,31 +1842,27 @@ function renderEdit() {
     <label class="field full" style="margin-top:12px">Note e sensazioni
       <textarea name="notes">${escapeHtml(d.notes)}</textarea>
     </label>
-    ${
-      log.format
-        ? `<div class="computer-log">
-      <h3 class="serif">Dati dal file computer</h3>
+    <div class="computer-log">
+      <h3 class="serif">Fisiologia e computer</h3>
       <div class="kv">
-        <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "FIT"))}</div>
+        <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "—"))}</div>
         <div><b>Prof. media</b>${escapeHtml(log.avgDepth ? log.avgDepth + " m" : "—")}</div>
         <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
-        <div><b>CNS</b>${escapeHtml(log.cns !== "" && log.cns != null ? String(log.cns) + "%" : "—")}</div>
+        <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
+        <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
+        <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}</div>
+        <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp ? d.bottomTemp + " °C" : "—")}</div>
+        <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
         <div><b>GF</b>${escapeHtml(log.gf || "—")}</div>
-        <div><b>Campioni</b>${escapeHtml(String(log.samples || 0))}</div>
+        <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
       </div>
-    </div>`
-        : ""
-    }
+    </div>
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-profile></canvas>
-    <p class="hint" data-profilehint>${d.profileFromComputer ? "Curva profondità letta dal computer." : "Il profilo si disegna da solo da profondità, tempi e sosta."}</p>
-    ${
-      thermo.length >= 3
-        ? `<h3 class="serif">Temperatura / profondità</h3>
+    <p class="hint" data-profilehint>Curva profondità dal computer, aggiornata in automatico.</p>
+    <h3 class="serif">Temperatura / profondità</h3>
     <canvas class="profile thermo-detail" data-thermo-edit></canvas>
-    <p class="hint">Arancione: temperatura. Verticale: profondità (dati FIT).</p>`
-        : ""
-    }
+    <p class="hint">Grafico dal FIT: profondità in verticale, temperatura in orizzontale (arancione anche sul profilo).</p>
     <div class="sign-legal" id="firme">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
@@ -1901,10 +1978,11 @@ function renderEdit() {
   };
   const canvas = form.querySelector("[data-profile]");
   const refreshProfile = () => {
-    if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
-    drawProfile(canvas, profileFor(d), false);
+    if (!d.profileFromComputer || (d.profilePoints || []).length < 3) d.profilePoints = autoProfile(d);
+    const pts = ensureThermoProfile(d);
+    drawProfile(canvas, pts, false);
     const th = form.querySelector("[data-thermo-edit]");
-    if (th) drawTempDepth(th, profileFor(d));
+    if (th) drawTempDepth(th, pts);
   };
   ["site", "location"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
@@ -1916,7 +1994,7 @@ function renderEdit() {
       }
     });
   });
-  ["maxDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "timeIn", "timeOut"].forEach((name) => {
+  ["maxDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "timeIn", "timeOut", "waterTemp", "bottomTemp", "airTemp"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
       d[name] = form.querySelector(`[name=${name}]`).value;
       refreshProfile();
@@ -1973,7 +2051,7 @@ function renderEdit() {
       profileFromComputer: d.profileFromComputer,
       computerLog: d.computerLog || null,
     });
-    next.profilePoints = profileFor(next);
+    next.profilePoints = ensureThermoProfile(next);
     if (next.guideSign && !String(next.guideName || "").trim()) {
       alert("Per la firma legale della guida indica le generalità (L. 70/2026).");
       return;

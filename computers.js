@@ -212,6 +212,10 @@ const FIELD_ALIASES = {
   lat: ["latitude", "lat", "gpslat"],
   lng: ["longitude", "long", "lon", "lng", "gpslon"],
   feeling: ["rating", "stars", "score", "feeling", "voto"],
+  cns: ["cns", "endcns", "o2_toxicity", "cns_load"],
+  otu: ["otu", "otus", "o2_used"],
+  tss: ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress"],
+  bottomTemp: ["bottomtemp", "tempfondo", "lowesttemperature"],
 };
 
 const NOTE_EXTRA_KEYS = [
@@ -340,6 +344,10 @@ function baseImported(partial) {
 function normalizeImported(d) {
   d.waterTemp = tempC(d.waterTemp);
   d.airTemp = tempC(d.airTemp);
+  d.bottomTemp = tempC(d.bottomTemp) || d.waterTemp;
+  d.cns = strField(d.cns);
+  d.otu = strField(d.otu);
+  d.tss = strField(d.tss);
   if (d.tank !== "" && d.tank != null) d.tank = volumeLiters(d.tank) || strField(d.tank);
   const mix = o2Percent(d.mix);
   d.mix = mix || "21";
@@ -1103,6 +1111,30 @@ function fitSemicircle(v) {
   return Number.isFinite(deg) && Math.abs(deg) <= 180 ? deg : "";
 }
 
+function lastDevVal(list, desc, names, field) {
+  for (let i = (list || []).length - 1; i >= 0; i--) {
+    const x = list[i];
+    const v = pickDev(x.dev, desc, names);
+    if (v !== "" && v != null && Number(v) !== 0xffffffff) return v;
+    if (field != null && x.fields?.[field] != null && x.fields[field] !== 0xffffffff) return x.fields[field];
+  }
+  return "";
+}
+
+function fitPct(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n === 0xffffffff) return "";
+  if (n <= 1.5) return String(Math.round(n * 1000) / 10);
+  if (n > 500) return "";
+  return String(Math.round(n * 10) / 10);
+}
+
+function fitScore(v, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > max) return "";
+  return String(Math.round(n * 10) / 10);
+}
+
 function pickDev(dev, desc, names) {
   const want = names.map((n) => n.toLowerCase());
   const rows = Object.entries(dev || {}).map(([k, v]) => ({
@@ -1281,10 +1313,16 @@ function parseFitBlock(bytes, origin) {
     if (row.diveMode == null || row.diveMode === "") row.diveMode = pickDev(row.dev, desc, ["dive_mode", "divemode"]);
     if (!row.feeling) row.feeling = Number(pickDev(row.dev, desc, ["feeling"])) || 0;
     if (!row.description) row.description = pickDev(row.dev, desc, ["description"]);
+    if (!row.elapsed) row.elapsed = pickDev(row.dev, desc, ["total_elapsed_time", "total_timer_time", "duration"]);
+    if (!row.timer) row.timer = pickDev(row.dev, desc, ["total_timer_time"]);
+    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["cns", "end_cns", "o2_toxicity", "cns_load"]);
+    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "o2_used"]);
+    if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress_score", "training_stress"]);
     return row;
   };
   bag.sessions.forEach(bindDev);
   bag.laps.forEach(bindDev);
+  bag.summaries.forEach(bindDev);
   if (bag.sessions.length && bag.summaries.length) {
     bag.sessions.forEach((s, i) => {
       const u = bag.summaries[i];
@@ -1294,6 +1332,7 @@ function parseFitBlock(bytes, origin) {
       if (!s.bottom) s.bottom = u.bottom;
       if (!s.surface) s.surface = u.surface;
       if (s.cns == null) s.cns = u.cns;
+      if (s.otu == null || s.otu === "") s.otu = u.otu;
       if (!s.hang) s.hang = u.hang;
     });
   }
@@ -1326,10 +1365,12 @@ function parseFitBlock(bytes, origin) {
     const gps = use.find((x) => x.lat) || bag.gps[0] || {};
     const maxM = fitDepthM(s.maxDepth) || (depths.length ? Math.max(...depths) : 0);
     const avgM = fitDepthM(s.avgDepth);
-    const mins =
-      fitMinutes(s.bottom) ||
-      fitMinutes(s.elapsed) ||
-      (use.length >= 2 ? String(Math.max(1, Math.round((use[use.length - 1].ts - use[0].ts) / 60))) : "");
+    const spanMin = use.length >= 2 ? Math.max(0, (use[use.length - 1].ts - use[0].ts) / 60) : 0;
+    const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => Number(fitMinutes(v)) || 0);
+    const totalMin = Math.round(Math.max(spanMin, ...durCandidates));
+    const mins = totalMin >= 1 ? String(totalMin) : "";
+    const bottomMin = Number(fitMinutes(s.bottom));
+    const fondo = bottomMin >= 1 && bottomMin <= totalMin + 2 ? String(Math.round(bottomMin)) : mins;
     const when = fitClock(s.start || s.ts || use[0]?.ts, bag.tz);
     const modeNum = Number(s.diveMode);
     const mode =
@@ -1344,6 +1385,8 @@ function parseFitBlock(bytes, origin) {
     const airCands = use.filter((x) => !(x.depth > 1.2) && x.temp != null).map((x) => x.temp);
     const air = airCands.length ? String(airCands[0]) : tempC(s.maxTemp);
     const last = use[use.length - 1] || {};
+    const deep = use.reduce((a, x) => ((x.depth || 0) > (a.depth || 0) ? x : a), use[0] || {});
+    const bottomTemp = deep?.temp != null ? String(deep.temp) : water;
     const lat = gps.lat || s.lat || "";
     const lng = gps.lng || s.lng || "";
     const hang = fitMinutes(s.hang);
@@ -1353,7 +1396,21 @@ function parseFitBlock(bytes, origin) {
     const extras = {
       format: brand,
       avgDepth: avgM || "",
-      cns: s.cns != null && s.cns !== "" ? s.cns : last.fields?.[79] ?? "",
+      cns: fitPct(
+        s.cns != null && s.cns !== ""
+          ? s.cns
+          : lastDevVal(use, desc, ["cns", "end_cns", "o2_toxicity", "cns_load"], 79)
+      ),
+      otu: fitScore(
+        s.otu != null && s.otu !== "" ? s.otu : lastDevVal(use, desc, ["otu", "otus", "o2_used"]),
+        800
+      ),
+      tss: fitScore(
+        s.tss != null && s.tss !== ""
+          ? s.tss
+          : lastDevVal(use, desc, ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress_score", "training_stress"]),
+        500
+      ),
       ndl: last.fields?.[78] ?? "",
       tts: last.fields?.[77] ?? "",
       mode,
@@ -1368,12 +1425,16 @@ function parseFitBlock(bytes, origin) {
         timeOut: timeIn && mins ? addMinutes(timeIn, mins) : "",
         maxDepth: maxM ? String(maxM) : "",
         plannedDepth: maxM ? String(maxM) : "",
-        bottomTime: mins,
+        bottomTime: fondo,
         totalTime: mins,
         surfaceInterval: fitMinutes(s.surface) || fitMinutes(s.surfaceTime),
         safetyStop: hang || (maxM >= 10 ? "3" : ""),
         waterTemp: water,
+        bottomTemp,
         airTemp: air && air !== water ? air : air || "",
+        cns: extras.cns !== "" && extras.cns != null ? String(extras.cns) : "",
+        otu: extras.otu !== "" && extras.otu != null ? String(extras.otu) : "",
+        tss: extras.tss !== "" && extras.tss != null ? String(extras.tss) : "",
         mix: o2,
         tank: bag.tankVol[0] != null ? volumeLiters(bag.tankVol[0]) : "",
         pressureStart: bag.tankStart[0] != null ? fitPressureBar(bag.tankStart[0]) : bag.tanks[0] != null ? fitPressureBar(bag.tanks[0]) : "",
@@ -1397,6 +1458,8 @@ function parseFitBlock(bytes, origin) {
           extras.avgDepth ? `prof. media ${extras.avgDepth} m` : "",
           extras.mode ? `modo ${extras.mode}` : "",
           extras.cns !== "" && extras.cns != null ? `CNS ${extras.cns}%` : "",
+          extras.otu !== "" && extras.otu != null ? `OTU ${extras.otu}` : "",
+          extras.tss !== "" && extras.tss != null ? `TSS ${extras.tss}` : "",
           extras.gf ? `GF ${extras.gf}` : "",
           extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
           hang ? `sosta ${hang} min` : "",
@@ -1465,6 +1528,7 @@ function collectFit(global, rec, bag, desc) {
       start: rec[2] || ts,
       sport: rec[5],
       elapsed: rec[7] ?? rec[8],
+      timer: rec[8],
       maxTemp: rec[58] ?? rec[14],
       avgTemp: rec[57],
       minTemp: rec[80],
@@ -1496,6 +1560,7 @@ function collectFit(global, rec, bag, desc) {
       maxDepth: rec[3],
       surface: rec[4],
       cns: rec[6],
+      otu: rec[9],
       bottom: rec[11],
       diveNumber: rec[10],
       hang: rec[26] ?? rec[16],
