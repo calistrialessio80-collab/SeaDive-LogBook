@@ -343,7 +343,7 @@ function daysSinceBackup() {
 }
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("./sw.js?v=9", { updateViaCache: "none" }).catch(() => {});
+  navigator.serviceWorker.register("./sw.js?v=10", { updateViaCache: "none" }).catch(() => {});
 }
 
 let state = load();
