@@ -772,21 +772,30 @@ function downsampleProfile(pts) {
   const uniq = [];
   cleaned.forEach((p) => {
     const prev = uniq[uniq.length - 1];
-    if (!prev || Math.abs(prev.t - p.t) > 0.04 || Math.abs(prev.d - p.d) > 0.05) uniq.push(p);
+    if (!prev || Math.abs(prev.t - p.t) > 0.008 || Math.abs(prev.d - p.d) > 0.04) uniq.push(p);
     else if (p.d > prev.d) uniq[uniq.length - 1] = { ...p, c: p.c != null ? p.c : prev.c };
     else if (prev.c == null && p.c != null) prev.c = p.c;
   });
-  if (uniq.length <= 100) return uniq;
+  if (uniq.length <= 220) return uniq;
+  const keep = new Set([0, uniq.length - 1]);
   let deepI = 0;
   uniq.forEach((p, i) => {
     if (p.d > uniq[deepI].d) deepI = i;
   });
+  keep.add(deepI);
+  for (let i = 1; i < uniq.length - 1; i++) {
+    const a = uniq[i - 1].d;
+    const b = uniq[i].d;
+    const c = uniq[i + 1].d;
+    if ((b >= a && b > c) || (b <= a && b < c) || Math.abs(b - a) >= 0.8) keep.add(i);
+  }
+  const extrema = [...keep].sort((a, b) => a - b).map((i) => uniq[i]);
+  if (extrema.length >= 80 && extrema.length <= 220) return extrema;
   const out = [];
-  const step = (uniq.length - 1) / 99;
-  for (let i = 0; i < 100; i++) out.push(uniq[Math.round(i * step)]);
-  const deep = uniq[deepI];
-  if (!out.some((p) => p.t === deep.t && p.d === deep.d)) {
-    out.push(deep);
+  const step = (uniq.length - 1) / 179;
+  for (let i = 0; i < 180; i++) out.push(uniq[Math.round(i * step)]);
+  if (!out.some((p) => p.t === uniq[deepI].t && p.d === uniq[deepI].d)) {
+    out.push(uniq[deepI]);
     out.sort((a, b) => a.t - b.t);
   }
   return out;
@@ -1089,9 +1098,49 @@ function fitClock(v, offset) {
 function fitDepthM(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0 || n >= 0xffffffff) return 0;
-  if (n > 130 && n <= 200000) return Math.round(n / 100) / 10;
-  if (n > 200000) return 0;
-  return Math.round(n * 10) / 10;
+  if (n <= 80) return Math.round(n * 10) / 10;
+  if (n <= 130) return Math.round(n * 10) / 10;
+  if (n <= 13000) return Math.round(n) / 100;
+  if (n <= 130000) return Math.round(n) / 1000;
+  return 0;
+}
+
+function pickSampleDepth(dev, desc) {
+  const rows = Object.entries(dev || {}).map(([k, v]) => ({
+    v,
+    name: String(desc.get(k)?.name || "").toLowerCase().replace(/\s+/g, "_"),
+  }));
+  const hit = rows.find((r) => r.name === "depth" || r.name === "dive_depth" || r.name === "current_depth");
+  if (hit && hit.v != null && hit.v !== "") return fitDepthM(hit.v);
+  return 0;
+}
+
+function trimDiveSamples(samples) {
+  if (!samples?.length) return samples || [];
+  let a = samples.findIndex((s) => s.depth >= 0.7);
+  if (a < 0) return samples;
+  let b = samples.length - 1;
+  for (let i = samples.length - 1; i >= 0; i--) {
+    if (samples[i].depth >= 0.7) {
+      b = i;
+      break;
+    }
+  }
+  return samples.slice(Math.max(0, a - 1), Math.min(samples.length - 1, b + 1) + 1);
+}
+
+function alignDepthToMax(points, maxM) {
+  const peak = Math.max(0, ...points.map((p) => Number(p.d) || 0));
+  if (!(maxM > 1) || !(peak > 0.2)) return points;
+  const ratio = maxM / peak;
+  let k = 0;
+  if (ratio > 8 && ratio < 12.5) k = 10;
+  else if (ratio > 80 && ratio < 125) k = 100;
+  else if (ratio > 0.08 && ratio < 0.125) k = 0.1;
+  else if (Math.abs(ratio - 1) < 0.35 || (ratio > 0.5 && ratio < 2)) return points;
+  else return points;
+  if (!k) return points;
+  return points.map((p) => ({ ...p, d: Math.round(p.d * k * 10) / 10 }));
 }
 
 function fitSampleTemp(v) {
@@ -1213,7 +1262,9 @@ function fitPressureBar(v) {
 function inferFitChannels(samples, desc) {
   if (!samples.length) return;
   samples.forEach((s) => {
-    if (!(s.depth > 0)) s.depth = fitDepthM(pickDev(s.dev, desc, ["depth"]));
+    const fromDev = pickSampleDepth(s.dev, desc);
+    if (fromDev > 0) s.depth = fromDev;
+    else if (!(s.depth > 0)) s.depth = fitDepthM(pickDev(s.dev, desc, ["depth"]));
     if (s.temp == null) s.temp = fitSampleTemp(pickDev(s.dev, desc, ["temperature", "temp", "watertemp"]));
     const f = s.fields || {};
     if (!(s.depth > 0)) {
@@ -1236,7 +1287,7 @@ function inferFitChannels(samples, desc) {
     if (vals.length < 4) return;
     const min = Math.min(...vals);
     const max = Math.max(...vals);
-    if ((name.includes("depth") && !name.includes("stop")) || (min >= 0 && max > 4 && max < 130 && max - min > 1.5)) {
+    if ((name.includes("depth") && !/max|avg|average|stop|ndl/.test(name)) || (min >= 0 && max > 4 && max < 80 && max - min > 1.5 && !/max|avg/.test(name))) {
       samples.forEach((s) => {
         if (s.depth > 0) return;
         const m = fitDepthM(s.dev[k]);
@@ -1397,16 +1448,17 @@ function parseFitBlock(bytes, origin) {
     const next = sources[idx + 1];
     const until = next ? next.start || next.ts || Infinity : s.ts && s.start && s.ts > s.start ? s.ts : Infinity;
     const samples = bag.samples.filter((x) => x.ts >= start && (until === Infinity || x.ts <= until));
-    const use = samples.length ? samples : bag.samples;
+    const use = trimDiveSamples(samples.length ? samples : bag.samples);
     const t0 = use[0]?.ts || start;
     const span = (use[use.length - 1]?.ts || 0) - t0;
     let lastC = null;
-    const profilePoints = use.some((x) => x.depth > 0)
+    const rawProfile = use.some((x) => x.depth > 0)
       ? use.map((x, i) => {
           const c = sampleTemp({ c: x.temp });
           if (c != null) lastC = c;
+          const tMin = span > 2 ? (x.ts - t0) / 60 : (i * Math.max(10, span || 10)) / 60;
           const pt = {
-            t: Math.max(0, Math.round(((span > 1 ? (x.ts - t0) / 60 : (i * 10) / 60) * 10)) / 10),
+            t: Math.max(0, Math.round(tMin * 100) / 100),
             d: Math.round((x.depth || 0) * 10) / 10,
           };
           if (lastC != null) pt.c = lastC;
@@ -1417,6 +1469,7 @@ function parseFitBlock(bytes, origin) {
     const temps = use.map((x) => x.temp).filter((n) => n != null && n > -5 && n < 45);
     const gps = use.find((x) => x.lat) || bag.gps[0] || {};
     const maxM = fitDepthM(s.maxDepth) || (depths.length ? Math.max(...depths) : 0);
+    const profilePoints = alignDepthToMax(rawProfile, maxM);
     const avgM = fitDepthM(s.avgDepth);
     const spanMin = use.length >= 2 ? Math.max(0, (use[use.length - 1].ts - use[0].ts) / 60) : 0;
     const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => Number(fitMinutes(v)) || 0);
@@ -1571,11 +1624,13 @@ function collectFit(global, rec, bag, desc) {
     if (rec[7] != null) bag.gfHigh = rec[7];
   }
 
-  if (global === 20 || ((rec[74] != null || rec[73] != null) && global !== 18 && global !== 19 && global !== 268 && global !== 0 && global !== 23)) {
+  const isRecord = global === 20;
+  const hasSampleDepth = pickSampleDepth(rec.dev, desc) > 0 || rec[74] != null;
+  if (isRecord || (hasSampleDepth && global !== 18 && global !== 19 && global !== 268 && global !== 0 && global !== 23 && global !== 206)) {
     const lat = fitSemicircle(rec[0]);
     const lng = fitSemicircle(rec[1]);
     if (lat !== "" && lng !== "") bag.gps.push({ lat, lng });
-    let depth = fitDepthM(rec[74]);
+    let depth = pickSampleDepth(rec.dev, desc) || fitDepthM(rec[74]);
     if (!depth && rec[73] > 110000 && rec[73] < 2500000) {
       depth = Math.max(0, Math.round(((rec[73] - 101325) / 10000) * 10) / 10);
     }

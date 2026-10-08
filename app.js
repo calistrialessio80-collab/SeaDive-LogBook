@@ -1293,6 +1293,23 @@ function diveCard(d) {
   return art;
 }
 
+function fillOcean(ctx, w, h) {
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, "#9fd4f0");
+  g.addColorStop(0.18, "#4aa3d4");
+  g.addColorStop(0.48, "#1c5f9a");
+  g.addColorStop(0.78, "#0c3260");
+  g.addColorStop(1, "#04101f");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function profileExtent(pts) {
+  const maxT = Math.max(0.5, ...pts.map((p) => Number(p.t) || 0));
+  const maxD = Math.max(1, ...pts.map((p) => Number(p.d) || 0));
+  return { maxT: maxT * 1.03, maxD: maxD * 1.08 };
+}
+
 function drawSpark(canvas, points) {
   const pts = [...(points || [])].sort((a, b) => a.t - b.t);
   const r = canvas.getBoundingClientRect();
@@ -1303,16 +1320,11 @@ function drawSpark(canvas, points) {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, "#24345c");
-  g.addColorStop(1, "#12182c");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
+  fillOcean(ctx, w, h);
   if (!pts.length) return;
-  const maxT = Math.max(1, ...pts.map((p) => p.t));
-  const maxD = Math.max(8, ...pts.map((p) => p.d));
+  const { maxT, maxD } = profileExtent(pts);
   const x = (t) => (t / maxT) * w;
-  const y = (d) => (d / maxD) * h * 0.78 + h * 0.12;
+  const y = (d) => (d / maxD) * h * 0.86 + h * 0.08;
   ctx.beginPath();
   pts.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p.d)) : ctx.moveTo(x(p.t), y(p.d))));
   ctx.strokeStyle = "#ffffff";
@@ -1365,16 +1377,12 @@ function drawTempDepth(canvas, points) {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
-  const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, "#1a2744");
-  bg.addColorStop(1, "#101624");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, w, h);
+  fillOcean(ctx, w, h);
   if (pts.length < 2) return;
   const temps = pts.map(pointTemp);
   const minC = Math.min(...temps) - 0.5;
   const maxC = Math.max(...temps) + 0.5;
-  const maxD = Math.max(8, ...pts.map((p) => Number(p.d)));
+  const maxD = Math.max(1, ...pts.map((p) => Number(p.d))) * 1.08;
   const padL = 8 * dpr;
   const padR = 8 * dpr;
   const padT = 22 * dpr;
@@ -2421,46 +2429,61 @@ function drawProfile(canvas, points, editable, onChange) {
   const paint = () => {
     const w = canvas.width;
     const h = canvas.height;
+    const dpr = devicePixelRatio || 1;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "rgba(42,212,201,0.06)";
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = "rgba(231,251,247,0.12)";
-    ctx.lineWidth = devicePixelRatio;
-    for (let i = 1; i < 4; i++) {
-      const y = (h / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
+    fillOcean(ctx, w, h);
     if (!pts.length) return;
-    const maxT = Math.max(60, ...pts.map((p) => p.t));
-    const maxD = Math.max(30, ...pts.map((p) => p.d));
-    const x = (t) => (t / maxT) * w;
-    const y = (d) => (d / maxD) * h;
+    const { maxT, maxD } = profileExtent(pts);
+    const padL = 28 * dpr;
+    const padR = 10 * dpr;
+    const padT = 12 * dpr;
+    const padB = 22 * dpr;
+    const x = (t) => padL + (t / maxT) * (w - padL - padR);
+    const y = (d) => padT + (d / maxD) * (h - padT - padB);
+    ctx.strokeStyle = "rgba(255,255,255,0.16)";
+    ctx.lineWidth = dpr;
+    const steps = maxD > 25 ? 5 : maxD > 12 ? 4 : 3;
+    for (let i = 1; i <= steps; i++) {
+      const dd = (maxD / steps) * i;
+      const yy = y(dd);
+      ctx.beginPath();
+      ctx.moveTo(padL, yy);
+      ctx.lineTo(w - padR, yy);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.font = `${10 * dpr}px Outfit, sans-serif`;
+      ctx.fillText(`${Math.round(dd)} m`, 4 * dpr, yy + 3 * dpr);
+    }
     ctx.beginPath();
     pts.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p.d)) : ctx.moveTo(x(p.t), y(p.d))));
-    ctx.strokeStyle = "#2ad4c9";
-    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2.2 * dpr;
+    ctx.lineJoin = "round";
     ctx.stroke();
-    ctx.lineTo(x(pts[pts.length - 1].t), h);
-    ctx.lineTo(x(pts[0].t), h);
+    ctx.lineTo(x(pts[pts.length - 1].t), h - padB);
+    ctx.lineTo(x(pts[0].t), h - padB);
     ctx.closePath();
-    ctx.fillStyle = "rgba(42,212,201,0.12)";
+    ctx.fillStyle = "rgba(4, 16, 31, 0.28)";
     ctx.fill();
-    if (pts.length <= 24) {
-      pts.forEach((p) => {
-        ctx.beginPath();
-        ctx.arc(x(p.t), y(p.d), 4 * devicePixelRatio, 0, Math.PI * 2);
-        ctx.fillStyle = "#edd9a3";
-        ctx.fill();
-      });
-    }
+    let deep = pts[0];
+    pts.forEach((p) => {
+      if (p.d >= deep.d) deep = p;
+    });
+    ctx.beginPath();
+    ctx.arc(x(deep.t), y(deep.d), 4.2 * dpr, 0, Math.PI * 2);
+    ctx.fillStyle = "#7ee0d4";
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.font = `${10 * dpr}px Outfit, sans-serif`;
+    ctx.fillText("0 min", padL, h - 6 * dpr);
+    ctx.textAlign = "right";
+    ctx.fillText(`${Math.round(Math.max(...pts.map((p) => p.t)))} min`, w - padR, h - 6 * dpr);
+    ctx.textAlign = "left";
     const temps = pts.map(pointTemp).filter((n) => n != null);
     if (temps.length >= 3) {
       const lo = Math.min(...temps) - 0.4;
       const hi = Math.max(...temps) + 0.4;
-      const yT = (c) => h - ((c - lo) / Math.max(0.6, hi - lo)) * h * 0.8 - h * 0.08;
+      const yT = (c) => h - padB - ((c - lo) / Math.max(0.6, hi - lo)) * (h - padT - padB) * 0.86;
       ctx.beginPath();
       let started = false;
       pts.forEach((p) => {
@@ -2471,8 +2494,8 @@ function drawProfile(canvas, points, editable, onChange) {
           started = true;
         } else ctx.lineTo(x(p.t), yT(c));
       });
-      ctx.strokeStyle = "#ff8a4a";
-      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.strokeStyle = "#ffb45a";
+      ctx.lineWidth = 1.8 * dpr;
       ctx.stroke();
     }
   };
