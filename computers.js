@@ -1295,6 +1295,49 @@ function isTssName(name) {
   return /(^|_)(hr)?tss(_|$)|relative_effort|training_stress|training_load|dive_load/.test(name);
 }
 
+function isSacName(name) {
+  return /(^|_)(sac|rmv)(_|$)|air_consumption|gas_consumption|surface_air|volume_sac|consumo/.test(name);
+}
+
+function isTankPressName(name) {
+  return /tank_pressure|cylinder_pressure|cyl_pressure|gas_pressure|start_pressure|end_pressure|begin_pressure/.test(name) && !/water|ambient/.test(name);
+}
+
+function isTankVolName(name) {
+  return /tank_vol|tank_size|cylinder_vol|cylinder_size|cyl_size|tankvolume/.test(name);
+}
+
+function fitSacVal(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff) return "";
+  if (n > 80 && n <= 8000) return String(Math.round(n) / 100);
+  if (n > 80) return "";
+  return round1(n);
+}
+
+function computeFitSac(vol, p0, p1, minutes, avgM, maxM) {
+  const v = Number(vol) > 0 ? Number(vol) : 12;
+  const a = Number(p0);
+  const b = Number(p1);
+  const t = Number(minutes);
+  if (!(a > b && b >= 0 && a <= 350 && t > 0)) return "";
+  const depth = Number(avgM) > 0.5 ? Number(avgM) : Number(maxM) * 0.65;
+  const ata = Math.max(1.05, 1 + Math.max(0, depth) / 10);
+  return round1((v * (a - b)) / (t * ata));
+}
+
+function sacFromGasUsed(used, minutes, avgM, maxM) {
+  let liters = Number(used);
+  if (!Number.isFinite(liters) || liters <= 0) return "";
+  if (liters > 400) liters /= 1000;
+  if (liters <= 0 || liters > 400) return "";
+  const t = Number(minutes);
+  if (!(t > 0)) return "";
+  const depth = Number(avgM) > 0.5 ? Number(avgM) : Number(maxM) * 0.65;
+  const ata = Math.max(1.05, 1 + Math.max(0, depth) / 10);
+  return round1(liters / (t * ata));
+}
+
 function bestNum(vals, mapFn) {
   let best = "";
   vals.forEach((v) => {
@@ -1358,6 +1401,11 @@ function inferFitChannels(samples, desc) {
       }
     }
     if (s.temp == null) s.temp = fitSampleTemp(f[13] ?? f[57] ?? f[58]);
+    if (!(s.tankBar > 0)) {
+      const tp = pickDev(s.dev, desc, ["tank_pressure", "cylinder_pressure", "cyl_pressure", "gas_pressure"]);
+      const bar = fitPressureBar(tp);
+      if (bar) s.tankBar = Number(bar);
+    }
   });
   if (samples.filter((s) => s.depth > 0).length >= Math.max(4, samples.length * 0.25)) return;
   const keys = new Set();
@@ -1422,6 +1470,7 @@ function parseFitBlock(bytes, origin) {
     tankStart: [],
     tankEnd: [],
     tankVol: [],
+    gasUsed: [],
     mfg: 0,
     product: "",
     tz: 0,
@@ -1503,7 +1552,10 @@ function parseFitBlock(bytes, origin) {
     if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["hrtss", "tss", "hr_tss", "relative_effort", "training_stress_score", "training_stress", "training_load"]);
     if (!row.ascentAvg) row.ascentAvg = pickDev(row.dev, desc, ["avg_ascent_rate", "average_ascent_rate", "ascent_rate", "ascent_speed", "vertical_speed"]);
     if (!row.ascentMax) row.ascentMax = pickDev(row.dev, desc, ["max_ascent_rate", "max_ascent", "ascent_max"]);
-    if (!row.sacFit) row.sacFit = pickDev(row.dev, desc, ["sac", "rmv", "air_consumption", "surface_air_consumption"]);
+    if (!row.sacFit) row.sacFit = pickDev(row.dev, desc, ["sac", "rmv", "air_consumption", "surface_air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac"]);
+    if (!row.pressStart) row.pressStart = pickDev(row.dev, desc, ["start_pressure", "tank_pressure_start", "begin_pressure"]);
+    if (!row.pressEnd) row.pressEnd = pickDev(row.dev, desc, ["end_pressure", "tank_pressure_end"]);
+    if (!row.tankVol) row.tankVol = pickDev(row.dev, desc, ["tank_volume", "tank_size", "cylinder_size", "cylinder_volume"]);
     return row;
   };
   bag.sessions.forEach(bindDev);
@@ -1520,6 +1572,9 @@ function parseFitBlock(bytes, origin) {
       if (s.cns == null) s.cns = u.cns;
       if (s.otu == null || s.otu === "") s.otu = u.otu;
       if (!s.hang) s.hang = u.hang;
+      if (!s.sacFit) s.sacFit = u.sacVol || u.rmv;
+      if (!s.ascentAvg) s.ascentAvg = u.ascentAvg;
+      if (!s.ascentMax) s.ascentMax = u.ascentMax;
     });
   }
   const brand = bag.product || (bag.mfg === 23 ? "Suunto" : bag.mfg === 1 ? "Garmin" : "Computer FIT");
@@ -1619,8 +1674,38 @@ function parseFitBlock(bytes, origin) {
       samples: use.filter((x) => x.depth > 0).length,
       ascentAvg: fitAscentMmin(s.ascentAvg) || ascentFromPoints(profilePoints).avg,
       ascentMax: fitAscentMmin(s.ascentMax) || ascentFromPoints(profilePoints).max,
-      sacFit: fitScore(s.sacFit, 80),
+      sacFit: "",
     };
+    const sampleBars = use.map((x) => Number(x.tankBar)).filter((n) => n > 20 && n < 350);
+    const pStart =
+      fitPressureBar(bag.tankStart[0]) ||
+      fitPressureBar(s.pressStart) ||
+      fitPressureBar(pickBagDev(bag, (n) => /start_pressure|begin_pressure|tank_pressure_start/.test(n))) ||
+      (sampleBars.length ? String(sampleBars[0]) : "") ||
+      (bag.tanks[0] != null ? fitPressureBar(bag.tanks[0]) : "");
+    const pEnd =
+      fitPressureBar(bag.tankEnd[0]) ||
+      fitPressureBar(s.pressEnd) ||
+      fitPressureBar(pickBagDev(bag, (n) => /end_pressure|tank_pressure_end/.test(n))) ||
+      (sampleBars.length ? String(sampleBars[sampleBars.length - 1]) : "") ||
+      (bag.tanks.length ? fitPressureBar(bag.tanks[bag.tanks.length - 1]) : "");
+    const tankL =
+      volumeLiters(bag.tankVol[0]) ||
+      volumeLiters(s.tankVol) ||
+      volumeLiters(pickBagDev(bag, isTankVolName)) ||
+      (pStart && pEnd ? "12" : "");
+    extras.sacFit = bestNum(
+      [
+        pickBagDev(bag, isSacName),
+        s.sacFit,
+        s.sacVol,
+        s.rmv,
+        lastDevVal(use, desc, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac"]),
+      ],
+      fitSacVal
+    );
+    if (!extras.sacFit) extras.sacFit = computeFitSac(tankL, pStart, pEnd, mins, avgM, maxM);
+    if (!extras.sacFit) extras.sacFit = sacFromGasUsed(bag.gasUsed[0], mins, avgM, maxM);
     if (!extras.otu) extras.otu = estimateOtu(avgM, maxM, o2, mins);
     const fromProf = ascentFromPoints(profilePoints);
     const ratePc = extras.ascentAvg;
@@ -1653,14 +1738,9 @@ function parseFitBlock(bytes, origin) {
         ascentMax,
         sac: extras.sacFit || "",
         mix: o2,
-        tank: bag.tankVol[0] != null ? volumeLiters(bag.tankVol[0]) : "",
-        pressureStart: bag.tankStart[0] != null ? fitPressureBar(bag.tankStart[0]) : bag.tanks[0] != null ? fitPressureBar(bag.tanks[0]) : "",
-        pressureEnd:
-          bag.tankEnd[0] != null
-            ? fitPressureBar(bag.tankEnd[0])
-            : bag.tanks.length
-              ? fitPressureBar(bag.tanks[bag.tanks.length - 1])
-              : "",
+        tank: tankL,
+        pressureStart: pStart,
+        pressureEnd: pEnd,
         seaConditions: bag.waterType === 1 ? "Acqua di mare" : bag.waterType === 0 ? "Acqua dolce" : "",
         site: lat !== "" ? "Punto GPS" : brand,
         lat,
@@ -1677,6 +1757,7 @@ function parseFitBlock(bytes, origin) {
           extras.cns !== "" && extras.cns != null ? `CNS ${extras.cns}%` : "",
           extras.otu !== "" && extras.otu != null ? `OTU ${extras.otu}` : "",
           extras.tss !== "" && extras.tss != null ? `TSS ${extras.tss}` : "",
+          extras.sacFit ? `SAC ${extras.sacFit} L/min` : "",
           ascentRate ? `risalita ${ascentRate} m/min` : "",
           extras.gf ? `GF ${extras.gf}` : "",
           extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
@@ -1732,12 +1813,14 @@ function collectFit(global, rec, bag, desc) {
     }
     const temp = fitSampleTemp(rec[13]);
     if (temp != null) bag.temps.push(temp);
+    const tankBar = Number(fitPressureBar(pickDev(rec.dev, desc, ["tank_pressure", "cylinder_pressure", "cyl_pressure", "gas_pressure"])));
     bag.samples.push({
       ts: ts || 0,
       depth,
       temp,
       lat,
       lng,
+      tankBar: tankBar > 0 ? tankBar : "",
       dev: rec.dev,
       fields: rec,
     });
@@ -1769,11 +1852,11 @@ function collectFit(global, rec, bag, desc) {
     const o2 = rec[1] != null ? rec[1] : rec[2];
     if (o2 != null) bag.gases.push(o2 > 1.5 ? o2 : o2 * 100);
   }
-  if (global === 319 && rec[2] != null) bag.tanks.push(rec[2]);
+  if (global === 319 && (rec[1] != null || rec[2] != null)) bag.tanks.push(rec[1] ?? rec[2]);
   if (global === 323) {
-    if (rec[2] != null) bag.tankStart.push(rec[2]);
-    if (rec[3] != null) bag.tankEnd.push(rec[3]);
-    if (rec[4] != null) bag.tankVol.push(rec[4]);
+    if (rec[1] != null) bag.tankStart.push(rec[1]);
+    if (rec[2] != null) bag.tankEnd.push(rec[2]);
+    if (rec[3] != null) bag.gasUsed.push(rec[3]);
   }
   if (global === 268) {
     bag.summaries.push({
@@ -1786,9 +1869,11 @@ function collectFit(global, rec, bag, desc) {
       otu: rec[9],
       bottom: rec[11],
       diveNumber: rec[10],
-      hang: rec[26] ?? rec[16],
-      minTemp: rec[17],
-      avgTemp: rec[18],
+      sacVol: rec[13],
+      rmv: rec[14],
+      hang: rec[25] ?? rec[26],
+      ascentAvg: rec[17] != null ? Number(rec[17]) / 1000 : "",
+      ascentMax: rec[23] != null ? Number(rec[23]) / 1000 : "",
     });
   }
 }
