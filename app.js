@@ -67,6 +67,7 @@ const emptyDive = () => ({
   ascentRate: "",
   ascentMax: "",
   sac: "",
+  gf: "",
   ndl: "",
   deco: false,
   noDeco: true,
@@ -580,10 +581,13 @@ function applyDiveMetrics(d) {
   d.ascentMax = ascent.max || "";
   const calc = diveSac(d);
   const imported = Number(d.computerLog?.sacFit);
+  const already = Number(d.sac);
   if (d.sacManual) {
     /* SAC digitato a mano */
   } else if (imported > 0.5 && imported < 80) {
     d.sac = String(Math.round(imported * 10) / 10);
+  } else if (already > 0.5 && already < 80) {
+    d.sac = String(Math.round(already * 10) / 10);
   } else if (calc > 0) {
     d.sac = String(Math.round(calc * 10) / 10);
   } else {
@@ -1664,16 +1668,45 @@ async function ingestFiles(fileList) {
   const files = [...fileList];
   const found = [];
   const notes = [];
+  const parsed = [];
   for (const file of files) {
     try {
       const buf = await file.arrayBuffer();
       const { dives, format } = api.parseComputerBytes(file.name, buf);
       notes.push(`${file.name}: ${dives.length} immersioni (${format})`);
-      found.push(...dives);
+      parsed.push({ name: file.name, dives, format });
     } catch (err) {
       notes.push(`${file.name}: ${err.message}`);
     }
   }
+  const used = new Set();
+  const stem = (n) =>
+    String(n || "")
+      .replace(/\.[^.]+$/, "")
+      .toLowerCase();
+  parsed.forEach((a, i) => {
+    if (used.has(i)) return;
+    const other = parsed.findIndex(
+      (b, j) =>
+        j !== i &&
+        !used.has(j) &&
+        stem(a.name) === stem(b.name) &&
+        /json/i.test(a.format) !== /json/i.test(b.format) &&
+        (/fit/i.test(a.format) || /json/i.test(a.format)) &&
+        (/fit/i.test(b.format) || /json/i.test(b.format))
+    );
+    if (other >= 0 && a.dives[0] && parsed[other].dives[0] && api.mergeSuuntoPair) {
+      const jsonDive = /json/i.test(a.format) ? a.dives[0] : parsed[other].dives[0];
+      const fitDive = /fit/i.test(a.format) ? a.dives[0] : parsed[other].dives[0];
+      found.push(api.mergeSuuntoPair(jsonDive, fitDive));
+      used.add(i);
+      used.add(other);
+      notes.push(`${a.name} + ${parsed[other].name}: uniti JSON e FIT`);
+      return;
+    }
+    found.push(...a.dives);
+    used.add(i);
+  });
   if (found.length) {
     const { added, last } = await mergeImported(found);
     view.computerHint = `${notes.join(" · ")} → ${added} immersioni nel diario.`;
@@ -1995,7 +2028,7 @@ function renderDetail() {
       <div><b>Pressione</b>${escapeHtml(d.pressureStart || "—")} → ${escapeHtml(d.pressureEnd || "—")} bar</div>
       <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
       <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
-      <div><b>GF</b>${escapeHtml(d.computerLog?.gf || "—")}</div>
+      <div><b>GF</b>${escapeHtml(d.gf || d.computerLog?.gf || "—")}</div>
       <div><b>Strumentazione</b>${escapeHtml(d.instruments || "—")}</div>
       <div><b>Brevetto in scheda</b>${escapeHtml(d.certOnDive || "—")}</div>
     </div>
@@ -2130,6 +2163,7 @@ function renderEdit() {
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
       ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "number")}
+      ${field("gf", "GF (low/high)", d.gf || d.computerLog?.gf || "", false, "text")}
       ${field("ndl", "NDL residuo (min)", d.ndl, false, "number")}
       ${field("instruments", "Strumentazione", d.instruments)}
     </div>
@@ -2169,7 +2203,7 @@ function renderEdit() {
         <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
         <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
         <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
-        <div><b>GF</b>${escapeHtml(log.gf || "—")}</div>
+        <div><b>GF</b>${escapeHtml(d.gf || log.gf || "—")}</div>
         <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
         ${log.hrAvg ? `<div><b>FC media</b>${escapeHtml(String(log.hrAvg))} bpm</div>` : ""}
         ${log.hrMax ? `<div><b>FC max</b>${escapeHtml(String(log.hrMax))} bpm</div>` : ""}

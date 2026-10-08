@@ -218,7 +218,9 @@ const FIELD_ALIASES = {
   bottomTemp: ["bottomtemp", "tempfondo", "lowesttemperature", "mintemp"],
   ascentRate: ["ascentrate", "avgascentrate", "ascent_rate", "verticalspeed"],
   ascentMax: ["maxascentrate", "maxascent", "ascentmax"],
-  sac: ["sac", "rmv", "airconsumption", "surfaceairconsumption"],
+  sac: ["sac", "rmv", "airconsumption", "surfaceairconsumption", "gasconsumption", "ventilation"],
+  avgDepth: ["averagedepth", "avgdepth", "meandepth", "depthavg", "depthaverage"],
+  ndl: ["ndl", "nodectime", "nodeco", "ndltime"],
 };
 
 const NOTE_EXTRA_KEYS = [
@@ -354,6 +356,7 @@ function normalizeImported(d) {
   d.ascentRate = strField(d.ascentRate);
   d.ascentMax = strField(d.ascentMax);
   d.sac = strField(d.sac);
+  d.gf = strField(d.gf) || strField(d.computerLog?.gf);
   if (d.tank !== "" && d.tank != null) d.tank = volumeLiters(d.tank) || strField(d.tank);
   const mix = o2Percent(d.mix);
   d.mix = mix || "21";
@@ -985,8 +988,242 @@ function collectJsonDives(data, acc = []) {
   return acc;
 }
 
+function kelvinC(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n > 200 && n < 400) return String(Math.round((n - 273.15) * 10) / 10);
+  return tempC(n);
+}
+
+function paToBar(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n > 50000) return String(Math.round(n / 100000));
+  if (n > 400) return String(Math.round(n / 100));
+  return String(Math.round(n * 10) / 10);
+}
+
+function pickDeep(obj, names) {
+  if (!obj || typeof obj !== "object") return "";
+  const want = names.map((n) => n.toLowerCase());
+  const stack = [obj];
+  let found = "";
+  while (stack.length) {
+    const cur = stack.pop();
+    if (!cur || typeof cur !== "object") continue;
+    Object.entries(cur).forEach(([k, v]) => {
+      if (v == null || v === "") return;
+      if (typeof v === "object") {
+        stack.push(v);
+        return;
+      }
+      if (want.includes(String(k).toLowerCase())) found = v;
+    });
+  }
+  return found;
+}
+
+function parseSuuntoDeviceLog(root) {
+  const log = root?.DeviceLog || root?.deviceLog;
+  if (!log || typeof log !== "object") return null;
+  const header = log.Header || log.header || {};
+  const samples = log.Samples || log.samples || [];
+  const activity = Number(header.ActivityType);
+  const depthObj = header.Depth && typeof header.Depth === "object" ? header.Depth : {};
+  if (activity && activity !== 51 && !(depthObj.Max || header.DepthAverage)) return [];
+  const diving = header.Diving && typeof header.Diving === "object" ? header.Diving : {};
+  const device = header.Device && typeof header.Device === "object" ? header.Device : {};
+  const tempObj = header.Temperature && typeof header.Temperature === "object" ? header.Temperature : {};
+  const maxM = Number(depthObj.Max || header.MaxDepth || 0);
+  const avgM = Number(header.DepthAverage || depthObj.Avg || depthObj.Average || 0);
+  const durS = Number(header.Duration || header.DiveTime || 0);
+  const mins = durS > 0 ? String(Math.max(1, Math.round(durS / 60))) : "";
+  const dt = splitDateTime(String(header.DateTime || header.StartTime || ""));
+  const brand = device.Name ? (/suunto/i.test(device.Name) ? device.Name : "Suunto " + device.Name) : "Suunto";
+  let t0 = 0;
+  samples.forEach((s) => {
+    if (!s || t0) return;
+    const ms = Date.parse(s.TimeISO8601 || s.Timestamp || s.Time || "");
+    if (s.DiveEvents?.DiveStatus && ms) t0 = ms;
+    const ev = s.Events;
+    if (Array.isArray(ev) && ev.some((e) => e?.State?.Active && e.State.Type === "Dive Active") && ms) t0 = ms;
+  });
+  if (!t0) {
+    const first = samples.find((s) => Number(s?.Depth) > 0.4) || samples[0];
+    t0 = Date.parse(first?.TimeISO8601 || first?.Timestamp || 0) || 0;
+  }
+  const pts = [];
+  const vents = [];
+  let lastCns = "";
+  let lastOtu = "";
+  let pStart = "";
+  let pEnd = "";
+  let lastC = null;
+  let deepC = "";
+  let deepD = 0;
+  let minC = "";
+  samples.forEach((s) => {
+    if (!s || typeof s !== "object") return;
+    const ms = Date.parse(s.TimeISO8601 || s.Timestamp || s.Time || 0);
+    const depth = Number(s.Depth);
+    if (Number.isFinite(depth) && depth >= 0 && ms && t0) {
+      const t = Math.max(0, Math.round(((ms - t0) / 60000) * 100) / 100);
+      const pt = { t, d: Math.round(depth * 10) / 10 };
+      const c = kelvinC(s.Temperature);
+      if (c) {
+        lastC = Number(c);
+        pt.c = lastC;
+        if (minC === "" || lastC < Number(minC)) minC = String(lastC);
+      } else if (lastC != null) pt.c = lastC;
+      pts.push(pt);
+      if (depth > deepD && lastC != null) {
+        deepD = depth;
+        deepC = String(lastC);
+      }
+    }
+    if (s.CNS != null && s.CNS !== "") lastCns = s.CNS;
+    if (s.Cns != null && s.Cns !== "") lastCns = s.Cns;
+    if (s.OTU != null && s.OTU !== "") lastOtu = s.OTU;
+    if (s.Otu != null && s.Otu !== "") lastOtu = s.Otu;
+    if (s.O2Toxicity != null && s.O2Toxicity !== "") lastCns = lastCns || s.O2Toxicity;
+    const vent = Number(s.Ventilation);
+    if (vent > 0 && depth > 1) vents.push(vent);
+    (s.Cylinders || []).forEach((cyl) => {
+      const bar = paToBar(cyl?.Pressure);
+      if (bar) {
+        if (!pStart) pStart = bar;
+        pEnd = bar;
+      }
+      const v2 = Number(cyl?.Ventilation);
+      if (v2 > 0) vents.push(v2);
+    });
+  });
+  const meanD =
+    avgM > 0
+      ? avgM
+      : pts.filter((p) => p.d > 0.4).length
+        ? pts.filter((p) => p.d > 0.4).reduce((a, p) => a + p.d, 0) / pts.filter((p) => p.d > 0.4).length
+        : 0;
+  const sacVent = vents.length ? round1((vents.reduce((a, b) => a + b, 0) / vents.length) * 60000) : "";
+  const cns = pickDeep(header, ["cns", "endcns", "o2toxicity"]) || diving.CNS || lastCns;
+  const otu = pickDeep(header, ["otu", "otus"]) || diving.OTU || lastOtu;
+  const gfLo = pickDeep(header, ["gf_low", "gflow", "gradientfactorlow", "lowgf"]) || diving.GradientFactorLow;
+  const gfHi = pickDeep(header, ["gf_high", "gfhigh", "gradientfactorhigh", "highgf"]) || diving.GradientFactorHigh;
+  const o2 = pickDeep(header, ["o2", "oxygen", "fo2"]) || (diving.Gases && diving.Gases[0] && (diving.Gases[0].Oxygen || diving.Gases[0].O2));
+  const mix = o2Percent(o2) || "21";
+  const ndl = pickDeep({ samples: samples.slice(-5), header }, ["nodectime", "ndl"]) || "";
+  const extras = {
+    format: "Suunto JSON",
+    avgDepth: meanD ? String(Math.round(meanD * 10) / 10) : "",
+    cns: cns !== "" && cns != null ? String(cns) : "",
+    otu: otu !== "" && otu != null ? String(otu) : "",
+    sacFit: sacVent && Number(sacVent) > 0.5 && Number(sacVent) < 80 ? sacVent : "",
+    gf: gfLo != null && gfLo !== "" || gfHi != null && gfHi !== "" ? `${gfLo ?? "—"}/${gfHi ?? "—"}` : "",
+    mode: String(pickDeep(header, ["divemode", "mode"]) || ""),
+    samples: pts.length,
+  };
+  if (!extras.cns) extras.cns = computeCnsFromProfile(pts, mix);
+  if (!extras.otu) extras.otu = estimateOtu(meanD, maxM, mix, mins);
+  if (!extras.sacFit) extras.sacFit = computeFitSac("12", pStart, pEnd, mins, meanD, maxM);
+  const deco = samples.some((s) => Number(s?.Ceiling) > 0.3) || String(ndl) === "0";
+  return [
+    baseImported({
+      date: dt.date,
+      timeIn: dt.time,
+      timeOut: dt.time && mins ? addMinutes(dt.time, mins) : "",
+      maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : pts.length ? String(Math.max(...pts.map((p) => p.d))) : "",
+      avgDepth: extras.avgDepth,
+      plannedDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
+      bottomTime: mins,
+      totalTime: mins,
+      waterTemp: deepC || minC,
+      bottomTemp: minC || kelvinC(Math.min(Number(tempObj.Max) || 999, Number(tempObj.Min) || 999)),
+      cns: extras.cns,
+      otu: extras.otu,
+      sac: extras.sacFit,
+      ndl: ndl !== "" ? String(ndl) : "",
+      deco,
+      noDeco: !deco,
+      mix,
+      pressureStart: pStart,
+      pressureEnd: pEnd,
+      instruments: brand,
+      sourceComputer: "suunto-json",
+      profilePoints: downsampleProfile(pts),
+      computerLog: extras,
+      notes: strField(header.Notes),
+      gf: extras.gf,
+    }),
+  ];
+}
+
+function mergeSuuntoPair(jsonDive, fitDive) {
+  if (!jsonDive) return fitDive;
+  if (!fitDive) return jsonDive;
+  const d = { ...jsonDive };
+  ["cns", "otu", "sac", "avgDepth", "mix", "tank", "ndl", "ascentRate", "ascentMax", "pressureStart", "pressureEnd", "waterTemp", "bottomTemp", "gf"].forEach((k) => {
+    if (d[k] === "" || d[k] == null) d[k] = fitDive[k];
+  });
+  d.computerLog = { ...(fitDive.computerLog || {}), ...(jsonDive.computerLog || {}) };
+  if (!(d.computerLog.gf) && fitDive.computerLog?.gf) d.computerLog.gf = fitDive.computerLog.gf;
+  if (!(d.profilePoints?.length >= 8) && (fitDive.profilePoints || []).length >= 8) d.profilePoints = fitDive.profilePoints;
+  if ((d.profilePoints || []).length >= 3) d.profileFromComputer = true;
+  if (jsonDive.circuitClosed || fitDive.circuitClosed) d.circuitClosed = true;
+  if (jsonDive.circuitOpen || fitDive.circuitOpen) d.circuitOpen = true;
+  d.instruments = d.instruments || fitDive.instruments;
+  d.sourceComputer = "suunto-json+fit";
+  return normalizeImported(d);
+}
+
+function computeCnsFromProfile(pts, mix) {
+  const fo2 = (Number(mix) || 21) / 100;
+  const sorted = [...(pts || [])].sort((a, b) => Number(a.t) - Number(b.t));
+  if (sorted.length < 3 || !(fo2 > 0)) return "";
+  const table = [
+    [0.5, 720],
+    [0.6, 570],
+    [0.7, 450],
+    [0.8, 350],
+    [0.9, 310],
+    [1.0, 270],
+    [1.1, 240],
+    [1.2, 210],
+    [1.3, 180],
+    [1.4, 150],
+    [1.5, 120],
+    [1.6, 45],
+  ];
+  const limMin = (po2) => {
+    if (po2 < 0.5) return 0;
+    if (po2 >= 1.6) return 45;
+    for (let i = 1; i < table.length; i++) {
+      if (po2 <= table[i][0]) {
+        const [p0, t0] = table[i - 1];
+        const [p1, t1] = table[i];
+        return t0 + ((po2 - p0) / (p1 - p0)) * (t1 - t0);
+      }
+    }
+    return 45;
+  };
+  let cns = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const dt = Number(sorted[i].t) - Number(sorted[i - 1].t);
+    if (!(dt > 0)) continue;
+    const d = (Number(sorted[i].d) + Number(sorted[i - 1].d)) / 2;
+    const po2 = (1 + Math.max(0, d) / 10) * fo2;
+    const lim = limMin(po2);
+    if (lim > 0) cns += (dt / lim) * 100;
+  }
+  if (!(cns > 0.05)) return "";
+  return String(Math.round(cns * 10) / 10);
+}
+
 function parseDiveJson(text) {
   const data = JSON.parse(text);
+  if (data.DeviceLog || data.deviceLog) {
+    const suunto = parseSuuntoDeviceLog(data);
+    if (suunto && suunto.length) return suunto;
+  }
   const dives = collectJsonDives(data).filter((d) => d && (d.date || d.maxDepth));
   if (!dives.length) throw new Error("JSON senza immersioni riconoscibili.");
   return dives;
@@ -1106,11 +1343,14 @@ function guessDevBase(size, metaBase) {
 
 function fitDevScalar(bytes, o, size, base, le) {
   const v = fitScalar(bytes, o, size, base, le);
-  if (v != null && v !== "" && !(typeof v === "number" && !Number.isFinite(v))) return v;
   if (size >= 4) {
     const f = fitF32(bytes, o, le);
-    if (Number.isFinite(f)) return f;
+    if (Number.isFinite(f) && Math.abs(f) < 1e7) {
+      const vn = Number(v);
+      if (!Number.isFinite(vn) || Math.abs(vn) > 1e7 || (Math.abs(vn) > 8000 && Math.abs(f) < 800)) return f;
+    }
   }
+  if (v != null && v !== "" && !(typeof v === "number" && !Number.isFinite(v))) return v;
   if (size === 1) return bytes[o];
   if (size === 2) return fitU16(bytes, o, le);
   return v;
@@ -1129,7 +1369,7 @@ function fitReadRecord(bytes, i, def, desc) {
     const base = guessDevBase(f.size, meta?.base != null ? meta.base : f.base);
     let val = fitDevScalar(bytes, o, f.size, base, def.le);
     const scale = Number(meta?.scale);
-    if (scale > 1 && typeof val === "number" && Number.isFinite(val)) val = val / scale;
+    if ([10, 100, 1000].includes(scale) && typeof val === "number" && Number.isFinite(val)) val = val / scale;
     rec.dev[`${f.devIdx}:${f.num}`] = val;
     o += f.size;
   });
@@ -1497,7 +1737,7 @@ function isTssName(name) {
 }
 
 function isSacName(name) {
-  return /(^|[._-])(sac|rmv)([._-]|$)|air_consumption|gas_consumption|surface_air|volume_sac|consumo/.test(name);
+  return /(^|[._-])(sac|rmv)([._-]|$)|air_consumption|gas_consumption|surface_air|volume_sac|consumo|ventilation/.test(name);
 }
 
 function firstGood(vals, mapFn) {
@@ -1519,6 +1759,7 @@ function isTankVolName(name) {
 function fitSacVal(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff) return "";
+  if (n > 0 && n < 0.02) return round1(n * 60000);
   if (n > 80 && n <= 8000) return String(Math.round(n) / 100);
   if (n > 80) return "";
   return round1(n);
@@ -1962,12 +2203,12 @@ function parseFitBlock(bytes, origin) {
       (pStart && pEnd ? "12" : "");
     extras.sacFit = firstGood(
       [
-        catPick(bag.catalog, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac"]),
+        catPick(bag.catalog, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac", "ventilation"]),
         pickBagDev(bag, isSacName),
         s.sacFit,
         s.sacVol,
         s.rmv,
-        lastDevVal(use, desc, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac"]),
+        lastDevVal(use, desc, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac", "ventilation"]),
       ],
       fitSacVal
     );
@@ -1979,6 +2220,7 @@ function parseFitBlock(bytes, origin) {
       if (Number(tankL) > 0 && barMin > 0.05 && barMin < 8) extras.sacFit = round1(Number(tankL) * barMin);
     }
     if (!extras.otu) extras.otu = estimateOtu(avgM, maxM, o2, mins);
+    if (!extras.cns) extras.cns = computeCnsFromProfile(profilePoints, o2);
     const fromProf = ascentFromPoints(profilePoints);
     const ratePc = extras.ascentAvg;
     const rateProf = fromProf.avg;
@@ -2059,6 +2301,7 @@ function parseFitBlock(bytes, origin) {
         ascentRate,
         ascentMax,
         sac: extras.sacFit || "",
+        gf: extras.gf || "",
         ndl: extras.ndl || "",
         deco: Boolean(extras.deco),
         noDeco: !extras.deco,
@@ -2280,4 +2523,5 @@ window.SeaDiveComputers = {
   scanSuuntoBluetooth,
   ascentFromPoints,
   fitAscentMmin,
+  mergeSuuntoPair,
 };
