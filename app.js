@@ -583,6 +583,7 @@ function applyPlaceToDive(d) {
 
 function setPageSkin() {
   document.body.classList.toggle("page-auth", !loadSession());
+  document.body.classList.toggle("page-app", Boolean(loadSession()));
   document.body.classList.toggle("page-home", Boolean(loadSession()) && view.name === "home");
 }
 
