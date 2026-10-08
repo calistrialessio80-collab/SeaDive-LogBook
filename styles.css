@@ -540,6 +540,17 @@ canvas.thermo-detail {
 .brand-card h4 { margin: 0 0 4px; }
 .world-map { width: 100%; height: min(62vh, 520px); min-height: 320px; border-radius: 14px; background: #041018; }
 .site-map { width: 100%; height: min(42vh, 340px); min-height: 240px; border-radius: 14px; background: #041018; margin: 6px 0 4px; }
+.dive-edit .site-map {
+  height: 240px;
+  min-height: 240px;
+  display: block;
+  position: relative;
+  z-index: 2;
+}
+.dive-edit .site-map .leaflet-container { width: 100%; height: 100%; }
+.form-grid > input[type="hidden"] { display: none !important; }
+.computer-log { margin: 16px 0 8px; }
+.computer-log h3 { margin: 0 0 8px; font-size: 18px; }
 .map-shell { padding: 8px; overflow: hidden; }
 .map-head .map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 13px; }
 .map-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }

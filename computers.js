@@ -1105,11 +1105,68 @@ function fitSemicircle(v) {
 
 function pickDev(dev, desc, names) {
   const want = names.map((n) => n.toLowerCase());
-  for (const [k, v] of Object.entries(dev || {})) {
-    const name = String(desc.get(k)?.name || "").toLowerCase();
-    if (want.includes(name) && v != null && v !== "") return v;
+  const rows = Object.entries(dev || {}).map(([k, v]) => ({
+    v,
+    name: String(desc.get(k)?.name || "").toLowerCase().replace(/\s+/g, "_"),
+  }));
+  for (const w of want) {
+    const hit = rows.find((r) => r.name === w && r.v != null && r.v !== "");
+    if (hit) return hit.v;
+  }
+  for (const w of want) {
+    const hit = rows.find((r) => r.name.includes(w) && r.v != null && r.v !== "");
+    if (hit) return hit.v;
   }
   return "";
+}
+
+function fitPressureBar(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n > 50000) return pressureBar(n);
+  if (n > 400) return String(Math.round(n / 100));
+  return String(Math.round(n * 10) / 10);
+}
+
+function inferFitChannels(samples, desc) {
+  if (!samples.length) return;
+  samples.forEach((s) => {
+    if (!(s.depth > 0)) s.depth = fitDepthM(pickDev(s.dev, desc, ["depth"]));
+    if (s.temp == null) s.temp = fitSampleTemp(pickDev(s.dev, desc, ["temperature", "temp", "watertemp"]));
+    const f = s.fields || {};
+    if (!(s.depth > 0)) {
+      for (const num of [74, 54, 14]) {
+        const m = fitDepthM(f[num]);
+        if (m > 0 && m < 130) {
+          s.depth = m;
+          break;
+        }
+      }
+    }
+    if (s.temp == null) s.temp = fitSampleTemp(f[13] ?? f[57] ?? f[58]);
+  });
+  if (samples.filter((s) => s.depth > 0).length >= Math.max(4, samples.length * 0.25)) return;
+  const keys = new Set();
+  samples.forEach((s) => Object.keys(s.dev || {}).forEach((k) => keys.add(k)));
+  keys.forEach((k) => {
+    const name = String(desc.get(k)?.name || "").toLowerCase();
+    const vals = samples.map((s) => Number(s.dev?.[k])).filter((n) => Number.isFinite(n));
+    if (vals.length < 4) return;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    if ((name.includes("depth") && !name.includes("stop")) || (min >= 0 && max > 4 && max < 130 && max - min > 1.5)) {
+      samples.forEach((s) => {
+        if (s.depth > 0) return;
+        const m = fitDepthM(s.dev[k]);
+        if (m > 0) s.depth = m;
+      });
+    }
+    if (samples.every((s) => s.temp == null) && (name.includes("temp") || (min > 4 && max < 40 && max - min < 25))) {
+      samples.forEach((s) => {
+        if (s.temp == null) s.temp = fitSampleTemp(s.dev[k]);
+      });
+    }
+  });
 }
 
 const SUUNTO_DIVE_MODE = ["Off", "Gauge", "Free", "Air", "EAN", "Mixed", "CCR", "Nitrox", "Trimix", "CCR Nitrox", "CCR Trimix"];
@@ -1154,6 +1211,10 @@ function parseFitBlock(bytes, origin) {
     mfg: 0,
     product: "",
     tz: 0,
+    created: 0,
+    waterType: "",
+    gfLow: "",
+    gfHigh: "",
   };
 
   while (i < end) {
@@ -1161,7 +1222,7 @@ function parseFitBlock(bytes, origin) {
     if (h & 0x80) {
       const local = (h >> 5) & 3;
       const def = defs[local];
-      if (!def) break;
+      if (!def) continue;
       lastTs += h & 0x1f;
       const rec = fitReadRecord(bytes, i, def);
       rec[253] = lastTs;
@@ -1204,17 +1265,14 @@ function parseFitBlock(bytes, origin) {
       continue;
     }
     const def = defs[local];
-    if (!def) break;
+    if (!def) continue;
     const rec = fitReadRecord(bytes, i, def);
     if (rec[253]) lastTs = rec[253];
     i += def.dataSize;
     collectFit(def.global, rec, bag, desc);
   }
 
-  bag.samples.forEach((s) => {
-    if (!(s.depth > 0)) s.depth = fitDepthM(pickDev(s.dev, desc, ["depth"]));
-    if (s.temp == null) s.temp = fitSampleTemp(pickDev(s.dev, desc, ["temperature", "temp", "watertemp"]));
-  });
+  inferFitChannels(bag.samples, desc);
   const bindDev = (row) => {
     if (!row) return row;
     if (!row.maxDepth) row.maxDepth = pickDev(row.dev, desc, ["max_depth", "maxdepth"]);
@@ -1283,39 +1341,66 @@ function parseFitBlock(bytes, origin) {
     const o2 = bag.gases[0] != null ? o2Percent(bag.gases[0]) : mode === "Air" ? "21" : "";
     const water =
       temps.length ? String(Math.round(Math.min(...temps) * 10) / 10) : tempC(s.minTemp || s.avgTemp || s.maxTemp);
+    const airCands = use.filter((x) => !(x.depth > 1.2) && x.temp != null).map((x) => x.temp);
+    const air = airCands.length ? String(airCands[0]) : tempC(s.maxTemp);
+    const last = use[use.length - 1] || {};
+    const lat = gps.lat || s.lat || "";
+    const lng = gps.lng || s.lng || "";
+    const hang = fitMinutes(s.hang);
+    const created = fitClock(bag.created, bag.tz);
+    const date = when.date || created.date;
+    const timeIn = when.time || created.time;
+    const extras = {
+      format: brand,
+      avgDepth: avgM || "",
+      cns: s.cns != null && s.cns !== "" ? s.cns : last.fields?.[79] ?? "",
+      ndl: last.fields?.[78] ?? "",
+      tts: last.fields?.[77] ?? "",
+      mode,
+      gf: bag.gfLow || bag.gfHigh ? `${bag.gfLow || "—"}/${bag.gfHigh || "—"}` : "",
+      diveNumber: s.diveNumber || pickDev(s.dev, desc, ["dive_number_in_series", "dive_number"]) || "",
+      samples: use.filter((x) => x.depth > 0).length,
+    };
     dives.push(
       baseImported({
-        date: when.date,
-        timeIn: when.time,
+        date,
+        timeIn,
+        timeOut: timeIn && mins ? addMinutes(timeIn, mins) : "",
         maxDepth: maxM ? String(maxM) : "",
         plannedDepth: maxM ? String(maxM) : "",
         bottomTime: mins,
         totalTime: mins,
         surfaceInterval: fitMinutes(s.surface) || fitMinutes(s.surfaceTime),
+        safetyStop: hang || (maxM >= 10 ? "3" : ""),
         waterTemp: water,
+        airTemp: air && air !== water ? air : air || "",
         mix: o2,
         tank: bag.tankVol[0] != null ? volumeLiters(bag.tankVol[0]) : "",
-        pressureStart: bag.tankStart[0] != null ? pressureBar(bag.tankStart[0]) : bag.tanks[0] != null ? pressureBar(bag.tanks[0]) : "",
+        pressureStart: bag.tankStart[0] != null ? fitPressureBar(bag.tankStart[0]) : bag.tanks[0] != null ? fitPressureBar(bag.tanks[0]) : "",
         pressureEnd:
           bag.tankEnd[0] != null
-            ? pressureBar(bag.tankEnd[0])
+            ? fitPressureBar(bag.tankEnd[0])
             : bag.tanks.length
-              ? pressureBar(bag.tanks[bag.tanks.length - 1])
+              ? fitPressureBar(bag.tanks[bag.tanks.length - 1])
               : "",
-        site: "",
-        lat: gps.lat || s.lat || "",
-        lng: gps.lng || s.lng || "",
+        seaConditions: bag.waterType === 1 ? "Acqua di mare" : bag.waterType === 0 ? "Acqua dolce" : "",
+        site: lat !== "" ? "Punto GPS" : brand,
+        lat,
+        lng,
         instruments: brand,
         sourceComputer: bag.mfg === 23 ? "suunto-fit" : "fit",
         feeling: s.feeling >= 1 && s.feeling <= 5 ? s.feeling : 0,
         profilePoints,
+        computerLog: extras,
         notes: [
-          avgM ? `prof. media ${avgM} m` : "",
-          mode ? `modo ${mode}` : "",
-          s.cns != null && s.cns !== "" ? `CNS ${s.cns}%` : "",
-          s.hang ? `sosta ${fitMinutes(s.hang)} min` : "",
           s.description ? String(s.description) : "",
-          `${use.filter((x) => x.depth > 0).length} campioni profilo`,
+          extras.avgDepth ? `prof. media ${extras.avgDepth} m` : "",
+          extras.mode ? `modo ${extras.mode}` : "",
+          extras.cns !== "" && extras.cns != null ? `CNS ${extras.cns}%` : "",
+          extras.gf ? `GF ${extras.gf}` : "",
+          extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
+          hang ? `sosta ${hang} min` : "",
+          extras.samples ? `${extras.samples} campioni profilo` : "",
         ]
           .filter(Boolean)
           .join(" · "),
@@ -1340,10 +1425,20 @@ function collectFit(global, rec, bag, desc) {
   if (global === 0) {
     bag.mfg = rec[1] || bag.mfg;
     if (typeof rec[8] === "string" && rec[8]) bag.product = rec[8];
+    if (rec[4]) bag.created = rec[4];
+  }
+  if (global === 23) {
+    bag.mfg = rec[2] || bag.mfg;
+    if (typeof rec[9] === "string" && rec[9] && !bag.product) bag.product = rec[9];
   }
   if (global === 34 && rec[5] && ts && rec[5] !== 0xffffffff) bag.tz = Number(rec[5]) - Number(ts);
+  if (global === 258) {
+    if (rec[1] != null) bag.waterType = rec[1];
+    if (rec[6] != null) bag.gfLow = rec[6];
+    if (rec[7] != null) bag.gfHigh = rec[7];
+  }
 
-  if (global === 20) {
+  if (global === 20 || ((rec[74] != null || rec[73] != null) && global !== 18 && global !== 19 && global !== 268 && global !== 0 && global !== 23)) {
     const lat = fitSemicircle(rec[0]);
     const lng = fitSemicircle(rec[1]);
     if (lat !== "" && lng !== "") bag.gps.push({ lat, lng });
@@ -1360,6 +1455,7 @@ function collectFit(global, rec, bag, desc) {
       lat,
       lng,
       dev: rec.dev,
+      fields: rec,
     });
   }
 
@@ -1401,6 +1497,7 @@ function collectFit(global, rec, bag, desc) {
       surface: rec[4],
       cns: rec[6],
       bottom: rec[11],
+      diveNumber: rec[10],
       hang: rec[26] ?? rec[16],
       minTemp: rec[17],
       avgTemp: rec[18],

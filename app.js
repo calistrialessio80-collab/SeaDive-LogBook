@@ -878,7 +878,7 @@ function bindDiveSiteMap(form, d) {
       diveSiteMap.on("click", (ev) => apply(ev.latlng.lat, ev.latlng.lng));
       if (known) apply(start.lat, start.lng, { skipGeo: true, zoom, hint: "Trascina il pin sul punto esatto, senza scrivere le coordinate." });
       else if (hint) hint.textContent = "Scorri la mappa e tocca il sito per piantare il pin.";
-      setTimeout(() => diveSiteMap?.invalidateSize(), 80);
+      [80, 300, 700].forEach((ms) => setTimeout(() => diveSiteMap?.invalidateSize(), ms));
     })
     .catch((err) => {
       el.textContent = err.message || "Mappa non disponibile.";
@@ -1293,7 +1293,7 @@ function renderComputer() {
         view.computerHint = m;
         if (hint) hint.textContent = m;
       });
-      const added = mergeImported(dives);
+      const { added } = await mergeImported(dives);
       view.name = added ? "log" : "computer";
       view.computerHint = `${name}: ${added} immersioni sincronizzate nel diario.`;
     } catch (err) {
@@ -1335,9 +1335,13 @@ async function ingestFiles(fileList) {
     }
   }
   if (found.length) {
-    const added = mergeImported(found);
+    const { added, last } = await mergeImported(found);
     view.computerHint = `${notes.join(" · ")} → ${added} immersioni nel diario.`;
-    view.name = added ? "log" : "computer";
+    if (added === 1 && last) {
+      view = { name: "edit", diveId: last.id, draft: cloneObj(last), query: view.query, computerHint: view.computerHint };
+    } else {
+      view.name = added ? "log" : "computer";
+    }
   } else {
     view.computerHint = notes.join(" · ") || "Nessun file.";
     view.name = "computer";
@@ -1360,23 +1364,47 @@ function enrichImported(d) {
   return d;
 }
 
-function mergeImported(dives) {
+async function reverseImportedPlace(d) {
+  const g = geoCoords(d.lat, d.lng);
+  if (!g) return d;
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${g.lat}&lon=${g.lng}`
+    );
+    const info = await res.json();
+    const a = info.address || {};
+    if (!String(d.location || "").trim()) {
+      d.location = [a.village || a.town || a.city || a.municipality, a.country].filter(Boolean).join(", ");
+    }
+    if (!d.site || /^(punto gps|import |suunto|garmin|computer)/i.test(d.site)) {
+      d.site = a.hamlet || a.suburb || a.village || a.tourism || d.site || "Punto GPS";
+    }
+  } catch {
+    /* coordinate già sul pin */
+  }
+  return d;
+}
+
+async function mergeImported(dives) {
   const api = window.SeaDiveComputers;
   const existing = new Set(state.dives.map(api.diveKey));
   let n = nextNumber();
   let added = 0;
-  dives.forEach((raw) => {
+  let last = null;
+  for (const raw of dives) {
     const d = enrichImported(raw);
+    await reverseImportedPlace(d);
     const key = api.diveKey(d);
-    if (existing.has(key)) return;
+    if (existing.has(key)) continue;
     d.number = n++;
     state.dives.push(d);
     existing.add(key);
     added += 1;
-  });
+    last = d;
+  }
   save(state);
   view.pending = [];
-  return added;
+  return { added, last };
 }
 
 function renderStats() {
@@ -1676,17 +1704,20 @@ function renderEdit() {
   const frag = document.createDocumentFragment();
   frag.append(topbar(d.number ? `scheda n° ${d.number}` : "nuova scheda"));
   const form = document.createElement("form");
-  form.className = "card";
+  form.className = "card dive-edit";
+  const log = d.computerLog || {};
+  const thermo = thermoPoints(profileFor(d));
   form.innerHTML = `
+    ${view.computerHint ? `<p class="hint">${escapeHtml(view.computerHint)}</p>` : ""}
     <div class="form-grid">
       ${field("number", "Immersione n°", d.number, false, "number")}
       ${field("date", "Data", d.date, false, "date")}
       ${field("site", "Sito di immersione", d.site, true)}
       ${field("location", "Località / paese", d.location, true)}
-      <input type="hidden" name="lat" value="${escapeHtml(d.lat || "")}" />
-      <input type="hidden" name="lng" value="${escapeHtml(d.lng || "")}" />
     </div>
-    <p class="hint" style="margin-top:14px">Mappa del sito</p>
+    <input type="hidden" name="lat" value="${escapeHtml(d.lat || "")}" />
+    <input type="hidden" name="lng" value="${escapeHtml(d.lng || "")}" />
+    <p class="hint" style="margin-top:14px">Mappa del sito — tocca o trascina il pin</p>
     <div class="site-map" data-sitemap></div>
     <div class="actions" style="margin-top:8px">
       <button class="btn ghost" type="button" data-findsite>Cerca il sito sulla mappa</button>
@@ -1730,9 +1761,31 @@ function renderEdit() {
     <label class="field full" style="margin-top:12px">Note e sensazioni
       <textarea name="notes">${escapeHtml(d.notes)}</textarea>
     </label>
+    ${
+      log.format
+        ? `<div class="computer-log">
+      <h3 class="serif">Dati dal file computer</h3>
+      <div class="kv">
+        <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "FIT"))}</div>
+        <div><b>Prof. media</b>${escapeHtml(log.avgDepth ? log.avgDepth + " m" : "—")}</div>
+        <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
+        <div><b>CNS</b>${escapeHtml(log.cns !== "" && log.cns != null ? String(log.cns) + "%" : "—")}</div>
+        <div><b>GF</b>${escapeHtml(log.gf || "—")}</div>
+        <div><b>Campioni</b>${escapeHtml(String(log.samples || 0))}</div>
+      </div>
+    </div>`
+        : ""
+    }
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-profile></canvas>
-    <p class="hint" data-profilehint>${d.profileFromComputer ? "Curva letta dal computer subacqueo." : "Il profilo si disegna da solo da profondità, tempi e sosta."}</p>
+    <p class="hint" data-profilehint>${d.profileFromComputer ? "Curva profondità letta dal computer." : "Il profilo si disegna da solo da profondità, tempi e sosta."}</p>
+    ${
+      thermo.length >= 3
+        ? `<h3 class="serif">Temperatura / profondità</h3>
+    <canvas class="profile thermo-detail" data-thermo-edit></canvas>
+    <p class="hint">Arancione: temperatura. Verticale: profondità (dati FIT).</p>`
+        : ""
+    }
     <div class="sign-legal" id="firme">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
@@ -1850,6 +1903,8 @@ function renderEdit() {
   const refreshProfile = () => {
     if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
     drawProfile(canvas, profileFor(d), false);
+    const th = form.querySelector("[data-thermo-edit]");
+    if (th) drawTempDepth(th, profileFor(d));
   };
   ["site", "location"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
@@ -1916,6 +1971,7 @@ function renderEdit() {
       guideSign: d.guideSign,
       centerSign: d.centerSign,
       profileFromComputer: d.profileFromComputer,
+      computerLog: d.computerLog || null,
     });
     next.profilePoints = profileFor(next);
     if (next.guideSign && !String(next.guideName || "").trim()) {
