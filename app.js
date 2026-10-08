@@ -29,6 +29,7 @@ const emptyProfile = () => ({
   specialties: "",
   recoverPhone: "",
   recoverEmail: "",
+  certs: [],
 });
 
 const emptyDive = () => ({
@@ -81,7 +82,7 @@ const emptyDive = () => ({
 const SESSION_KEY = "seadive-google-session";
 const BRAND_KEY = "seadive-brand-photo";
 const LEGAL_L70 =
-  "Libretto immersioni digitale ai sensi della L. 7 maggio 2026 n. 70, art. 12, comma 8. Firma elettronica con data, ora e impronta della scheda. Non sostituisce una firma qualificata SPID/CIE.";
+  "Libretto immersioni digitale ai sensi della L. 7 maggio 2026 n. 70, art. 12, comma 8. Firma elettronica semplice con data, ora, generalità e impronta SHA-256 della scheda. Non è firma qualificata SPID/CIE.";
 
 function loadSession() {
   try {
@@ -233,7 +234,9 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return seed();
     const data = JSON.parse(raw);
-    return { profile: { ...emptyProfile(), ...data.profile }, dives: data.dives || [] };
+    const profile = { ...emptyProfile(), ...data.profile };
+    if (!Array.isArray(profile.certs)) profile.certs = [];
+    return { profile, dives: data.dives || [] };
   } catch {
     return seed();
   }
@@ -281,9 +284,10 @@ function backupPayload() {
 
 function parseBackup(data) {
   if (!data || typeof data !== "object") throw new Error("invalid");
-  const profile = data.profile || {};
+  const profile = { ...emptyProfile(), ...(data.profile || {}) };
+  if (!Array.isArray(profile.certs)) profile.certs = [];
   const dives = Array.isArray(data.dives) ? data.dives : [];
-  return { profile: { ...emptyProfile(), ...profile }, dives };
+  return { profile, dives };
 }
 
 function backupFilename() {
@@ -339,7 +343,7 @@ function daysSinceBackup() {
 }
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
+  navigator.serviceWorker.register("./sw.js?v=7", { updateViaCache: "none" }).catch(() => {});
 }
 
 let state = load();
@@ -349,18 +353,101 @@ function nextNumber() {
   return state.dives.reduce((m, d) => Math.max(m, Number(d.number) || 0), 0) + 1;
 }
 
+function certLabel(c) {
+  if (!c) return "";
+  return [c.name, c.number ? `n° ${c.number}` : ""].filter(Boolean).join(" · ");
+}
+
+function profileCerts() {
+  const p = state.profile || {};
+  const out = [];
+  if (p.certLevel || p.certNumber) {
+    out.push({ id: "main", name: p.certLevel, number: p.certNumber, main: true });
+  }
+  (Array.isArray(p.certs) ? p.certs : []).forEach((c) => {
+    if (!c || !(c.name || c.number)) return;
+    if (out.some((x) => x.name === c.name && x.number === c.number)) return;
+    out.push(c);
+  });
+  return out;
+}
+
+function certRowHtml(c = {}) {
+  return `<div class="cert-row" data-certrow>
+    <input name="certName" placeholder="Brevetto (es. Nitrox, Rescue)" value="${escapeHtml(c.name || "")}" />
+    <input name="certNo" placeholder="N° brevetto" value="${escapeHtml(c.number || "")}" />
+    <button class="btn ghost" type="button" data-delcert aria-label="Rimuovi">×</button>
+  </div>`;
+}
+
 function totals() {
   const n = state.dives.length;
   const max = Math.max(0, ...state.dives.map((d) => Number(d.maxDepth) || 0));
-  const mins = state.dives.reduce((s, d) => s + (Number(d.bottomTime) || 0), 0);
+  const mins = state.dives.reduce((s, d) => s + (Number(d.bottomTime) || Number(d.totalTime) || 0), 0);
   const sites = new Set(state.dives.map((d) => d.site).filter(Boolean)).size;
   return { n, max, mins, sites };
 }
 
 function fmtMins(m) {
   const h = Math.floor(m / 60);
-  const r = m % 60;
-  return h ? `${h}h ${r}min` : `${r} min`;
+  const r = Math.round(m % 60);
+  return h ? `${h}h ${r}m` : `${r}m`;
+}
+
+function fmtItDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("it-IT", { day: "numeric", month: "short" });
+}
+
+function fmtItDateLong(iso) {
+  if (!iso) return "—";
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function fmtDepth(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || v === "" || v == null) return "—";
+  return String(Math.round(n * 10) / 10).replace(".", ",");
+}
+
+function diveDuration(d) {
+  return Number(d.bottomTime) || Number(d.totalTime) || minutesSpan(d.timeIn, d.timeOut) || 0;
+}
+
+function diveSac(d) {
+  const v = Number(d.tank);
+  const p0 = Number(d.pressureStart);
+  const p1 = Number(d.pressureEnd);
+  const t = diveDuration(d);
+  const max = Number(d.maxDepth) || 0;
+  if (!(v > 0 && p0 > 0 && p1 >= 0 && p0 > p1 && t > 0)) return 0;
+  const ata = Math.max(1, (max * 0.65) / 10 + 1);
+  return (v * (p0 - p1)) / (t * ata);
+}
+
+function avgSac() {
+  const vals = (state.dives || []).map(diveSac).filter((n) => n > 0.5 && n < 80);
+  if (!vals.length) return "—";
+  const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return m.toFixed(1).replace(".", ",");
+}
+
+function divesByYear() {
+  const counts = {};
+  (state.dives || []).forEach((d) => {
+    const y = String(d.date || "").slice(0, 4);
+    if (/^\d{4}$/.test(y)) counts[y] = (counts[y] || 0) + 1;
+  });
+  const now = new Date().getFullYear();
+  const rows = [];
+  for (let y = now - 4; y <= now; y++) {
+    rows.push({ y: String(y), n: counts[String(y)] || 0, label: `'${String(y).slice(2)}` });
+  }
+  return rows;
 }
 
 function escapeHtml(v) {
@@ -493,6 +580,11 @@ async function finishAuth(user) {
 }
 
 function render() {
+  destroyDiveSiteMap();
+  if (leafletMap) {
+    leafletMap.remove();
+    leafletMap = null;
+  }
   const app = document.getElementById("app");
   app.replaceChildren();
   setPageSkin();
@@ -509,7 +601,7 @@ function render() {
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   app.append(renderNav());
-  if (view.name === "home" || view.name === "log") {
+  if (view.name === "log") {
     const fab = document.createElement("button");
     fab.className = "fab";
     fab.title = "Nuova immersione";
@@ -573,19 +665,41 @@ function renderAuth() {
   return wrap;
 }
 
-function topbar(subtitle) {
+function topbar(subtitle, mode) {
   const wrap = document.createElement("div");
-  wrap.className = "topbar";
+  wrap.className = mode === "home" ? "topbar home-top" : "topbar";
+  const who = (state.profile.name || loadSession()?.name || "").split(" ")[0];
+  if (mode === "home") {
+    wrap.innerHTML = `
+      <div class="home-brand">
+        <h1>SeaDive</h1>
+        <p>di ${escapeHtml(who || "te")}</p>
+      </div>
+      <div class="home-tools">
+        <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+        </button>
+        <button class="icon-btn add" type="button" data-act="add" aria-label="Nuova immersione">+</button>
+      </div>
+    `;
+    wrap.querySelector("[data-act=search]").onclick = () => {
+      view = { name: "log", query: view.query || "" };
+      render();
+    };
+    wrap.querySelector("[data-act=add]").onclick = startNew;
+    return wrap;
+  }
   wrap.innerHTML = `
     <div class="brand">
       <div class="mark"><img src="./icon-192.png" alt="" /></div>
       <div>
         <p>SeaDive</p>
-        <h1>LogBook</h1>
+        <h1>${escapeHtml(subtitle || "LogBook")}</h1>
       </div>
     </div>
-    <div class="stamp">${escapeHtml(subtitle || "buone immersioni")}</div>
+    <button class="icon-btn add" type="button" data-act="add" aria-label="Nuova immersione">+</button>
   `;
+  wrap.querySelector("[data-act=add]").onclick = startNew;
   return wrap;
 }
 
@@ -593,16 +707,16 @@ function renderNav() {
   const nav = document.createElement("nav");
   nav.className = "nav";
   const items = [
-    ["home", "⌂", "Home"],
-    ["log", "◎", "Diario"],
-    ["map", "⊕", "Mappa"],
+    ["home", "⌂", "SeaDive"],
+    ["log", "☰", "Diario"],
+    ["map", "⌖", "Mappa"],
     ["computer", "⌚", "Computer"],
-    ["stats", "⌁", "Mare"],
-    ["profile", "◉", "Profilo"],
+    ["profile", "✦", "Profilo"],
   ];
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");
-    b.className = view.name === id ? "active" : "";
+    const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit"));
+    b.className = on ? "active" : "";
     b.innerHTML = `<span>${icon}</span><small>${label}</small>`;
     b.onclick = () => {
       view = { name: id, diveId: null, draft: null, query: view.query || "" };
@@ -614,6 +728,8 @@ function renderNav() {
 }
 
 let leafletMap = null;
+let diveSiteMap = null;
+let diveSiteMarker = null;
 let mapPick = null;
 
 function loadLeaflet() {
@@ -632,6 +748,109 @@ function loadLeaflet() {
     s.onerror = () => reject(new Error("Impossibile caricare la mappa."));
     document.body.appendChild(s);
   });
+}
+
+function addSatTiles(map) {
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    attribution: "Tiles © Esri",
+    maxZoom: 19,
+  }).addTo(map);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
+    attribution: "",
+    maxZoom: 19,
+    opacity: 0.85,
+  }).addTo(map);
+}
+
+function destroyDiveSiteMap() {
+  if (diveSiteMap) {
+    diveSiteMap.remove();
+    diveSiteMap = null;
+    diveSiteMarker = null;
+  }
+}
+
+function writeDiveCoords(form, d, lat, lng) {
+  const latS = Number(lat).toFixed(5);
+  const lngS = Number(lng).toFixed(5);
+  d.lat = latS;
+  d.lng = lngS;
+  const latEl = form.querySelector("[name=lat]");
+  const lngEl = form.querySelector("[name=lng]");
+  if (latEl) latEl.value = latS;
+  if (lngEl) lngEl.value = lngS;
+}
+
+async function reverseFillLocation(form, d, lat, lng) {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`
+    );
+    const info = await res.json();
+    const a = info.address || {};
+    const loc = [a.village || a.town || a.city || a.municipality, a.country].filter(Boolean).join(", ");
+    const locField = form.querySelector("[name=location]");
+    if (loc && locField && !String(locField.value || "").trim()) {
+      locField.value = loc;
+      d.location = loc;
+    }
+  } catch {
+    /* coordinate già sul pin */
+  }
+}
+
+async function geocodeQuery(query) {
+  const q = String(query || "").trim();
+  if (!q) return null;
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(q)}`
+  );
+  const rows = await res.json();
+  if (!rows?.[0]) return null;
+  return { lat: Number(rows[0].lat), lng: Number(rows[0].lon) };
+}
+
+function bindDiveSiteMap(form, d) {
+  const el = form.querySelector("[data-sitemap]");
+  const hint = form.querySelector("[data-geohint]");
+  if (!el) return;
+  destroyDiveSiteMap();
+  loadLeaflet()
+    .then(() => {
+      if (!form.isConnected || !window.L) return;
+      const known = coordsForDive(d);
+      const start = known || { lat: 40.2, lng: 12.5 };
+      const zoom = known ? 15 : 5;
+      diveSiteMap = L.map(el, { scrollWheelZoom: true, worldCopyJump: true }).setView([start.lat, start.lng], zoom);
+      addSatTiles(diveSiteMap);
+      const apply = (lat, lng, opts = {}) => {
+        writeDiveCoords(form, d, lat, lng);
+        const ll = [Number(lat), Number(lng)];
+        if (!diveSiteMarker) {
+          diveSiteMarker = L.marker(ll, { draggable: true }).addTo(diveSiteMap);
+          diveSiteMarker.on("dragend", () => {
+            const p = diveSiteMarker.getLatLng();
+            apply(p.lat, p.lng, { hint: "Pin spostato. Salva l’immersione per tenerlo." });
+          });
+        } else {
+          diveSiteMarker.setLatLng(ll);
+        }
+        diveSiteMap.setView(ll, opts.zoom || Math.max(diveSiteMap.getZoom(), 13));
+        if (hint) {
+          hint.textContent =
+            opts.hint || "Punto del sito aggiornato. Trascina il pin o tocca un altro punto.";
+        }
+        if (!opts.skipGeo) reverseFillLocation(form, d, lat, lng);
+      };
+      form._placePin = apply;
+      diveSiteMap.on("click", (ev) => apply(ev.latlng.lat, ev.latlng.lng));
+      if (known) apply(start.lat, start.lng, { skipGeo: true, zoom, hint: "Trascina il pin sul punto esatto, senza scrivere le coordinate." });
+      else if (hint) hint.textContent = "Scorri la mappa e tocca il sito per piantare il pin.";
+      setTimeout(() => diveSiteMap?.invalidateSize(), 80);
+    })
+    .catch((err) => {
+      el.textContent = err.message || "Mappa non disponibile.";
+    });
 }
 
 function renderWorldMap() {
@@ -699,15 +918,7 @@ function renderWorldMap() {
           leafletMap = null;
         }
         leafletMap = L.map(el, { worldCopyJump: true, scrollWheelZoom: true }).setView([20, 15], 2);
-        L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-          attribution: "Tiles © Esri",
-          maxZoom: 19,
-        }).addTo(leafletMap);
-        L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
-          attribution: "",
-          maxZoom: 19,
-          opacity: 0.85,
-        }).addTo(leafletMap);
+        addSatTiles(leafletMap);
         pack.sites.forEach((site) => {
           const color = site.done ? "#2ad4c9" : site.custom ? "#ef7a5a" : "#edd9a3";
           const m = L.circleMarker([site.lat, site.lng], {
@@ -740,28 +951,49 @@ function renderWorldMap() {
 
 function renderHome() {
   const frag = document.createDocumentFragment();
-  frag.append(topbar("il diario si scrive da solo"));
+  frag.append(topbar("", "home"));
   const t = totals();
   const last = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
-  const hello = state.profile.name ? state.profile.name.split(" ")[0] : "sub";
-  const hero = document.createElement("section");
-  hero.className = "cinematic on-photo";
-  hero.innerHTML = `
-    <div class="cinematic-copy">
-      <p class="eyebrow">SeaDive LogBook</p>
-      <h2>Ciao, ${escapeHtml(hello)}</h2>
-      <p>Apri l’app e c’è già tutto: profondità, miscela, tempo di fondo e le note dell’immersione.</p>
-    </div>
-  `;
-  frag.append(hero);
-
+  const years = divesByYear();
+  const maxY = Math.max(1, ...years.map((y) => y.n));
   const dash = document.createElement("section");
-  dash.className = "dash";
+  dash.className = "kpi-grid";
   dash.innerHTML = `
-    <button class="dash-card" type="button" data-go="log"><b>${t.n}</b><span>Immersioni</span></button>
-    <button class="dash-card" type="button" data-go="stats"><b>${t.max || "—"}</b><span>Prof. max m</span></button>
-    <button class="dash-card" type="button" data-go="stats"><b>${fmtMins(t.mins)}</b><span>Tempo fondo</span></button>
-    <button class="dash-card" type="button" data-go="map"><b>${t.sites}</b><span>Siti</span></button>
+    <button class="kpi" type="button" data-go="log">
+      <p>Registrate <span>~</span></p>
+      <strong>${t.n}</strong>
+      <em>immersioni</em>
+    </button>
+    <button class="kpi" type="button" data-go="stats">
+      <p>Tempo di fondo <span>◷</span></p>
+      <strong>${fmtMins(t.mins)}</strong>
+      <em>in acqua</em>
+    </button>
+    <button class="kpi kpi-chart" type="button" data-go="stats">
+      <p>Immersioni per anno <span>▣</span></p>
+      <div class="year-chart">
+        ${years
+          .map(
+            (y) => `<div class="yb">
+              <i style="height:${Math.max(8, (y.n / maxY) * 72)}px"></i>
+              <b>${y.n || ""}</b>
+              <small>${y.label}</small>
+            </div>`
+          )
+          .join("")}
+      </div>
+    </button>
+    <div class="kpi-stack">
+      <button class="kpi" type="button" data-go="log">
+        <p>Ultima immersione <span>◷</span></p>
+        <strong>${last ? fmtItDate(last.date) : "—"}</strong>
+      </button>
+      <button class="kpi" type="button" data-go="stats">
+        <p>SAC medio <span>◎</span></p>
+        <strong>${avgSac()}</strong>
+        ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
+      </button>
+    </div>
   `;
   dash.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
@@ -772,9 +1004,9 @@ function renderHome() {
   frag.append(dash);
 
   const listWrap = document.createElement("section");
-  listWrap.className = "section";
-  const recent = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 4);
-  listWrap.innerHTML = `<div class="section-head"><h3>Ultime immersioni</h3></div>`;
+  listWrap.className = "section feed";
+  listWrap.innerHTML = `<div class="section-head"><h3>Le tue immersioni</h3></div>`;
+  const recent = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 8);
   if (!recent.length) listWrap.append(emptyState());
   else {
     const ul = document.createElement("div");
@@ -783,15 +1015,6 @@ function renderHome() {
     listWrap.append(ul);
   }
   frag.append(listWrap);
-
-  if (last) {
-    const note = document.createElement("section");
-    note.className = "card section";
-    note.innerHTML = `<h3 class="serif" style="margin:0 0 8px">Ultima immersione</h3>
-      <p style="margin:0;opacity:.8">${escapeHtml(last.notes || "Nessuna nota.")}</p>
-      <p class="meta" style="margin-top:8px">${escapeHtml(last.site)} · ${escapeHtml(last.date)}</p>`;
-    frag.append(note);
-  }
   return frag;
 }
 
@@ -806,19 +1029,26 @@ function emptyState() {
 
 function diveCard(d) {
   const art = document.createElement("article");
-  const place = satMapHtml(d, "sat-place in-card");
-  art.className = `dive-shot${d.photo || place ? " has-photo" : ""}`;
+  const map = satMapHtml(d, "sat-place bare");
+  const dur = diveDuration(d);
+  art.className = "log-card";
   art.innerHTML = `
-    <div class="shot-media">${place || (d.photo ? `<img alt="" src="${d.photo}" />` : `<canvas class="spark"></canvas>`)}</div>
-    <div class="shot-body">
-      <p class="eyebrow">${escapeHtml(d.date || "—")} · n° ${escapeHtml(d.number)}</p>
-      <h4>${escapeHtml(d.site || "Sito da nominare")}</h4>
-      <p class="meta">${escapeHtml(d.location || "—")}${geoText(d) ? " · " + escapeHtml(geoText(d)) : ""}</p>
-      <div class="shot-metrics">
-        <span><b>${escapeHtml(d.maxDepth || "—")}</b> m</span>
-        <span><b>${escapeHtml(d.bottomTime || "—")}</b> min</span>
-        <span><b>EAN ${escapeHtml(d.mix || "21")}</b></span>
+    <header class="log-head">
+      <h3>${escapeHtml(d.site || "Sito da nominare")}</h3>
+      <p>#${escapeHtml(d.number)} · ${escapeHtml(fmtItDateLong(d.date))}${d.timeIn ? " · " + escapeHtml(d.timeIn) : ""} · ${escapeHtml(d.location || "—")}</p>
+    </header>
+    <div class="log-kpis">
+      <div><small>Profondità max</small><b>${fmtDepth(d.maxDepth)} m</b></div>
+      <div><small>Durata</small><b>${dur ? dur + " min" : "—"}</b></div>
+      <div><small>Acqua</small><b>${d.waterTemp ? fmtDepth(d.waterTemp) + " °C" : "—"}</b></div>
+    </div>
+    <div class="log-viz">
+      <div class="log-profile">
+        <span>Profilo profondità</span>
+        <canvas class="spark"></canvas>
+        <strong>${fmtDepth(d.maxDepth)} m</strong>
       </div>
+      <div class="log-map">${map || (d.photo ? `<img alt="" src="${d.photo}" />` : `<div class="map-fallback">Mappa</div>`)}</div>
     </div>
   `;
   art.onclick = () => {
@@ -835,31 +1065,47 @@ function diveCard(d) {
 function drawSpark(canvas, points) {
   const pts = [...(points || [])].sort((a, b) => a.t - b.t);
   const r = canvas.getBoundingClientRect();
-  canvas.width = Math.max(1, Math.floor(r.width * devicePixelRatio));
-  canvas.height = Math.max(1, Math.floor(r.height * devicePixelRatio));
+  const dpr = devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(r.width * dpr));
+  canvas.height = Math.max(1, Math.floor(r.height * dpr));
   const ctx = canvas.getContext("2d");
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "rgba(8, 40, 52, 0.9)";
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, "#24345c");
+  g.addColorStop(1, "#12182c");
+  ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   if (!pts.length) return;
   const maxT = Math.max(1, ...pts.map((p) => p.t));
-  const maxD = Math.max(10, ...pts.map((p) => p.d));
+  const maxD = Math.max(8, ...pts.map((p) => p.d));
+  const x = (t) => (t / maxT) * w;
+  const y = (d) => (d / maxD) * h * 0.78 + h * 0.12;
   ctx.beginPath();
-  pts.forEach((p, i) => {
-    const x = (p.t / maxT) * w;
-    const y = (p.d / maxD) * h * 0.86 + h * 0.08;
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
-  ctx.strokeStyle = "#5ee8dc";
-  ctx.lineWidth = 2 * devicePixelRatio;
+  pts.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p.d)) : ctx.moveTo(x(p.t), y(p.d))));
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2.2 * dpr;
+  ctx.lineJoin = "round";
   ctx.stroke();
+  ctx.lineTo(x(pts[pts.length - 1].t), h);
+  ctx.lineTo(x(pts[0].t), h);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fill();
+  let deep = pts[0];
+  pts.forEach((p) => {
+    if (p.d >= deep.d) deep = p;
+  });
+  ctx.beginPath();
+  ctx.arc(x(deep.t), y(deep.d), 5 * dpr, 0, Math.PI * 2);
+  ctx.fillStyle = "#3dcf6a";
+  ctx.fill();
 }
 
 function renderLog() {
   const frag = document.createDocumentFragment();
-  frag.append(topbar("diario immersioni"));
+  frag.append(topbar("Diario"));
   const listWrap = document.createElement("section");
   listWrap.className = "section";
   const q = (view.query || "").trim().toLowerCase();
@@ -984,6 +1230,13 @@ function enrichImported(d) {
   if (d.profilePoints?.length >= 3) d.profileFromComputer = true;
   applyPlaceToDive(d);
   if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
+  if (!d.timeOut && d.timeIn && d.totalTime) {
+    const [h, m] = String(d.timeIn).split(":").map(Number);
+    if (Number.isFinite(h)) {
+      const t = ((h * 60 + m + Number(d.totalTime)) % 1440 + 1440) % 1440;
+      d.timeOut = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+    }
+  }
   if (!d.certOnDive) d.certOnDive = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
   return d;
 }
@@ -1071,17 +1324,23 @@ function renderProfile() {
     <h2 class="serif" style="margin-top:0">Profilo</h2>
     <div class="form-grid">
       ${field("name", "Nome e cognome", p.name, true)}
-      ${field("certLevel", "Brevetto / didattica", p.certLevel)}
-      ${field("certNumber", "N° brevetto", p.certNumber)}
+      ${field("certLevel", "Brevetto principale / didattica", p.certLevel)}
+      ${field("certNumber", "N° brevetto principale", p.certNumber)}
       ${field("certDate", "Data conseguimento", p.certDate, false, "date")}
       ${field("medicalExpiry", "Certificato medico scadenza", p.medicalExpiry, false, "date")}
       ${field("insurance", "Assicurazione", p.insurance)}
       ${field("emergencyName", "Contatto di emergenza", p.emergencyName)}
       ${field("emergencyPhone", "Telefono", p.emergencyPhone, false, "tel")}
-      ${field("specialties", "Brevetti e specialità", p.specialties, true)}
+      ${field("specialties", "Note su specialità", p.specialties, true)}
       ${field("equipment", "Attrezzatura personale", p.equipment, true, "textarea")}
       ${field("recoverPhone", "Se lo trovi, restituisci a — telefono", p.recoverPhone, false, "tel")}
       ${field("recoverEmail", "Email", p.recoverEmail, false, "email")}
+    </div>
+    <div class="certs-box">
+      <h3 class="serif" style="margin:16px 0 6px">Altri brevetti</h3>
+      <p class="hint">Aggiungi Rescue, Nitrox, Deep e gli altri con il numero. Il brevetto principale resta sopra. In nuova immersione li trovi già pronti.</p>
+      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
+      <button class="btn ghost" type="button" data-addcert>+ Aggiungi brevetto</button>
     </div>
     <div class="actions">
       <button class="btn primary" type="submit">Salva profilo</button>
@@ -1090,10 +1349,35 @@ function renderProfile() {
     </div>
     <p class="hint">Account: ${escapeHtml(loadSession()?.email || "—")}. Backup automatico sul tuo Google. Gli amici hanno diari separati.</p>
   `;
+  const certsBox = form.querySelector("[data-certs]");
+  const bindDel = (row) => {
+    row.querySelector("[data-delcert]").onclick = () => {
+      if (certsBox.querySelectorAll("[data-certrow]").length <= 1) {
+        row.querySelector("[name=certName]").value = "";
+        row.querySelector("[name=certNo]").value = "";
+        return;
+      }
+      row.remove();
+    };
+  };
+  certsBox.querySelectorAll("[data-certrow]").forEach(bindDel);
+  form.querySelector("[data-addcert]").onclick = () => {
+    certsBox.insertAdjacentHTML("beforeend", certRowHtml());
+    bindDel(certsBox.querySelector("[data-certrow]:last-child"));
+  };
   form.onsubmit = (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    state.profile = { ...state.profile, ...Object.fromEntries(fd.entries()) };
+    fd.delete("certName");
+    fd.delete("certNo");
+    const certs = [...certsBox.querySelectorAll("[data-certrow]")]
+      .map((row) => ({
+        id: uid(),
+        name: row.querySelector("[name=certName]").value.trim(),
+        number: row.querySelector("[name=certNo]").value.trim(),
+      }))
+      .filter((c) => c.name || c.number);
+    state.profile = { ...state.profile, ...Object.fromEntries(fd.entries()), certs };
     save(state);
     render();
   };
@@ -1161,12 +1445,12 @@ function renderDetail() {
     <h3 class="serif">Note e sensazioni</h3>
     <p>${escapeHtml(d.notes || "—")}</p>
     <h3 class="serif">Firme — L. 70/2026</h3>
-    <div class="kv">
-      ${signEvidence("Buddy", d.buddyName, d.buddyCert, d.buddySign, d.sigMeta?.buddy)}
-      ${signEvidence("Guida / istruttore (obbligatoria)", d.guideName, d.guideCert, d.guideSign, d.sigMeta?.guide)}
-      ${signEvidence("Diving center", d.centerName, d.centerLead, d.centerSign, d.sigMeta?.center)}
-    </div>
     <p class="hint">${LEGAL_L70}</p>
+    <div class="sign-board">
+      ${signEvidence("buddy", "Buddy", d.buddyName, d.buddyCert, d.buddySign, d.sigMeta?.buddy)}
+      ${signEvidence("guide", "Guida / istruttore", d.guideName, d.guideCert, d.guideSign, d.sigMeta?.guide)}
+      ${signEvidence("center", "Diving center", d.centerName, d.centerLead, d.centerSign, d.sigMeta?.center)}
+    </div>
     <div class="actions">
       <button class="btn primary" type="button" data-act="edit">Modifica</button>
       <button class="btn ghost" type="button" data-act="back">Torna al diario</button>
@@ -1188,6 +1472,26 @@ function renderDetail() {
     view = { name: "log", query: view.query };
     render();
   };
+  card.querySelectorAll("[data-clearsign]").forEach((btn) => {
+    btn.onclick = () => {
+      const who = btn.getAttribute("data-clearsign");
+      const map = {
+        buddy: ["buddySign", "buddy"],
+        guide: ["guideSign", "guide"],
+        center: ["centerSign", "center"],
+      };
+      const spec = map[who];
+      if (!spec) return;
+      const live = state.dives.find((x) => x.id === d.id);
+      if (!live) return;
+      if (live[spec[0]] && !confirm("Cancellare questa firma e rifarla?")) return;
+      live[spec[0]] = "";
+      if (live.sigMeta) live.sigMeta[spec[1]] = null;
+      save(state);
+      view = { name: "edit", diveId: live.id, draft: cloneObj(live), query: view.query, focusSign: spec[0] };
+      render();
+    };
+  });
   frag.append(card);
   queueMicrotask(() => drawProfile(card.querySelector("canvas"), profileFor(d), false));
   return frag;
@@ -1213,14 +1517,16 @@ function renderEdit() {
       ${field("date", "Data", d.date, false, "date")}
       ${field("site", "Sito di immersione", d.site, true)}
       ${field("location", "Località / paese", d.location, true)}
-      ${field("lat", "Latitudine", d.lat)}
-      ${field("lng", "Longitudine", d.lng)}
+      <input type="hidden" name="lat" value="${escapeHtml(d.lat || "")}" />
+      <input type="hidden" name="lng" value="${escapeHtml(d.lng || "")}" />
     </div>
-    <div class="actions" style="margin-top:4px">
+    <p class="hint" style="margin-top:14px">Mappa del sito</p>
+    <div class="site-map" data-sitemap></div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn ghost" type="button" data-findsite>Cerca il sito sulla mappa</button>
       <button class="btn ghost" type="button" data-geo>Usa posizione attuale</button>
     </div>
-    <p class="hint" data-geohint>Coordinate del sito: GPS del telefono a riva, oppure dal nome del luogo e dal computer.</p>
-    <div data-sat>${satMapHtml(d, "sat-place")}</div>
+    <p class="hint" data-geohint>Tocca o trascina il pin. Non serve scrivere latitudine e longitudine.</p>
     <div class="form-grid">
       ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
       ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
@@ -1245,6 +1551,8 @@ function renderEdit() {
       ${field("instruments", "Strumentazione", d.instruments)}
       ${field("certOnDive", "Il tuo brevetto (livello e n°)", d.certOnDive, true)}
     </div>
+    <div class="cert-picks" data-certpicks></div>
+    <p class="hint">Tocca un brevetto del profilo per inserirlo in scheda. Il principale è già proposto.</p>
     <p class="hint" style="margin-top:14px">TIPO</p>
     <div class="chips" data-chips></div>
     <p class="hint" style="margin-top:14px">Sensazioni</p>
@@ -1259,9 +1567,9 @@ function renderEdit() {
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-profile></canvas>
     <p class="hint" data-profilehint>${d.profileFromComputer ? "Curva letta dal computer subacqueo." : "Il profilo si disegna da solo da profondità, tempi e sosta."}</p>
-    <div class="sign-legal">
+    <div class="sign-legal" id="firme">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
-      <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Aggiungiamo anche buddy e centro.</p>
+      <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
@@ -1270,18 +1578,31 @@ function renderEdit() {
         ${field("centerName", "Denominazione diving center", d.centerName, true)}
         ${field("centerLead", "Responsabile del centro", d.centerLead, true)}
       </div>
-      <p class="hint" style="margin-top:12px">Firma buddy</p>
-      <canvas class="sign" data-sign="buddySign"></canvas>
-      <p class="hint" style="margin-top:12px">Firma guida / istruttore responsabile</p>
-      <canvas class="sign" data-sign="guideSign"></canvas>
-      <p class="hint" style="margin-top:12px">Firma diving center / responsabile</p>
-      <canvas class="sign" data-sign="centerSign"></canvas>
+      ${signPad("buddySign", "Firma buddy", "Compagno di immersione")}
+      ${signPad("guideSign", "Firma guida / istruttore", "Obbligatoria per legge sulla scheda")}
+      ${signPad("centerSign", "Firma diving center", "Responsabile del centro")}
     </div>
     <div class="actions">
       <button class="btn primary" type="submit">Salva immersione</button>
       <button class="btn ghost" type="button" data-cancel>Annulla</button>
     </div>
   `;
+  const certInput = form.querySelector("[name=certOnDive]");
+  const picks = form.querySelector("[data-certpicks]");
+  profileCerts().forEach((c) => {
+    const label = certLabel(c);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${label === (d.certOnDive || "") ? " on" : ""}`;
+    b.textContent = c.main ? `${label} · principale` : label;
+    b.onclick = () => {
+      d.certOnDive = label;
+      if (certInput) certInput.value = label;
+      picks.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
+      b.classList.add("on");
+    };
+    picks.append(b);
+  });
   const chips = form.querySelector("[data-chips]");
   TYPES.forEach((t) => {
     const b = document.createElement("button");
@@ -1314,36 +1635,42 @@ function renderEdit() {
     }
     hint.textContent = "Rilevo la posizione…";
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const lat = pos.coords.latitude.toFixed(5);
-        const lng = pos.coords.longitude.toFixed(5);
-        d.lat = lat;
-        d.lng = lng;
-        form.querySelector("[name=lat]").value = lat;
-        form.querySelector("[name=lng]").value = lng;
-        hint.textContent = "Posizione salvata. Puoi correggere le coordinate a mano.";
-        try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`
-          );
-          const info = await res.json();
-          const a = info.address || {};
-          const loc = [a.village || a.town || a.city || a.municipality, a.country].filter(Boolean).join(", ");
-          const locField = form.querySelector("[name=location]");
-          if (loc && locField && !String(locField.value || "").trim()) {
-            locField.value = loc;
-            d.location = loc;
-          }
-        } catch {
-          /* la mappa resta sulle coordinate */
+      (pos) => {
+        if (form._placePin) form._placePin(pos.coords.latitude, pos.coords.longitude, { zoom: 16, hint: "Posizione del telefono. Trascina il pin se eri a riva, non sul relitto." });
+        else {
+          writeDiveCoords(form, d, pos.coords.latitude, pos.coords.longitude);
+          reverseFillLocation(form, d, pos.coords.latitude, pos.coords.longitude);
         }
-        refreshSat();
       },
       () => {
-        hint.textContent = "Posizione non disponibile. Inserisci latitudine e longitudine a mano.";
+        hint.textContent = "Posizione non disponibile. Tocca la mappa sul sito.";
       },
       { enableHighAccuracy: true, timeout: 12000 }
     );
+  };
+  form.querySelector("[data-findsite]").onclick = async () => {
+    const hint = form.querySelector("[data-geohint]");
+    const q = [form.querySelector("[name=site]")?.value, form.querySelector("[name=location]")?.value]
+      .map((s) => String(s || "").trim())
+      .filter(Boolean)
+      .join(", ");
+    if (!q) {
+      hint.textContent = "Scrivi il nome del sito o la località, poi cerca.";
+      return;
+    }
+    hint.textContent = "Cerco il sito…";
+    try {
+      applyPlaceToDive({ ...d, site: form.querySelector("[name=site]").value, location: form.querySelector("[name=location]").value });
+      const hit = coordsForDive({ ...d, site: form.querySelector("[name=site]").value, location: form.querySelector("[name=location]").value, lat: "", lng: "" });
+      const found = hit || (await geocodeQuery(q));
+      if (!found) {
+        hint.textContent = "Nessun punto trovato. Scorri la mappa e tocca a mano.";
+        return;
+      }
+      if (form._placePin) form._placePin(found.lat, found.lng, { zoom: 15, hint: "Sito trovato. Trascina il pin sul punto esatto." });
+    } catch {
+      hint.textContent = "Ricerca non disponibile. Tocca la mappa sul sito.";
+    }
   };
   form.querySelector('input[name="photoFile"]').onchange = async (e) => {
     const file = e.target.files?.[0];
@@ -1354,23 +1681,18 @@ function renderEdit() {
     preview.hidden = false;
   };
   const canvas = form.querySelector("[data-profile]");
-  const refreshSat = () => {
-    const box = form.querySelector("[data-sat]");
-    if (box) box.innerHTML = satMapHtml(d, "sat-place");
-  };
   const refreshProfile = () => {
     if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
     drawProfile(canvas, profileFor(d), false);
   };
-  ["site", "location", "lat", "lng"].forEach((name) => {
+  ["site", "location"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
       d[name] = form.querySelector(`[name=${name}]`).value;
+      const before = geoCoords(d.lat, d.lng);
       applyPlaceToDive(d);
-      if (geoCoords(d.lat, d.lng)) {
-        form.querySelector("[name=lat]").value = d.lat;
-        form.querySelector("[name=lng]").value = d.lng;
+      if (!before && geoCoords(d.lat, d.lng) && form._placePin) {
+        form._placePin(d.lat, d.lng, { zoom: 15, skipGeo: true, hint: "Punto dal catalogo. Trascina se non è esatto." });
       }
-      refreshSat();
     });
   });
   ["maxDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "timeIn", "timeOut"].forEach((name) => {
@@ -1381,16 +1703,43 @@ function renderEdit() {
   });
   queueMicrotask(() => {
     applyPlaceToDive(d);
-    refreshSat();
+    bindDiveSiteMap(form, d);
     refreshProfile();
     bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => (d.buddySign = v));
     bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => (d.guideSign = v));
     bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    if (view.focusSign) {
+      form.querySelector(`[data-sign="${view.focusSign}"]`)?.closest(".sign-pad")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      view.focusSign = "";
+    }
   });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     fd.delete("photoFile");
+    fd.delete("buddySignOk");
+    fd.delete("guideSignOk");
+    fd.delete("centerSignOk");
+    const signed = {
+      buddy: Boolean(d.buddySign),
+      guide: Boolean(d.guideSign),
+      center: Boolean(d.centerSign),
+    };
+    if (signed.buddy && !form.querySelector('[name=buddySignOk]')?.checked) {
+      alert("Per la firma del buddy spunta la conferma legale sotto il riquadro.");
+      form.querySelector('[data-pad="buddySign"]')?.scrollIntoView({ block: "center" });
+      return;
+    }
+    if (signed.guide && !form.querySelector('[name=guideSignOk]')?.checked) {
+      alert("Per la firma della guida spunta la conferma legale sotto il riquadro (L. 70/2026).");
+      form.querySelector('[data-pad="guideSign"]')?.scrollIntoView({ block: "center" });
+      return;
+    }
+    if (signed.center && !form.querySelector('[name=centerSignOk]')?.checked) {
+      alert("Per la firma del centro spunta la conferma legale sotto il riquadro.");
+      form.querySelector('[data-pad="centerSign"]')?.scrollIntoView({ block: "center" });
+      return;
+    }
     const next = applyPlaceToDive({
       ...d,
       ...Object.fromEntries(fd.entries()),
@@ -1436,14 +1785,57 @@ function renderEdit() {
 }
 
 function legalMeta(role, name, cert, at, hash) {
-  return { role, name: name || "", cert: cert || "", at, hash, law: "L. 70/2026 art. 12 c. 8" };
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  return {
+    role,
+    name: name || "",
+    cert: cert || "",
+    at,
+    tz,
+    hash,
+    law: "L. 70/2026 art. 12 c. 8",
+    kind: "firma elettronica semplice",
+    intent: true,
+  };
 }
 
-function signEvidence(title, name, cert, image, meta) {
+function signPad(key, title, note) {
+  return `
+    <div class="sign-pad" data-pad="${key}">
+      <div class="sign-pad-top">
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(note)}</span>
+        </div>
+      </div>
+      <div class="sign-stage">
+        <canvas class="sign" data-sign="${key}"></canvas>
+        <p class="sign-ghost">Firma qui con il dito o il pennino</p>
+        <button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>
+      </div>
+      <label class="sign-ok"><input type="checkbox" name="${key}Ok" /> Confermo di firmare questa scheda del libretto immersioni, in questa qualità, ai sensi della L. 70/2026 art. 12 c. 8. Restano allegate data, ora e impronta della scheda.</label>
+    </div>`;
+}
+
+function signEvidence(who, title, name, cert, image, meta) {
   const when = meta?.at ? new Date(meta.at).toLocaleString("it-IT") : "";
-  return `<div><b>${escapeHtml(title)}</b>${escapeHtml(name || "—")}<br><small>${escapeHtml(cert || "")}${when ? " · " + escapeHtml(when) : ""}</small>
-    ${image ? `<img alt="firma" src="${image}" style="width:100%;max-height:70px;object-fit:contain;margin-top:6px" />` : "<small>non firmata</small>"}
-    ${meta?.hash ? `<small class="hint">Impronta ${escapeHtml(meta.hash.slice(0, 16))}…</small>` : ""}</div>`;
+  const signed = Boolean(image);
+  return `<article class="sign-card">
+      <div class="sign-card-top">
+        <div>
+          <b>${escapeHtml(title)}</b>
+          <span>${escapeHtml(name || "—")}</span>
+          <small>${escapeHtml(cert || "")}${when ? " · " + escapeHtml(when) : ""}</small>
+        </div>
+        <button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>
+      </div>
+      ${signed ? `<img alt="firma" src="${image}" />` : `<p class="sign-empty">Non firmata</p>`}
+      ${
+        meta?.hash
+          ? `<p class="sign-legal-line">${escapeHtml(meta.kind || "Firma elettronica")} · ${escapeHtml(meta.law || "")}<br>Impronta ${escapeHtml(meta.hash.slice(0, 20))}… · ${escapeHtml(meta.tz || "")}</p>`
+          : ""
+      }
+    </article>`;
 }
 
 async function diveDigest(d) {
@@ -1498,19 +1890,40 @@ function compressImage(file) {
 
 function bindSign(canvas, existing, onChange) {
   if (!canvas) return;
+  let current = existing || "";
+  const pad = canvas.closest(".sign-pad");
+  const ghost = pad?.querySelector(".sign-ghost");
+  const ok = pad?.querySelector('input[type="checkbox"]');
+  const showGhost = () => {
+    if (ghost) ghost.hidden = Boolean(current);
+  };
+  if (existing && ok) ok.checked = true;
   const ctx = canvas.getContext("2d");
+  const stylePen = () => {
+    ctx.strokeStyle = "#0b4d5e";
+    ctx.lineWidth = 2.4 * devicePixelRatio;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
   const fit = () => {
     const r = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.floor(r.width * devicePixelRatio));
     canvas.height = Math.max(1, Math.floor(r.height * devicePixelRatio));
-    ctx.strokeStyle = "#edd9a3";
-    ctx.lineWidth = 2 * devicePixelRatio;
-    ctx.lineCap = "round";
-    if (existing) {
+    stylePen();
+    if (current) {
       const im = new Image();
       im.onload = () => ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
-      im.src = existing;
+      im.src = current;
     }
+    showGhost();
+  };
+  const clear = () => {
+    current = "";
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    stylePen();
+    if (ok) ok.checked = false;
+    showGhost();
+    onChange("");
   };
   fit();
   let drawing = false;
@@ -1536,7 +1949,9 @@ function bindSign(canvas, existing, onChange) {
   const end = () => {
     if (!drawing) return;
     drawing = false;
-    onChange(canvas.toDataURL("image/png"));
+    current = canvas.toDataURL("image/png");
+    showGhost();
+    onChange(current);
   };
   canvas.onmousedown = start;
   canvas.onmousemove = move;
@@ -1544,10 +1959,19 @@ function bindSign(canvas, existing, onChange) {
   canvas.ontouchstart = start;
   canvas.ontouchmove = move;
   canvas.ontouchend = end;
-  canvas.ondblclick = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    onChange("");
+  canvas.ondblclick = (e) => {
+    e.preventDefault();
+    clear();
   };
+  const clearBtn = pad?.querySelector(`[data-clearsign="${canvas.dataset.sign}"]`);
+  if (clearBtn) {
+    clearBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clear();
+    };
+  }
+  showGhost();
 }
 
 function drawProfile(canvas, points, editable, onChange) {

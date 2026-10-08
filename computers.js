@@ -80,7 +80,7 @@ function num(v) {
   return Number.isFinite(n) ? n : "";
 }
 
-function durationToMin(raw) {
+function durationToMin(raw, asSeconds) {
   if (raw == null || raw === "") return "";
   const s = String(raw).trim();
   if (/^\d+:\d{2}(:\d{2})?$/.test(s)) {
@@ -90,8 +90,81 @@ function durationToMin(raw) {
   }
   const n = num(s);
   if (n === "") return "";
-  if (n >= 180) return Math.round(n / 60);
+  if (asSeconds || n >= 180) return Math.max(0, Math.round(n / 60));
   return Math.round(n);
+}
+
+function secToMin(raw) {
+  const n = num(raw);
+  if (n === "") return "";
+  return Math.round((n / 60) * 10) / 10;
+}
+
+function pressureBar(v) {
+  const n = num(v);
+  if (n === "") return "";
+  if (n > 100000) return String(Math.round(n / 100000));
+  if (n > 2500) return String(Math.round(n / 1000));
+  return String(Math.round(n * 10) / 10);
+}
+
+function volumeLiters(v) {
+  const n = num(v);
+  if (n === "") return "";
+  if (n > 0 && n < 1.5) return String(Math.round(n * 1000));
+  return String(Math.round(n * 10) / 10);
+}
+
+function o2Percent(v) {
+  const n = num(v);
+  if (n === "") return "";
+  if (n > 0 && n <= 1) return String(Math.round(n * 100));
+  return String(Math.round(n));
+}
+
+function tempC(v) {
+  const n = num(String(v).replace(/[^\d.,-]/g, ""));
+  if (n === "") return "";
+  if (n > 200) return String(Math.round((n - 273.15) * 10) / 10);
+  return String(Math.round(n * 10) / 10);
+}
+
+function addMinutes(time, mins) {
+  if (!time || mins === "" || mins == null) return "";
+  const p = String(time).split(":").map(Number);
+  if (p.length < 2 || !Number.isFinite(p[0])) return "";
+  let t = p[0] * 60 + p[1] + Number(mins);
+  if (!Number.isFinite(t)) return "";
+  t = ((t % 1440) + 1440) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Math.round(t % 60)).padStart(2, "0")}`;
+}
+
+function safetyFromProfile(pts) {
+  const near = (pts || []).filter((p) => p.d >= 3 && p.d <= 7);
+  if (near.length < 2) return "";
+  const t = near[near.length - 1].t - near[0].t;
+  return t >= 1 ? String(Math.round(t)) : "";
+}
+
+function inferTypes(d) {
+  const blob = `${d.site || ""} ${d.notes || ""} ${d.types || ""}`.toLowerCase();
+  const types = Array.isArray(d.types) ? [...d.types] : [];
+  const add = (t) => {
+    if (!types.includes(t)) types.push(t);
+  };
+  if (/wreck|relitto|shipwreck/.test(blob)) add("Relitto");
+  if (/night|notturn/.test(blob)) add("Notturna");
+  if (/drift|corrente|current/.test(blob)) add("Corrente");
+  if (Number(d.maxDepth) >= 30) add("Profonda");
+  if (/boat|barca/.test(blob)) add("Da barca");
+  if (/shore|riva|beach/.test(blob)) add("Da riva");
+  return types;
+}
+
+function strField(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return String(v).trim();
 }
 
 function geoFromXml(root) {
@@ -105,6 +178,141 @@ function geoFromXml(root) {
   };
 }
 
+const FIELD_ALIASES = {
+  site: ["sitename", "site", "spot", "divename", "divesite", "poi", "waypointname"],
+  location: ["location", "city", "place", "country", "region", "area", "state"],
+  timeIn: ["timein", "starttime", "entrytime", "oraingresso"],
+  timeOut: ["timeout", "endtime", "stoptime", "exittime", "orauscita"],
+  maxDepth: ["greatestdepth", "maxdepth", "maximumdepth", "depthmax", "profmax"],
+  plannedDepth: ["programmedivedepth", "planneddepth", "targetdepth", "plandepth"],
+  bottomTime: ["bottomtime", "divetime", "diveduration", "duration", "tempofondo"],
+  totalTime: ["totaltime", "totale", "totalruntime"],
+  safetyStop: ["safetystop", "safetystoptime", "stoptime", "sostasicurezza"],
+  surfaceInterval: ["surfaceintervalbeforedive", "surfaceinterval", "si", "surfacetime"],
+  visibility: ["horizontalvisibility", "visibility", "vis", "visibilita", "visibility_m"],
+  waterTemp: ["lowesttemperature", "watertemp", "watertemperature", "mintemp", "tempacqua"],
+  airTemp: ["airtemperature", "airtemp", "air_temp", "temparia"],
+  current: ["currentstrength", "current", "corrente"],
+  seaConditions: ["seacondition", "seaconditions", "weather", "waves", "sea", "condizioni", "wind"],
+  wetsuit: ["exposureprotection", "wetsuit", "suit", "suittype", "muta"],
+  ballast: ["leadquantity", "ballast", "weight", "lead", "zavorra"],
+  tank: ["tankvolume", "tanksize", "cylindersize", "volume", "bombola"],
+  mix: ["oxygen", "nitrox", "o2", "ean", "mix", "fo2"],
+  pressureStart: ["tankpressurebegin", "beginpressure", "startpressure", "start_bar", "pressurestart", "cylpressure"],
+  pressureEnd: ["tankpressureend", "endpressure", "end_bar", "pressureend"],
+  regulator: ["regulator", "autorespiratore", "bcd"],
+  instruments: ["computer", "devicemodel", "model", "divecomputer", "serialnumber"],
+  buddyName: ["divebuddy", "buddy", "partner", "compagno"],
+  buddyCert: ["buddycert", "buddycertificate", "partnercert"],
+  guideName: ["diveguide", "guide", "instructor", "divemaster"],
+  guideCert: ["guidecert", "instructorcert"],
+  centerName: ["divecenter", "diveshop", "shop", "operator", "center"],
+  centerLead: ["centerlead", "owner", "responsabile"],
+  notes: ["observation", "remarks", "comment", "description", "notes", "note"],
+  lat: ["latitude", "lat", "gpslat"],
+  lng: ["longitude", "long", "lon", "lng", "gpslon"],
+  feeling: ["rating", "stars", "score", "feeling", "voto"],
+};
+
+const NOTE_EXTRA_KEYS = [
+  "weather", "wind", "waves", "salinity", "averagedepth", "avgdepth", "meandepth",
+  "cns", "otu", "deco", "helium", "he", "n2", "nitrogen", "gasname", "mixname",
+  "airconsumption", "sac", "rmv", "density", "altitude", "platform", "boat",
+  "purpose", "trip", "vessel", "serial", "firmware", "desaturation", "noflytime",
+  "ascent", "descent", "hangtime", "ndl", "tts",
+];
+
+function xmlBag(root) {
+  const bag = {};
+  if (!root) return bag;
+  [...root.querySelectorAll("*")].forEach((el) => {
+    const name = localName(el);
+    const direct = [...el.childNodes]
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent.trim())
+      .join(" ");
+    if (direct && bag[name] == null) bag[name] = direct;
+  });
+  [...root.attributes || []].forEach((a) => {
+    if (a.value && bag[a.name.toLowerCase()] == null) bag[a.name.toLowerCase()] = a.value;
+  });
+  return bag;
+}
+
+function flattenVals(obj, out = {}, depth = 0) {
+  if (!obj || typeof obj !== "object" || depth > 7) return out;
+  if (Array.isArray(obj)) {
+    obj.slice(0, 8).forEach((item) => flattenVals(item, out, depth + 1));
+    return out;
+  }
+  Object.entries(obj).forEach(([k, v]) => {
+    if (v == null || v === "") return;
+    const key = String(k).toLowerCase();
+    if (typeof v === "object") flattenVals(v, out, depth + 1);
+    else if (out[key] == null) out[key] = v;
+  });
+  return out;
+}
+
+function aliasGet(bag, names) {
+  if (!bag) return "";
+  for (const n of names) {
+    const k = n.toLowerCase();
+    if (bag[k] != null && bag[k] !== "") return bag[k];
+  }
+  const keys = Object.keys(bag);
+  for (const n of names) {
+    const k = n.toLowerCase();
+    const hit = keys.find((x) => x === k || x.endsWith(k));
+    if (hit && bag[hit] != null && bag[hit] !== "") return bag[hit];
+  }
+  return "";
+}
+
+function extraNotes(bag, already) {
+  if (!bag) return "";
+  const skip = new Set(
+    Object.values(FIELD_ALIASES)
+      .flat()
+      .concat(["date", "datetime", "divedate", "time", "depth", "samples", "profile", "id", "ref"])
+      .map((s) => s.toLowerCase())
+  );
+  const lines = [];
+  NOTE_EXTRA_KEYS.forEach((k) => {
+    const v = aliasGet(bag, [k]);
+    if (v === "" || v == null) return;
+    const s = strField(v);
+    if (!s || already.includes(s)) return;
+    lines.push(`${k}: ${s}`);
+  });
+  Object.keys(bag).forEach((k) => {
+    if (skip.has(k) || NOTE_EXTRA_KEYS.includes(k)) return;
+    const v = bag[k];
+    if (typeof v !== "string" && typeof v !== "number") return;
+    const s = strField(v);
+    if (!s || s.length > 80 || already.includes(s)) return;
+  });
+  return lines.join(" · ");
+}
+
+function fillFromBag(partial, bag) {
+  if (!bag) return partial;
+  Object.entries(FIELD_ALIASES).forEach(([key, names]) => {
+    if (partial[key] != null && partial[key] !== "") return;
+    const v = aliasGet(bag, names);
+    if (v === "" || v == null) return;
+    if (key === "feeling") {
+      const n = num(v);
+      if (n >= 1 && n <= 5) partial[key] = n;
+      return;
+    }
+    partial[key] = v;
+  });
+  const extra = extraNotes(bag, `${partial.notes || ""} ${partial.site || ""} ${partial.location || ""}`);
+  if (extra) partial.notes = [partial.notes, extra].filter(Boolean).join("\n");
+  return partial;
+}
+
 function splitDateTime(raw) {
   const s = String(raw || "").trim();
   const m = s.match(/(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
@@ -115,13 +323,59 @@ function splitDateTime(raw) {
 
 function baseImported(partial) {
   const d = typeof emptyDive === "function" ? emptyDive() : {};
-  return {
+  d.tank = "";
+  d.mix = "";
+  d.pressureStart = "";
+  d.safetyStop = "";
+  const merged = {
     ...d,
     id: typeof uid === "function" ? uid() : String(Date.now()) + Math.random(),
     imported: true,
     sourceComputer: partial.sourceComputer || "",
     ...partial,
   };
+  return normalizeImported(merged);
+}
+
+function normalizeImported(d) {
+  d.waterTemp = tempC(d.waterTemp);
+  d.airTemp = tempC(d.airTemp);
+  if (d.tank !== "" && d.tank != null) d.tank = volumeLiters(d.tank) || strField(d.tank);
+  const mix = o2Percent(d.mix);
+  d.mix = mix || "21";
+  d.pressureStart = pressureBar(d.pressureStart);
+  d.pressureEnd = pressureBar(d.pressureEnd);
+  d.maxDepth = d.maxDepth === "" || d.maxDepth == null ? "" : String(Math.round(Number(d.maxDepth) * 10) / 10);
+  d.plannedDepth = strField(d.plannedDepth) || d.maxDepth;
+  d.visibility = strField(d.visibility);
+  d.current = strField(d.current);
+  d.seaConditions = strField(d.seaConditions);
+  d.site = strField(d.site);
+  d.location = strField(d.location);
+  d.notes = strField(d.notes);
+  d.instruments = strField(d.instruments);
+  d.buddyName = strField(d.buddyName);
+  d.buddyCert = strField(d.buddyCert);
+  d.guideName = strField(d.guideName);
+  d.guideCert = strField(d.guideCert);
+  d.centerName = strField(d.centerName);
+  d.centerLead = strField(d.centerLead);
+  d.wetsuit = strField(d.wetsuit);
+  d.ballast = strField(d.ballast);
+  d.regulator = strField(d.regulator);
+  d.bottomTime = d.bottomTime === "" || d.bottomTime == null ? "" : String(Math.round(Number(d.bottomTime) || 0) || "");
+  d.totalTime = d.totalTime === "" || d.totalTime == null ? "" : String(Math.round(Number(d.totalTime) || 0) || "");
+  if (!d.totalTime && d.bottomTime) d.totalTime = d.bottomTime;
+  if (!d.bottomTime && d.totalTime) d.bottomTime = d.totalTime;
+  if (!d.timeOut && d.timeIn && d.totalTime) d.timeOut = addMinutes(d.timeIn, d.totalTime);
+  const pts = Array.isArray(d.profilePoints) ? downsampleProfile(d.profilePoints) : [];
+  d.profilePoints = pts;
+  if (pts.length >= 3) d.profileFromComputer = true;
+  if (!d.safetyStop) d.safetyStop = safetyFromProfile(pts) || (Number(d.maxDepth) >= 10 ? "3" : "");
+  d.types = inferTypes(d);
+  if (d.lat !== "" && d.lat != null) d.lat = String(d.lat);
+  if (d.lng !== "" && d.lng != null) d.lng = String(d.lng);
+  return d;
 }
 
 function parseUDDF(xml) {
@@ -132,7 +386,8 @@ function parseUDDF(xml) {
     const id = site.getAttribute("id") || "";
     const name = txt(site, ["name"]) || txt(site, ["sitename"]);
     const geo = geoFromXml(site);
-    if (id) sites.set(id, { name, ...geo });
+    const location = txt(site, ["location", "city"]) || txt(findOne(site, "geography") || site, ["location", "country"]);
+    if (id) sites.set(id, { name, location, ...geo });
   });
 
   diveNodes.forEach((node) => {
@@ -140,41 +395,78 @@ function parseUDDF(xml) {
     const before = findOne(node, "informationbeforedive") || node;
     const dt = splitDateTime(txt(before, ["datetime", "dateoftrip", "startdate"]) || txt(after, ["datetime"]));
     const maxDepth = num(txt(after, ["greatestdepth", "maxdepth", "depth"]));
-    const totalSec = txt(after, ["diveduration", "duration"]);
-    const totalTime = durationToMin(totalSec);
+    const totalMin = durationToMin(txt(after, ["diveduration", "duration"]), true);
     const waypoints = findAll(node, "waypoint");
-    const profilePoints = waypoints
-      .map((w) => {
-        const t = durationToMin(txt(w, ["divetime", "time"]));
-        const depth = num(txt(w, ["depth"]));
-        return t === "" || depth === "" ? null : { t: Number(t), d: Number(depth) };
-      })
-      .filter(Boolean);
-    const siteRef = findOne(before, "link")?.getAttribute("ref") || "";
+    const profilePoints = [];
+    const wpPress = [];
+    const wpTemp = [];
+    waypoints.forEach((w) => {
+      const t = secToMin(txt(w, ["divetime", "time"]));
+      const depth = num(txt(w, ["depth"]));
+      if (t !== "" && depth !== "") profilePoints.push({ t: Number(t), d: Number(depth) });
+      const p = txt(w, ["tankpressure", "pressure"]);
+      if (p) wpPress.push(p);
+      const tw = txt(w, ["temperature"]);
+      if (tw) wpTemp.push(tw);
+    });
+    const siteRef = findOne(before, "link")?.getAttribute("ref") || findOne(node, "link")?.getAttribute("ref") || "";
     const siteInfo = sites.get(siteRef) || {};
-    const geo = geoFromXml(node) || geoFromXml(before) || { lat: siteInfo.lat, lng: siteInfo.lng };
+    const geo = geoFromXml(findOne(node, "geography") || node);
     const tank = findOne(node, "tankdata") || findOne(node, "tank");
     const mixEl = findOne(node, "mix") || tank;
-    const o2 = num(txt(mixEl || node, ["o2", "oxygen"]));
+    const o2 = txt(mixEl || node, ["o2", "oxygen"]);
+    const vis = txt(after, ["visibility", "horizontalvisibility", "visibility_m"]);
+    const current = txt(after, ["current", "currentstrength"]) || txt(before, ["current"]);
+    const rating = num(txt(after, ["rating", "stars", "score"]));
+    const manufacturer = txt(findOne(xml, "manufacturer") || xml, ["name"]) || txt(xml, ["manufacturer"]);
+    const model = txt(findOne(xml, "generator") || xml, ["model", "devicemodel"]);
+    const he = txt(mixEl || node, ["he", "helium"]);
+    const avg = txt(after, ["averagedepth", "mean"]);
+    const bag = { ...xmlBag(before), ...xmlBag(after), ...xmlBag(tank), ...xmlBag(mixEl), ...xmlBag(node) };
     dives.push(
-      baseImported({
-        date: dt.date,
-        timeIn: dt.time,
-        maxDepth: maxDepth === "" ? "" : String(maxDepth),
-        bottomTime: totalTime === "" ? "" : String(totalTime),
-        totalTime: totalTime === "" ? "" : String(totalTime),
-        waterTemp: txt(after, ["lowesttemperature", "temperature"]).replace(/[^\d.,-]/g, ""),
-        site: siteInfo.name || txt(before, ["name", "site", "divesite"]) || "Import UDDF",
-        location: txt(xml, ["country", "location"]) || "",
-        lat: geo.lat ?? "",
-        lng: geo.lng ?? "",
-        mix: o2 === "" ? "21" : String(Math.round(o2 > 1 ? o2 : o2 * 100)),
-        tank: txt(tank || node, ["tankvolume", "volume"]) || "12",
-        instruments: "Computer (UDDF)",
-        sourceComputer: "uddf",
-        profilePoints,
-        notes: txt(after, ["notes", "comment", "remarks"]),
-      })
+      baseImported(
+        fillFromBag(
+          {
+            date: dt.date,
+            timeIn: dt.time,
+            maxDepth: maxDepth === "" ? "" : String(maxDepth),
+            plannedDepth: strField(num(txt(before, ["programmedivedepth", "planneddepth"]))),
+            bottomTime: totalMin === "" ? "" : String(totalMin),
+            totalTime: totalMin === "" ? "" : String(totalMin),
+            surfaceInterval: strField(durationToMin(txt(before, ["surfaceintervalbeforedive", "surfaceinterval"]), true)),
+            waterTemp: txt(after, ["lowesttemperature", "temperature"]) || wpTemp[0] || "",
+            airTemp: txt(before, ["airtemperature"]),
+            visibility: vis.replace(/[^\d.,-]/g, ""),
+            current,
+            seaConditions: txt(after, ["seacondition", "weather", "waves"]) || txt(before, ["weather"]),
+            wetsuit: txt(node, ["suit", "exposureprotection", "wetsuit"]),
+            ballast: txt(node, ["lead", "leadquantity", "weight", "ballast"]),
+            site: siteInfo.name || txt(before, ["sitename", "site", "divesite"]) || "Import UDDF",
+            location: siteInfo.location || "",
+            lat: geo.lat || siteInfo.lat || "",
+            lng: geo.lng || siteInfo.lng || "",
+            mix: o2,
+            tank: txt(tank || node, ["tankvolume", "volume"]),
+            pressureStart: txt(tank || node, ["tankpressurebegin", "beginpressure", "startpressure"]) || wpPress[0] || "",
+            pressureEnd: txt(tank || node, ["tankpressureend", "endpressure"]) || wpPress[wpPress.length - 1] || "",
+            instruments: [manufacturer, model].filter(Boolean).join(" ") || "Computer (UDDF)",
+            buddyName: txt(findOne(node, "buddy") || node, ["personal", "name", "buddy", "divebuddy", "partner"]),
+            guideName: txt(node, ["diveguide", "guide", "instructor"]),
+            centerName: txt(node, ["shop", "divecenter", "operator"]),
+            feeling: rating >= 1 && rating <= 5 ? rating : 0,
+            sourceComputer: "uddf",
+            profilePoints,
+            notes: [
+              txt(after, ["notes", "comment", "remarks", "observation"]),
+              avg ? `prof. media ${avg} m` : "",
+              he && num(he) > 0 ? `He ${o2Percent(he)}%` : "",
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          },
+          bag
+        )
+      )
     );
   });
   return dives;
@@ -200,26 +492,50 @@ function parseSuuntoXml(xml) {
     });
     const model = txt(xml, ["computer", "devicemodel", "model"]) || "Suunto EON Core";
     const geo = geoFromXml(node);
-    return baseImported({
-      date: dt.date,
-      timeIn: dt.time,
-      maxDepth: maxDepth === "" ? "" : String(maxDepth),
-      bottomTime: totalTime === "" ? "" : String(totalTime),
-      totalTime: totalTime === "" ? "" : String(totalTime),
-      site: txt(node, ["site", "location", "spot", "divename"]) || "Suunto",
-      location: txt(node, ["city", "country", "place"]) || "",
-      lat: geo.lat,
-      lng: geo.lng,
-      waterTemp: String(num(txt(node, ["watertemp", "temperature", "mintemp"])) || ""),
-      mix: String(num(txt(node, ["o2", "oxygen", "nitrox"])) || 21),
-      pressureStart: String(num(txt(node, ["startpressure", "cylpressure", "pressure"])) || ""),
-      pressureEnd: String(num(txt(node, ["endpressure"])) || ""),
-      instruments: model,
-      sourceComputer: "suunto",
-      types: [],
-      profilePoints,
-      notes: txt(node, ["notes", "description", "comment"]),
-    });
+    const endDt = splitDateTime(txt(node, ["endtime", "stoptime", "timeout"]));
+    return baseImported(
+      fillFromBag(
+        {
+          date: dt.date,
+          timeIn: dt.time,
+          timeOut: endDt.time,
+          maxDepth: maxDepth === "" ? "" : String(maxDepth),
+          plannedDepth: strField(num(txt(node, ["planneddepth", "targetdepth"]))),
+          bottomTime: totalTime === "" ? "" : String(totalTime),
+          totalTime: totalTime === "" ? "" : String(totalTime),
+          surfaceInterval: strField(durationToMin(txt(node, ["surfaceinterval", "si"]))),
+          safetyStop: strField(durationToMin(txt(node, ["safetystop", "stoptime"]))),
+          site: txt(node, ["site", "spot", "divename", "divesite"]) || "Suunto",
+          location: txt(node, ["city", "country", "place", "location"]) || "",
+          lat: geo.lat,
+          lng: geo.lng,
+          waterTemp: txt(node, ["watertemp", "temperature", "mintemp", "water_temp"]),
+          airTemp: txt(node, ["airtemp", "airtemperature"]),
+          visibility: txt(node, ["visibility", "vis"]),
+          current: txt(node, ["current"]),
+          seaConditions: txt(node, ["weather", "sea", "waves"]),
+          mix: txt(node, ["o2", "oxygen", "nitrox", "mix"]),
+          tank: txt(node, ["tank", "tanksize", "cylindersize", "volume"]),
+          pressureStart: txt(node, ["startpressure", "cylpressure", "pressure", "start_bar"]),
+          pressureEnd: txt(node, ["endpressure", "end_bar"]),
+          ballast: txt(node, ["weight", "ballast", "lead"]),
+          wetsuit: txt(node, ["suit", "wetsuit"]),
+          regulator: txt(node, ["regulator"]),
+          instruments: model,
+          buddyName: txt(node, ["buddy", "partner"]),
+          guideName: txt(node, ["guide", "instructor"]),
+          centerName: txt(node, ["diveshop", "center", "operator"]),
+          feeling: (() => {
+            const n = num(txt(node, ["rating", "stars"]));
+            return n >= 1 && n <= 5 ? n : 0;
+          })(),
+          sourceComputer: "suunto",
+          profilePoints,
+          notes: txt(node, ["notes", "description", "comment"]),
+        },
+        xmlBag(node)
+      )
+    );
   });
 }
 
@@ -230,29 +546,66 @@ function parseCsv(text) {
   const headers = split(lines[0]).map((h) => h.toLowerCase());
   const idx = (names) => names.map((n) => headers.findIndex((h) => h.includes(n))).find((i) => i >= 0);
   const iDate = idx(["date", "data"]);
-  const iTime = idx(["time", "ora", "start"]);
-  const iDepth = idx(["depth", "prof", "max"]);
-  const iDur = idx(["duration", "tempo", "bottom", "fondo", "min"]);
-  const iSite = idx(["site", "sito", "location", "spot"]);
-  const iLoc = idx(["country", "località", "localita", "place"]);
+  const iTime = idx(["time in", "timein", "start time", "ora", "start"]);
+  const iOut = idx(["time out", "timeout", "end time", "fine"]);
+  const iDepth = idx(["max depth", "maxdepth", "depth", "prof"]);
+  const iPlan = idx(["planned", "program"]);
+  const iDur = idx(["bottom", "fondo", "duration", "divetime", "tempo"]);
+  const iTotal = idx(["total time", "totaltime", "totale"]);
+  const iSite = idx(["site", "sito", "spot"]);
+  const iLoc = idx(["country", "località", "localita", "place", "location"]);
   const iLat = idx(["lat", "latitude"]);
   const iLng = idx(["lng", "lon", "long", "longitude"]);
+  const iMix = idx(["o2", "nitrox", "mix", "ean"]);
+  const iTank = idx(["tank", "cyl", "bombola", "volume"]);
+  const iP0 = idx(["start press", "startpressure", "bar in", "pressure start"]);
+  const iP1 = idx(["end press", "endpressure", "bar out", "pressure end"]);
+  const iTemp = idx(["water temp", "watertemp", "temp acqua", "temp"]);
+  const iAir = idx(["air temp", "airtemp"]);
+  const iVis = idx(["visib"]);
+  const iNotes = idx(["note", "comment", "remark"]);
+  const iBuddy = idx(["buddy"]);
+  const iGuide = idx(["guide", "instructor"]);
+  const iCenter = idx(["center", "shop", "diving"]);
   return lines.slice(1).map((line) => {
     const cols = split(line);
-    const dt = splitDateTime(`${cols[iDate] || ""} ${cols[iTime] || ""}`.trim());
-    return baseImported({
-      date: dt.date || (cols[iDate] || "").slice(0, 10),
-      timeIn: dt.time,
-      maxDepth: String(num(cols[iDepth]) || ""),
-      bottomTime: String(durationToMin(cols[iDur]) || ""),
-      totalTime: String(durationToMin(cols[iDur]) || ""),
-      site: cols[iSite] || "Import CSV",
-      location: cols[iLoc] || "",
-      lat: iLat >= 0 ? num(cols[iLat]) : "",
-      lng: iLng >= 0 ? num(cols[iLng]) : "",
-      instruments: "Computer (CSV)",
-      sourceComputer: "csv",
+    const col = (i) => (i >= 0 ? cols[i] : "");
+    const bag = {};
+    headers.forEach((h, i) => {
+      if (h && cols[i]) bag[h] = cols[i];
     });
+    const dt = splitDateTime(`${col(iDate) || ""} ${col(iTime) || ""}`.trim());
+    return baseImported(
+      fillFromBag(
+        {
+          date: dt.date || (col(iDate) || "").slice(0, 10),
+          timeIn: dt.time,
+          timeOut: col(iOut),
+          maxDepth: String(num(col(iDepth)) || ""),
+          plannedDepth: String(num(col(iPlan)) || ""),
+          bottomTime: String(durationToMin(col(iDur)) || ""),
+          totalTime: String(durationToMin(col(iTotal) || col(iDur)) || ""),
+          site: col(iSite) || "Import CSV",
+          location: col(iLoc) || "",
+          lat: iLat >= 0 ? num(col(iLat)) : "",
+          lng: iLng >= 0 ? num(col(iLng)) : "",
+          mix: col(iMix),
+          tank: col(iTank),
+          pressureStart: col(iP0),
+          pressureEnd: col(iP1),
+          waterTemp: col(iTemp),
+          airTemp: col(iAir),
+          visibility: col(iVis),
+          buddyName: col(iBuddy),
+          guideName: col(iGuide),
+          centerName: col(iCenter),
+          notes: col(iNotes),
+          instruments: "Computer (CSV)",
+          sourceComputer: "csv",
+        },
+        bag
+      )
+    );
   }).filter((d) => d.date || d.maxDepth);
 }
 
@@ -367,7 +720,7 @@ function parseEonSteelLog(bytes, instrument) {
     site: instrument || "Suunto EON",
     instruments: instrument || "Suunto EON Core",
     sourceComputer: "suunto-ble",
-    profilePoints: downsampleProfile(profilePoints),
+    profilePoints,
     notes: "Scaricata via Bluetooth dal computer.",
   });
 }
@@ -408,7 +761,9 @@ function pickKey(obj, names) {
   const keys = Object.keys(obj);
   for (const name of names) {
     const hit = keys.find((k) => k.toLowerCase() === name.toLowerCase());
-    if (hit != null && obj[hit] != null && obj[hit] !== "") return obj[hit];
+    if (hit == null || obj[hit] == null || obj[hit] === "") continue;
+    if (typeof obj[hit] === "object") continue;
+    return obj[hit];
   }
   return "";
 }
@@ -434,34 +789,87 @@ function looksLikeDive(obj) {
   return /depth/.test(blob) && /date|time/.test(blob);
 }
 
+function jsonProfile(obj) {
+  const arr = obj.samples || obj.profile || obj.waypoints || obj.profilePoints || obj.diveProfile || [];
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((p, i) => {
+      if (p == null) return null;
+      if (Array.isArray(p)) return { t: Number(p[0]) || i, d: Number(p[1]) };
+      const depth = num(pickKey(p, ["d", "depth", "Depth"]));
+      if (depth === "") return null;
+      let t = num(pickKey(p, ["t", "time", "divetime", "offset", "minute", "min"]));
+      if (t === "") t = i;
+      if (t > 180) t = Math.round((t / 60) * 10) / 10;
+      return { t: Number(t), d: Number(depth) };
+    })
+    .filter(Boolean);
+}
+
 function jsonDive(obj) {
   if (!obj || typeof obj !== "object") return null;
+  const gas = obj.gas || obj.gases || obj.tank || obj.cylinder || {};
   const dt = splitDateTime(
     String(
-      pickKey(obj, ["datetime", "starttime", "date", "divedate", "time", "timestamp", "start"]) ||
-        `${pickKey(obj, ["date", "divedate"])} ${pickKey(obj, ["time", "starttime", "timein"])}`.trim()
+      pickKey(obj, ["datetime", "startTime", "starttime", "date", "divedate", "timestamp", "start"]) ||
+        `${pickKey(obj, ["date", "divedate"])} ${pickKey(obj, ["time", "starttime", "timeIn", "timein"])}`.trim()
     )
   );
-  const depth = num(pickKey(obj, ["maxdepth", "max_depth", "depth", "greatestdepth", "max"]));
-  const dur = pickKey(obj, ["bottomtime", "bottom_time", "duration", "diveduration", "divetime", "totaltime", "minutes"]);
+  const end = splitDateTime(String(pickKey(obj, ["endtime", "endTime", "timeOut", "timeout", "stoptime"]) || ""));
+  const depth = num(pickKey(obj, ["maxdepth", "maxDepth", "max_depth", "depth", "greatestdepth", "max"]));
+  const dur = pickKey(obj, ["bottomtime", "bottomTime", "bottom_time", "duration", "diveduration", "diveTime", "divetime", "totaltime", "minutes"]);
+  const total = pickKey(obj, ["totaltime", "totalTime", "diveduration", "duration"]);
   const geo = geoFromObj(obj);
   const siteObj = typeof obj.site === "object" ? obj.site : null;
-  return baseImported({
-    date: dt.date,
-    timeIn: dt.time,
-    maxDepth: depth === "" ? "" : String(depth),
-    bottomTime: String(durationToMin(dur) || ""),
-    totalTime: String(durationToMin(dur) || ""),
-    site: String(pickKey(obj, ["site", "sitename", "name", "spot", "divename", "title"]) || siteObj?.name || "Import JSON"),
-    location: String(pickKey(obj, ["location", "place", "country", "city"]) || (typeof obj.location === "string" ? obj.location : "") || ""),
-    lat: geo.lat || (siteObj ? geoFromObj(siteObj).lat : ""),
-    lng: geo.lng || (siteObj ? geoFromObj(siteObj).lng : ""),
-    waterTemp: String(num(pickKey(obj, ["watertemp", "water_temp", "temperature", "temp"])) || ""),
-    mix: String(num(pickKey(obj, ["mix", "o2", "oxygen", "nitrox"])) || 21),
-    instruments: String(pickKey(obj, ["computer", "device", "model", "instruments"]) || "Computer (JSON)"),
-    sourceComputer: "json",
-    notes: String(pickKey(obj, ["notes", "comment", "remarks", "description"]) || ""),
-  });
+  const computer = obj.computer || obj.device || obj.diveComputer || {};
+  return baseImported(
+    fillFromBag(
+      {
+        date: dt.date,
+        timeIn: dt.time,
+        timeOut: end.time,
+        maxDepth: depth === "" ? "" : String(depth),
+        plannedDepth: strField(pickKey(obj, ["planneddepth", "plannedDepth", "targetDepth"])),
+        bottomTime: String(durationToMin(dur) || ""),
+        totalTime: String(durationToMin(total || dur) || ""),
+        surfaceInterval: strField(durationToMin(pickKey(obj, ["surfaceinterval", "surfaceInterval", "si"]))),
+        safetyStop: strField(durationToMin(pickKey(obj, ["safetystop", "safetyStop"]))),
+        site: String(pickKey(obj, ["site", "siteName", "sitename", "spot", "divename", "title"]) || siteObj?.name || "Import JSON"),
+        location: String(
+          pickKey(obj, ["location", "place", "country", "city"]) ||
+            (typeof obj.location === "string" ? obj.location : "") ||
+            siteObj?.country ||
+            ""
+        ),
+        lat: geo.lat || (siteObj ? geoFromObj(siteObj).lat : ""),
+        lng: geo.lng || (siteObj ? geoFromObj(siteObj).lng : ""),
+        waterTemp: strField(pickKey(obj, ["watertemp", "waterTemp", "water_temp", "minTemp", "temperature", "temp"])),
+        airTemp: strField(pickKey(obj, ["airtemp", "airTemp", "air_temp"])),
+        visibility: strField(pickKey(obj, ["visibility", "vis"])),
+        current: strField(pickKey(obj, ["current"])),
+        seaConditions: strField(pickKey(obj, ["sea", "weather", "conditions", "seaConditions"])),
+        mix: strField(pickKey(obj, ["mix", "o2", "oxygen", "nitrox"]) || pickKey(gas, ["o2", "oxygen", "mix"])),
+        tank: strField(pickKey(obj, ["tank", "tankSize", "volume"]) || pickKey(gas, ["size", "volume", "tank"])),
+        pressureStart: strField(pickKey(obj, ["pressureStart", "startpressure", "startPressure"]) || pickKey(gas, ["start", "begin", "pressureStart"])),
+        pressureEnd: strField(pickKey(obj, ["pressureEnd", "endpressure", "endPressure"]) || pickKey(gas, ["end", "pressureEnd"])),
+        ballast: strField(pickKey(obj, ["ballast", "weight", "lead"])),
+        wetsuit: strField(pickKey(obj, ["wetsuit", "suit"])),
+        regulator: strField(pickKey(obj, ["regulator"])),
+        instruments: String(pickKey(obj, ["computer", "model", "instruments"]) || pickKey(computer, ["name", "model"]) || "Computer (JSON)"),
+        buddyName: strField(pickKey(obj, ["buddy", "buddyName", "partner"])),
+        guideName: strField(pickKey(obj, ["guide", "guideName", "instructor"])),
+        centerName: strField(pickKey(obj, ["center", "diveCenter", "shop", "operator"])),
+        feeling: (() => {
+          const n = num(pickKey(obj, ["rating", "stars", "feeling"]));
+          return n >= 1 && n <= 5 ? n : 0;
+        })(),
+        sourceComputer: "json",
+        profilePoints: jsonProfile(obj),
+        notes: strField(pickKey(obj, ["notes", "comment", "remarks", "description"])),
+      },
+      flattenVals(obj)
+    )
+  );
 }
 
 function collectJsonDives(data, acc = []) {
@@ -492,14 +900,27 @@ function parseGpx(xml) {
   const pts = [...xml.querySelectorAll("trkpt, wpt")];
   if (!pts.length) return [];
   const first = pts[0];
+  const last = pts[pts.length - 1];
   const lat = num(first.getAttribute("lat"));
   const lng = num(first.getAttribute("lon"));
   const when = splitDateTime(txt(first, ["time"]) || txt(xml, ["time"]));
+  const end = splitDateTime(txt(last, ["time"]));
   const name = txt(xml, ["name"]) || "Traccia GPX";
+  let total = "";
+  if (when.date && when.time && end.time) {
+    const a = when.time.split(":").map(Number);
+    const b = end.time.split(":").map(Number);
+    let n = b[0] * 60 + b[1] - (a[0] * 60 + a[1]);
+    if (n < 0) n += 1440;
+    total = String(n);
+  }
   return [
     baseImported({
       date: when.date,
       timeIn: when.time,
+      timeOut: end.time,
+      bottomTime: total,
+      totalTime: total,
       site: name,
       lat,
       lng,
@@ -547,6 +968,21 @@ function fitReadFields(bytes, i, def) {
   return rec;
 }
 
+function fitMeters(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n > 200) return n / 1000;
+  return n;
+}
+
+function fitMinutes(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n > 100000) return String(Math.round(n / 60000));
+  if (n > 180) return String(Math.round(n / 1000 / 60) || Math.round(n / 60));
+  return String(Math.round(n));
+}
+
 function parseFit(bytes) {
   const headerSize = bytes[0] || 14;
   const dataSize = fitU32(bytes, 4, true);
@@ -554,10 +990,7 @@ function parseFit(bytes) {
   const defs = {};
   let i = headerSize;
   let lastTs = 0;
-  const sessions = [];
-  const summaries = [];
-  const gps = [];
-  const depths = [];
+  const bag = { sessions: [], summaries: [], gps: [], samples: [], temps: [], gases: [], tanks: [] };
 
   while (i < end) {
     const h = bytes[i++];
@@ -569,7 +1002,7 @@ function parseFit(bytes) {
       const rec = fitReadFields(bytes, i, def);
       rec[253] = lastTs;
       i += def.dataSize;
-      collectFit(def.global, rec, sessions, summaries, gps, depths);
+      collectFit(def.global, rec, bag);
       continue;
     }
     const isDef = h & 0x40;
@@ -607,44 +1040,68 @@ function parseFit(bytes) {
     const rec = fitReadFields(bytes, i, def);
     if (rec[253]) lastTs = rec[253];
     i += def.dataSize;
-    collectFit(def.global, rec, sessions, summaries, gps, depths);
+    collectFit(def.global, rec, bag);
   }
 
+  const depths = bag.samples.map((s) => s.depth).filter((n) => n > 0);
+  const profilePoints = [];
+  if (bag.samples.length) {
+    const t0 = bag.samples[0].ts || 0;
+    bag.samples.forEach((s) => {
+      if (!s.depth) return;
+      profilePoints.push({ t: Math.max(0, Math.round(((s.ts - t0) % 86400) / 60)), d: Math.round(s.depth * 10) / 10 });
+    });
+  }
+  const g = bag.gps[0] || {};
+  const minTemp = bag.temps.length ? Math.min(...bag.temps) : "";
   const dives = [];
-  const sources = summaries.length ? summaries : sessions;
-  sources.forEach((s, idx) => {
+  const sources = bag.summaries.length ? bag.summaries : bag.sessions;
+  sources.forEach((s) => {
     const when = fitTime(s.start || s.ts);
-    const maxM = s.maxDepth != null ? s.maxDepth / (s.maxDepth > 200 ? 1000 : 1) : depths[idx] || Math.max(0, ...depths);
-    const mins = s.bottom != null ? Math.round(s.bottom / (s.bottom > 180 ? 60000 : 1)) : s.elapsed ? Math.round(s.elapsed / 1000 / 60) : "";
-    const g = gps[0] || {};
+    const maxM = fitMeters(s.maxDepth) || (depths.length ? Math.max(...depths) : 0);
+    const mins = fitMinutes(s.bottom) || fitMinutes(s.elapsed) || "";
     dives.push(
       baseImported({
         date: when ? when.toISOString().slice(0, 10) : "",
         timeIn: when ? when.toISOString().slice(11, 16) : "",
         maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
-        bottomTime: mins ? String(mins) : "",
-        totalTime: mins ? String(mins) : "",
-        site: "Garmin FIT",
-        lat: g.lat ?? "",
-        lng: g.lng ?? "",
+        bottomTime: mins,
+        totalTime: mins,
+        surfaceInterval: fitMinutes(s.surface),
+        waterTemp: minTemp !== "" ? String(minTemp) : tempC(s.bottomTemp || s.startTemp || s.maxTemp),
+        mix: bag.gases[0] ? o2Percent(bag.gases[0]) : "",
+        tank: "",
+        pressureStart: bag.tanks[0] != null ? pressureBar(bag.tanks[0]) : "",
+        pressureEnd: bag.tanks.length ? pressureBar(bag.tanks[bag.tanks.length - 1]) : "",
+        site: "Garmin",
+        lat: g.lat || s.lat || "",
+        lng: g.lng || s.lng || "",
         instruments: "Garmin (FIT)",
         sourceComputer: "fit",
+        profilePoints,
+        notes: [
+          s.avgDepth ? `prof. media ${fitMeters(s.avgDepth)} m` : "",
+          s.hang ? `sosta ${fitMinutes(s.hang)} min` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
       })
     );
   });
-  if (!dives.length && (gps.length || depths.length)) {
-    const when = fitTime(sessions[0]?.start);
-    const g = gps[0] || {};
+  if (!dives.length && (bag.gps.length || depths.length || bag.sessions.length)) {
+    const when = fitTime(bag.sessions[0]?.start || bag.samples[0]?.ts);
     dives.push(
       baseImported({
         date: when ? when.toISOString().slice(0, 10) : "",
         timeIn: when ? when.toISOString().slice(11, 16) : "",
         maxDepth: depths.length ? String(Math.max(...depths)) : "",
-        site: "Garmin FIT",
+        waterTemp: minTemp !== "" ? String(minTemp) : "",
+        site: "Garmin",
         lat: g.lat ?? "",
         lng: g.lng ?? "",
         instruments: "Garmin (FIT)",
         sourceComputer: "fit",
+        profilePoints,
       })
     );
   }
@@ -652,31 +1109,51 @@ function parseFit(bytes) {
   return dives;
 }
 
-function collectFit(global, rec, sessions, summaries, gps, depths) {
+function collectFit(global, rec, bag) {
   const ts = rec[253];
   if (global === 20) {
+    let lat = null;
+    let lng = null;
     if (rec[0] != null && rec[1] != null && rec[0] !== 0x7fffffff && rec[1] !== 0x7fffffff) {
-      gps.push({
-        lat: rec[0] * (180 / 2147483648),
-        lng: rec[1] * (180 / 2147483648),
-      });
+      lat = rec[0] * (180 / 2147483648);
+      lng = rec[1] * (180 / 2147483648);
+      if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) bag.gps.push({ lat, lng });
     }
-    if (rec[14] != null && rec[14] < 20000) depths.push(rec[14] / (rec[14] > 200 ? 100 : 1));
+    const depthRaw = rec[78] ?? rec[73] ?? rec[15];
+    const depth = depthRaw != null && depthRaw > 0 && depthRaw < 500000 ? fitMeters(depthRaw) : 0;
+    if (rec[13] != null && rec[13] > -20 && rec[13] < 50) bag.temps.push(rec[13]);
+    bag.samples.push({ ts: ts || 0, depth, lat, lng });
   }
   if (global === 18) {
-    sessions.push({
+    let lat = "";
+    let lng = "";
+    if (rec[3] != null && rec[4] != null && rec[3] !== 0x7fffffff) {
+      lat = rec[3] * (180 / 2147483648);
+      lng = rec[4] * (180 / 2147483648);
+    }
+    bag.sessions.push({
       ts,
       start: rec[2] || ts,
       sport: rec[5],
-      elapsed: rec[7],
+      elapsed: rec[7] ?? rec[8],
+      maxTemp: rec[14] ?? rec[13],
+      lat,
+      lng,
     });
   }
+  if (global === 259 && rec[1] != null) bag.gases.push(rec[1] > 1 ? rec[1] / 100 : rec[1]);
+  if (global === 319 && rec[2] != null && rec[2] !== 0xffff) bag.tanks.push(rec[2]);
   if (global === 268) {
-    summaries.push({
+    bag.summaries.push({
       ts,
-      start: rec[14] || rec[253] || ts,
-      maxDepth: rec[4],
-      bottom: rec[13],
+      start: rec[253] || ts,
+      avgDepth: rec[2],
+      maxDepth: rec[3],
+      surface: rec[4],
+      bottom: rec[11],
+      hang: rec[16],
+      startTemp: rec[17] ?? rec[11],
+      bottomTemp: rec[18] ?? rec[12],
     });
   }
 }
