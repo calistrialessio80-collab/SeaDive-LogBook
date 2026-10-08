@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v3";
+const CACHE = "seadive-logbook-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,10 +6,13 @@ const ASSETS = [
   "./app.js",
   "./computers.js",
   "./ble-eon.js",
+  "./sites.js",
   "./drive.js",
   "./config.js",
   "./manifest.json",
-  "./favicon.svg",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./apple-touch-icon.png",
   "./brand.jpg",
 ];
 

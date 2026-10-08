@@ -438,6 +438,7 @@ function render() {
   if (view.name === "stats") app.append(renderStats());
   if (view.name === "profile") app.append(renderProfile());
   if (view.name === "computer") app.append(renderComputer());
+  if (view.name === "map") app.append(renderWorldMap());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   app.append(renderNav());
@@ -510,7 +511,7 @@ function topbar(subtitle) {
   wrap.className = "topbar";
   wrap.innerHTML = `
     <div class="brand">
-      <div class="mark"><span>🌊</span></div>
+      <div class="mark"><img src="./icon-192.png" alt="" /></div>
       <div>
         <p>SeaDive</p>
         <h1>LogBook</h1>
@@ -527,6 +528,7 @@ function renderNav() {
   const items = [
     ["home", "⌂", "Home"],
     ["log", "◎", "Diario"],
+    ["map", "⊕", "Mappa"],
     ["computer", "⌚", "Computer"],
     ["stats", "⌁", "Mare"],
     ["profile", "◉", "Profilo"],
@@ -542,6 +544,131 @@ function renderNav() {
     nav.append(b);
   });
   return nav;
+}
+
+let leafletMap = null;
+let mapPick = null;
+
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    if (!document.querySelector("link[data-leaflet]")) {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      css.dataset.leaflet = "1";
+      document.head.appendChild(css);
+    }
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Impossibile caricare la mappa."));
+    document.body.appendChild(s);
+  });
+}
+
+function renderWorldMap() {
+  const frag = document.createDocumentFragment();
+  frag.append(topbar("siti del mondo"));
+  const api = window.SeaDiveSites;
+  const pack = api.annotateSites(state.dives || []);
+  const doneN = pack.sites.filter((s) => s.done).length;
+  const hero = document.createElement("section");
+  hero.className = "card hero map-head";
+  hero.innerHTML = `
+    <h2>Mappa satellitare</h2>
+    <p class="tagline">I punti <strong>verde acqua</strong> sono i siti che hai già fatto (dal diario o dalle coordinate). I punti sabbia sono catalogo da scoprire. Tocca la mappa per aggiungere un sito che manca.</p>
+    <div class="map-legend">
+      <span><i class="dot done"></i> Fatti ${doneN}</span>
+      <span><i class="dot todo"></i> Catalogo ${pack.sites.length - doneN}</span>
+      <span><i class="dot add"></i> Tuoi aggiunti</span>
+    </div>
+  `;
+  frag.append(hero);
+  const mapWrap = document.createElement("section");
+  mapWrap.className = "card map-shell";
+  mapWrap.innerHTML = `<div class="world-map" data-worldmap></div>`;
+  frag.append(mapWrap);
+  const form = document.createElement("form");
+  form.className = "card section add-site";
+  form.innerHTML = `
+    <h3 class="serif" style="margin:0 0 8px">Aggiungi un sito</h3>
+    <p class="hint">Tocca la mappa oppure scrivi le coordinate. Resta sul tuo telefono, visibile a te.</p>
+    <div class="form-grid">
+      ${field("name", "Nome del sito", mapPick?.name || "", true)}
+      ${field("country", "Paese / area", mapPick?.country || "")}
+      ${field("lat", "Latitudine", mapPick?.lat ?? "")}
+      ${field("lng", "Longitudine", mapPick?.lng ?? "")}
+    </div>
+    <div class="actions">
+      <button class="btn primary" type="submit">Salva sul catalogo</button>
+    </div>
+    <p class="hint" data-maphint></p>
+  `;
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    try {
+      api.addCustomSite({
+        name: fd.get("name"),
+        country: fd.get("country"),
+        lat: fd.get("lat"),
+        lng: fd.get("lng"),
+      });
+      mapPick = null;
+      render();
+    } catch (err) {
+      form.querySelector("[data-maphint]").textContent = err.message;
+    }
+  };
+  frag.append(form);
+  queueMicrotask(() => {
+    loadLeaflet()
+      .then(() => {
+        const el = mapWrap.querySelector("[data-worldmap]");
+        if (!el || !window.L) return;
+        if (leafletMap) {
+          leafletMap.remove();
+          leafletMap = null;
+        }
+        leafletMap = L.map(el, { worldCopyJump: true, scrollWheelZoom: true }).setView([20, 15], 2);
+        L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+          attribution: "Tiles © Esri",
+          maxZoom: 19,
+        }).addTo(leafletMap);
+        L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
+          attribution: "",
+          maxZoom: 19,
+          opacity: 0.85,
+        }).addTo(leafletMap);
+        pack.sites.forEach((site) => {
+          const color = site.done ? "#2ad4c9" : site.custom ? "#ef7a5a" : "#edd9a3";
+          const m = L.circleMarker([site.lat, site.lng], {
+            radius: site.done ? 9 : 6,
+            color: "#021018",
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 0.92,
+          }).addTo(leafletMap);
+          m.bindPopup(
+            `<strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(site.country || "")}<br>${
+              site.done ? "Già immerso" : "Da fare"
+            }${site.dives ? " · " + site.dives + " nel diario" : ""}`
+          );
+        });
+        leafletMap.on("click", (ev) => {
+          mapPick = { lat: ev.latlng.lat.toFixed(5), lng: ev.latlng.lng.toFixed(5), name: "", country: "" };
+          form.querySelector("[name=lat]").value = mapPick.lat;
+          form.querySelector("[name=lng]").value = mapPick.lng;
+          form.querySelector("[data-maphint]").textContent = "Punto preso. Dai un nome e salva.";
+        });
+        setTimeout(() => leafletMap.invalidateSize(), 80);
+      })
+      .catch((err) => {
+        mapWrap.querySelector("[data-worldmap]").textContent = err.message || "Mappa non disponibile.";
+      });
+  });
+  return frag;
 }
 
 function renderHome() {
@@ -567,7 +694,7 @@ function renderHome() {
     <button class="dash-card" type="button" data-go="log"><b>${t.n}</b><span>Immersioni</span></button>
     <button class="dash-card" type="button" data-go="stats"><b>${t.max || "—"}</b><span>Prof. max m</span></button>
     <button class="dash-card" type="button" data-go="stats"><b>${fmtMins(t.mins)}</b><span>Tempo fondo</span></button>
-    <button class="dash-card" type="button" data-go="stats"><b>${t.sites}</b><span>Siti</span></button>
+    <button class="dash-card" type="button" data-go="map"><b>${t.sites}</b><span>Siti</span></button>
   `;
   dash.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
