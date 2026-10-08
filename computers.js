@@ -216,6 +216,9 @@ const FIELD_ALIASES = {
   otu: ["otu", "otus", "o2_used"],
   tss: ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress"],
   bottomTemp: ["bottomtemp", "tempfondo", "lowesttemperature"],
+  ascentRate: ["ascentrate", "avgascentrate", "ascent_rate", "verticalspeed"],
+  ascentMax: ["maxascentrate", "maxascent", "ascentmax"],
+  sac: ["sac", "rmv", "airconsumption", "surfaceairconsumption"],
 };
 
 const NOTE_EXTRA_KEYS = [
@@ -348,6 +351,9 @@ function normalizeImported(d) {
   d.cns = strField(d.cns);
   d.otu = strField(d.otu);
   d.tss = strField(d.tss);
+  d.ascentRate = strField(d.ascentRate);
+  d.ascentMax = strField(d.ascentMax);
+  d.sac = strField(d.sac);
   if (d.tank !== "" && d.tank != null) d.tank = volumeLiters(d.tank) || strField(d.tank);
   const mix = o2Percent(d.mix);
   d.mix = mix || "21";
@@ -1111,6 +1117,50 @@ function fitSemicircle(v) {
   return Number.isFinite(deg) && Math.abs(deg) <= 180 ? deg : "";
 }
 
+function round1(n) {
+  return String(Math.round(Number(n) * 10) / 10);
+}
+
+function ascentFromPoints(pts) {
+  const sorted = [...(pts || [])]
+    .filter((p) => Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.d)))
+    .sort((a, b) => a.t - b.t);
+  if (sorted.length < 4) return { avg: "", max: "" };
+  const maxD = Math.max(...sorted.map((p) => Number(p.d) || 0));
+  if (maxD < 3) return { avg: "", max: "" };
+  let iDeep = 0;
+  sorted.forEach((p, i) => {
+    if (Number(p.d) >= maxD * 0.88) iDeep = i;
+  });
+  const rates = [];
+  let climb = 0;
+  let climbT = 0;
+  for (let i = iDeep; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    const dt = Number(b.t) - Number(a.t);
+    const dd = Number(a.d) - Number(b.d);
+    if (dt < 0.08 || dd < 0.25 || Number(a.d) < 1.5) continue;
+    const r = dd / dt;
+    if (r > 0.5 && r < 55) {
+      rates.push(r);
+      climb += dd;
+      climbT += dt;
+    }
+  }
+  if (!rates.length || climb < 2) return { avg: "", max: "" };
+  return { avg: round1(climb / climbT), max: round1(Math.max(...rates)) };
+}
+
+function fitAscentMmin(v) {
+  const n = Math.abs(Number(v));
+  if (!Number.isFinite(n) || n === 0 || n === 0xffffffff) return "";
+  if (n <= 0.85) return round1(n * 60);
+  if (n > 40 && n < 2500) return round1(n * 0.6);
+  if (n <= 40) return round1(n);
+  return "";
+}
+
 function lastDevVal(list, desc, names, field) {
   for (let i = (list || []).length - 1; i >= 0; i--) {
     const x = list[i];
@@ -1318,6 +1368,9 @@ function parseFitBlock(bytes, origin) {
     if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["cns", "end_cns", "o2_toxicity", "cns_load"]);
     if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "o2_used"]);
     if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress_score", "training_stress"]);
+    if (!row.ascentAvg) row.ascentAvg = pickDev(row.dev, desc, ["avg_ascent_rate", "average_ascent_rate", "ascent_rate", "ascent_speed", "vertical_speed"]);
+    if (!row.ascentMax) row.ascentMax = pickDev(row.dev, desc, ["max_ascent_rate", "max_ascent", "ascent_max"]);
+    if (!row.sacFit) row.sacFit = pickDev(row.dev, desc, ["sac", "rmv", "air_consumption", "surface_air_consumption"]);
     return row;
   };
   bag.sessions.forEach(bindDev);
@@ -1417,7 +1470,20 @@ function parseFitBlock(bytes, origin) {
       gf: bag.gfLow || bag.gfHigh ? `${bag.gfLow || "—"}/${bag.gfHigh || "—"}` : "",
       diveNumber: s.diveNumber || pickDev(s.dev, desc, ["dive_number_in_series", "dive_number"]) || "",
       samples: use.filter((x) => x.depth > 0).length,
+      ascentAvg: fitAscentMmin(s.ascentAvg) || ascentFromPoints(profilePoints).avg,
+      ascentMax: fitAscentMmin(s.ascentMax) || ascentFromPoints(profilePoints).max,
+      sacFit: fitScore(s.sacFit, 80),
     };
+    const fromProf = ascentFromPoints(profilePoints);
+    const ratePc = extras.ascentAvg;
+    const rateProf = fromProf.avg;
+    let ascentRate = rateProf || ratePc || "";
+    if (rateProf && ratePc) {
+      const a = Number(rateProf);
+      const b = Number(ratePc);
+      if (a > 1 && b > 1 && Math.abs(a - b) < 14) ascentRate = round1((a + b) / 2);
+    }
+    const ascentMax = fromProf.max || extras.ascentMax || ascentRate;
     dives.push(
       baseImported({
         date,
@@ -1435,6 +1501,9 @@ function parseFitBlock(bytes, origin) {
         cns: extras.cns !== "" && extras.cns != null ? String(extras.cns) : "",
         otu: extras.otu !== "" && extras.otu != null ? String(extras.otu) : "",
         tss: extras.tss !== "" && extras.tss != null ? String(extras.tss) : "",
+        ascentRate,
+        ascentMax,
+        sac: extras.sacFit || "",
         mix: o2,
         tank: bag.tankVol[0] != null ? volumeLiters(bag.tankVol[0]) : "",
         pressureStart: bag.tankStart[0] != null ? fitPressureBar(bag.tankStart[0]) : bag.tanks[0] != null ? fitPressureBar(bag.tanks[0]) : "",
@@ -1460,6 +1529,7 @@ function parseFitBlock(bytes, origin) {
           extras.cns !== "" && extras.cns != null ? `CNS ${extras.cns}%` : "",
           extras.otu !== "" && extras.otu != null ? `OTU ${extras.otu}` : "",
           extras.tss !== "" && extras.tss != null ? `TSS ${extras.tss}` : "",
+          ascentRate ? `risalita ${ascentRate} m/min` : "",
           extras.gf ? `GF ${extras.gf}` : "",
           extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
           hang ? `sosta ${hang} min` : "",
@@ -1630,4 +1700,6 @@ window.SeaDiveComputers = {
   parseEonSteelLog,
   diveKey,
   scanSuuntoBluetooth,
+  ascentFromPoints,
+  fitAscentMmin,
 };

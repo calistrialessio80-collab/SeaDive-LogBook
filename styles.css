@@ -566,6 +566,41 @@ canvas.thermo-detail {
 .form-grid > input[type="hidden"] { display: none !important; }
 .computer-log { margin: 16px 0 8px; }
 .computer-log h3 { margin: 0 0 8px; font-size: 18px; }
+.effort-meter { margin: 10px 0 4px; }
+.effort-meter.compact { margin: 10px 4px 2px; }
+.effort-track {
+  position: relative;
+  height: 14px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #2fbf6c 0%, #c9de4a 36%, #ef9a3a 68%, #e24a3a 100%);
+  box-shadow: inset 0 0 0 1px rgba(8, 56, 72, 0.18);
+}
+.effort-meter.compact .effort-track { height: 9px; }
+.effort-mark {
+  position: absolute;
+  top: -5px;
+  width: 7px;
+  height: 24px;
+  margin-left: -3px;
+  background: #083848;
+  border: 2px solid #fff;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+.effort-meter.compact .effort-mark { height: 17px; top: -4px; width: 5px; }
+.effort-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.62;
+  margin-top: 6px;
+}
+.effort-meter strong { display: block; margin-top: 6px; font-size: 15px; }
+.ascent-ok { color: #1a8a4a; }
+.ascent-warn { color: #c47a12; }
+.ascent-bad { color: #c0392b; }
 .map-shell { padding: 8px; overflow: hidden; }
 .map-head .map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 13px; }
 .map-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }

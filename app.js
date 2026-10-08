@@ -61,6 +61,9 @@ const emptyDive = () => ({
   cns: "",
   otu: "",
   tss: "",
+  ascentRate: "",
+  ascentMax: "",
+  sac: "",
   regulator: "",
   instruments: "",
   certOnDive: "",
@@ -442,15 +445,117 @@ function diveDuration(d) {
   return Number(d.bottomTime) || Number(d.totalTime) || minutesSpan(d.timeIn, d.timeOut) || 0;
 }
 
-function diveSac(d) {
-  const v = Number(d.tank);
+function meanDepthM(d) {
+  const fromLog = Number(d.computerLog?.avgDepth);
+  if (fromLog > 0.5) return fromLog;
+  const wet = (d.profilePoints || []).filter((p) => Number(p.d) > 1);
+  if (wet.length >= 3) return wet.reduce((s, p) => s + Number(p.d), 0) / wet.length;
+  const max = Number(d.maxDepth) || 0;
+  return max > 0 ? max * 0.65 : 0;
+}
+
+function tankForSac(d) {
+  const n = Number(d.tank);
+  if (n > 0) return { v: n, assumed: false };
   const p0 = Number(d.pressureStart);
   const p1 = Number(d.pressureEnd);
-  const t = diveDuration(d);
-  const max = Number(d.maxDepth) || 0;
+  if (p0 > 0 && p1 >= 0 && p0 > p1) return { v: 12, assumed: true };
+  return { v: 0, assumed: false };
+}
+
+function diveSac(d) {
+  const { v } = tankForSac(d);
+  const p0 = Number(d.pressureStart);
+  const p1 = Number(d.pressureEnd);
+  const t = Number(d.totalTime) || diveDuration(d);
   if (!(v > 0 && p0 > 0 && p1 >= 0 && p0 > p1 && t > 0)) return 0;
-  const ata = Math.max(1, (max * 0.65) / 10 + 1);
-  return (v * (p0 - p1)) / (t * ata);
+  const ata = Math.max(1.05, 1 + meanDepthM(d) / 10);
+  const fromFit = Number(d.computerLog?.sacFit);
+  const calc = (v * (p0 - p1)) / (t * ata);
+  if (fromFit > 2 && fromFit < 60 && Math.abs(fromFit - calc) / Math.max(calc, 1) < 0.45) {
+    return (calc * 0.65 + fromFit * 0.35);
+  }
+  return calc;
+}
+
+function computeAscent(d) {
+  const api = window.SeaDiveComputers;
+  const fromProf = api?.ascentFromPoints ? api.ascentFromPoints(d.profilePoints) : { avg: "", max: "" };
+  const fromLog = {
+    avg: d.computerLog?.ascentAvg || "",
+    max: d.computerLog?.ascentMax || "",
+  };
+  let avg = fromProf.avg || fromLog.avg || d.ascentRate || "";
+  if (fromProf.avg && fromLog.avg) {
+    const a = Number(fromProf.avg);
+    const b = Number(fromLog.avg);
+    if (a > 1 && b > 1 && Math.abs(a - b) < 14) avg = String(Math.round(((a + b) / 2) * 10) / 10);
+  }
+  return { avg, max: fromProf.max || fromLog.max || d.ascentMax || avg };
+}
+
+function applyDiveMetrics(d) {
+  if (!d) return d;
+  const ascent = computeAscent(d);
+  d.ascentRate = ascent.avg || "";
+  d.ascentMax = ascent.max || "";
+  const sac = diveSac(d);
+  d.sac = sac > 0 ? String(Math.round(sac * 10) / 10) : d.sac || "";
+  return d;
+}
+
+function effortModel(d) {
+  const sac = diveSac(d);
+  const tss = Number(d.tss);
+  const maxA = Number(d.ascentMax || d.ascentRate);
+  let score = sac;
+  if (sac > 0 && tss >= 60 && tss < 400) score += tss >= 90 ? 5 : 3;
+  if (sac > 0 && maxA > 18) score += 2;
+  const pct = sac > 0 ? Math.max(5, Math.min(96, ((score - 8) / 24) * 100)) : 0;
+  let label = "Dati incompleti";
+  let hint = "Servono bombola, pressioni inizio/fine e durata per i L/min in superficie.";
+  if (sac > 0) {
+    if (score < 14) {
+      label = "Ottima";
+      hint = "Consumo basso: immersione rilassata.";
+    } else if (score < 18) {
+      label = "Buona";
+      hint = "Ritmo regolare, fatica contenuta.";
+    } else if (score < 22) {
+      label = "Nella media";
+      hint = "Sforzo tipico di un’immersione ricreativa.";
+    } else if (score < 28) {
+      label = "Faticosa";
+      hint = "Consumo alto: corrente, profondità o stress.";
+    } else {
+      label = "Troppo faticosa";
+      hint = "Litri/minuto elevati: valuta sosta e pianifica la prossima più tranquilla.";
+    }
+    if (tankForSac(d).assumed) hint += " Bombola 12 L presunta.";
+    if (maxA > 18) hint += " Risalita sopra 18 m/min.";
+  }
+  return { sac, score, pct, label, hint, assumed: tankForSac(d).assumed };
+}
+
+function effortHtml(d, compact = false) {
+  const e = effortModel(d);
+  const val = e.sac > 0 ? `${fmtDepth(e.sac)} L/min · ${e.label}` : e.label;
+  return `<div class="effort-meter${compact ? " compact" : ""}">
+    <div class="effort-track" role="img" aria-label="${escapeHtml(val)}">
+      ${e.sac > 0 ? `<span class="effort-mark" style="left:${e.pct}%"></span>` : ""}
+    </div>
+    <div class="effort-scale"><span>ottima</span><span>troppo faticosa</span></div>
+    <strong>${escapeHtml(val)}</strong>
+    ${compact ? "" : `<p class="hint">${escapeHtml(e.hint)}</p>`}
+  </div>`;
+}
+
+function ascentClass(v) {
+  const n = Number(v);
+  if (!(n > 0)) return "";
+  if (n > 18) return "ascent-bad";
+  if (n > 12) return "ascent-warn";
+  return "ascent-ok";
 }
 
 function avgSac() {
@@ -1136,6 +1241,7 @@ function emptyState() {
 }
 
 function diveCard(d) {
+  applyDiveMetrics(d);
   const art = document.createElement("article");
   const map = satMapHtml(d, "sat-place bare");
   const dur = diveDuration(d);
@@ -1154,6 +1260,7 @@ function diveCard(d) {
     <div class="log-kpis">
       <div><small>Profondità max</small><b>${fmtDepth(d.maxDepth)} m</b></div>
       <div><small>Durata</small><b>${dur ? dur + " min" : "—"}</b></div>
+      ${d.ascentRate ? `<div><small>Risalita</small><b class="${ascentClass(d.ascentRate)}">${fmtDepth(d.ascentRate)} m/min</b></div>` : ""}
       <div><small>Acqua</small><b>${d.waterTemp ? fmtDepth(d.waterTemp) + " °C" : "—"}</b></div>
       ${d.totalTime ? `<div><small>Durata tot.</small><b>${escapeHtml(d.totalTime)} min</b></div>` : ""}
     </div>
@@ -1170,6 +1277,7 @@ function diveCard(d) {
         <strong>${escapeHtml(tLabel || (d.bottomTemp ? d.bottomTemp + " °C fondo" : "—"))}</strong>
       </div>
     </div>
+    ${effortHtml(d, true)}
   `;
   art.onclick = () => {
     view = { name: "detail", diveId: d.id, draft: null, query: view.query };
@@ -1430,6 +1538,7 @@ function enrichImported(d) {
   applyPlaceToDive(d);
   if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
   d.profilePoints = ensureThermoProfile(d);
+  applyDiveMetrics(d);
   if (!d.timeOut && d.timeIn && d.totalTime) {
     const [h, m] = String(d.timeIn).split(":").map(Number);
     if (Number.isFinite(h)) {
@@ -1665,6 +1774,7 @@ function renderDetail() {
     view = { name: "log" };
     return renderLog();
   }
+  applyDiveMetrics(d);
   frag.append(topbar(`immersione n° ${d.number}`));
   const card = document.createElement("section");
   card.className = "card";
@@ -1687,6 +1797,9 @@ function renderDetail() {
       <div><b>Prof. programmata</b>${escapeHtml(d.plannedDepth || "—")} m</div>
       <div><b>Tempo di fondo</b>${escapeHtml(d.bottomTime || "—")} min</div>
       <div><b>Tempo totale</b>${escapeHtml(d.totalTime || "—")} min</div>
+      <div><b>Risalita media</b><span class="${ascentClass(d.ascentRate)}">${escapeHtml(d.ascentRate || "—")} m/min</span></div>
+      <div><b>Risalita max</b><span class="${ascentClass(d.ascentMax)}">${escapeHtml(d.ascentMax || "—")} m/min</span></div>
+      <div><b>SAC superficie</b>${escapeHtml(d.sac || "—")} L/min</div>
       <div><b>Sosta sicurezza</b>${escapeHtml(d.safetyStop || "—")} min</div>
       <div><b>Intervallo superficie</b>${escapeHtml(d.surfaceInterval || "—")}</div>
       <div><b>Visibilità</b>${escapeHtml(d.visibility || "—")} m</div>
@@ -1704,6 +1817,8 @@ function renderDetail() {
       <div><b>Strumentazione</b>${escapeHtml(d.instruments || "—")}</div>
       <div><b>Brevetto in scheda</b>${escapeHtml(d.certOnDive || "—")}</div>
     </div>
+    <h3 class="serif">Consumo in superficie</h3>
+    ${effortHtml(d)}
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-readonly="1"></canvas>
     <h3 class="serif">Temperatura / profondità</h3>
@@ -1779,6 +1894,7 @@ function startNew() {
 
 function renderEdit() {
   const d = view.draft;
+  applyDiveMetrics(d);
   const frag = document.createDocumentFragment();
   frag.append(topbar(d.number ? `scheda n° ${d.number}` : "nuova scheda"));
   const form = document.createElement("form");
@@ -1825,6 +1941,9 @@ function renderEdit() {
       ${field("mix", "Miscela Nitrox %", d.mix)}
       ${field("pressureStart", "Press. inizio (bar)", d.pressureStart)}
       ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
+      ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
+      ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
+      ${field("sac", "Consumo superficie (L/min)", d.sac, false, "number")}
       ${field("regulator", "Tipo autorespiratore", d.regulator)}
       ${field("instruments", "Strumentazione", d.instruments)}
       ${field("certOnDive", "Il tuo brevetto (livello e n°)", d.certOnDive, true)}
@@ -1853,10 +1972,14 @@ function renderEdit() {
         <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}</div>
         <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp ? d.bottomTemp + " °C" : "—")}</div>
         <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
+        <div><b>Risalita</b>${escapeHtml(d.ascentRate ? d.ascentRate + " m/min" : "—")}${d.ascentMax ? " (max " + escapeHtml(d.ascentMax) + ")" : ""}</div>
+        <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
         <div><b>GF</b>${escapeHtml(log.gf || "—")}</div>
         <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
       </div>
     </div>
+    <h3 class="serif">Fatica — litri/minuto in superficie</h3>
+    <div data-effortwrap>${effortHtml(d)}</div>
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-profile></canvas>
     <p class="hint" data-profilehint>Curva profondità dal computer, aggiornata in automatico.</p>
@@ -1983,6 +2106,16 @@ function renderEdit() {
     drawProfile(canvas, pts, false);
     const th = form.querySelector("[data-thermo-edit]");
     if (th) drawTempDepth(th, pts);
+    refreshPhysio();
+  };
+  const refreshPhysio = () => {
+    applyDiveMetrics(d);
+    ["ascentRate", "ascentMax", "sac"].forEach((name) => {
+      const el = form.querySelector(`[name=${name}]`);
+      if (el && document.activeElement !== el) el.value = d[name] || "";
+    });
+    const wrap = form.querySelector("[data-effortwrap]");
+    if (wrap) wrap.innerHTML = effortHtml(d);
   };
   ["site", "location"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
@@ -1994,7 +2127,7 @@ function renderEdit() {
       }
     });
   });
-  ["maxDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "timeIn", "timeOut", "waterTemp", "bottomTemp", "airTemp"].forEach((name) => {
+  ["maxDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "timeIn", "timeOut", "waterTemp", "bottomTemp", "airTemp", "tank", "pressureStart", "pressureEnd"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
       d[name] = form.querySelector(`[name=${name}]`).value;
       refreshProfile();
@@ -2052,6 +2185,7 @@ function renderEdit() {
       computerLog: d.computerLog || null,
     });
     next.profilePoints = ensureThermoProfile(next);
+    applyDiveMetrics(next);
     if (next.guideSign && !String(next.guideName || "").trim()) {
       alert("Per la firma legale della guida indica le generalità (L. 70/2026).");
       return;
