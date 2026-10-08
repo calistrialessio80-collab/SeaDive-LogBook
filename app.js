@@ -343,7 +343,7 @@ function daysSinceBackup() {
 }
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("./sw.js?v=7", { updateViaCache: "none" }).catch(() => {});
+  navigator.serviceWorker.register("./sw.js?v=8", { updateViaCache: "none" }).catch(() => {});
 }
 
 let state = load();
@@ -969,6 +969,15 @@ function renderHome() {
       <strong>${fmtMins(t.mins)}</strong>
       <em>in acqua</em>
     </button>
+    <button class="kpi" type="button" data-go="log">
+      <p>Ultima immersione <span>◷</span></p>
+      <strong>${last ? fmtItDate(last.date) : "—"}</strong>
+    </button>
+    <button class="kpi" type="button" data-go="stats">
+      <p>SAC medio <span>◎</span></p>
+      <strong>${avgSac()}</strong>
+      ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
+    </button>
     <button class="kpi kpi-chart" type="button" data-go="stats">
       <p>Immersioni per anno <span>▣</span></p>
       <div class="year-chart">
@@ -983,17 +992,6 @@ function renderHome() {
           .join("")}
       </div>
     </button>
-    <div class="kpi-stack">
-      <button class="kpi" type="button" data-go="log">
-        <p>Ultima immersione <span>◷</span></p>
-        <strong>${last ? fmtItDate(last.date) : "—"}</strong>
-      </button>
-      <button class="kpi" type="button" data-go="stats">
-        <p>SAC medio <span>◎</span></p>
-        <strong>${avgSac()}</strong>
-        ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
-      </button>
-    </div>
   `;
   dash.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
