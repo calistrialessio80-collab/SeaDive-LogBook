@@ -189,10 +189,47 @@ function addCustomSite(partial) {
   return site;
 }
 
+function matchCatalog(d) {
+  const list = allCatalogSites();
+  const p = divePoint(d);
+  let best = null;
+  let bestKm = 4;
+  if (p) {
+    list.forEach((s) => {
+      const km = haversineKm(p, s);
+      if (km <= bestKm) {
+        bestKm = km;
+        best = s;
+      }
+    });
+  }
+  if (best) return best;
+  return list.find((s) => siteMatchesDive(s, d)) || null;
+}
+
+function ensureSiteFromDive(d) {
+  const p = divePoint(d);
+  if (!p) return;
+  if (matchCatalog(d)) return;
+  try {
+    addCustomSite({
+      name: d.site || "Sito immersione",
+      country: d.location || "",
+      lat: p.lat,
+      lng: p.lng,
+    });
+  } catch {
+    /* ignora duplicati incompleti */
+  }
+}
+
 window.SeaDiveSites = {
   WORLD_SITES,
   allCatalogSites,
   annotateSites,
   addCustomSite,
   loadCustomSites,
+  matchCatalog,
+  ensureSiteFromDive,
+  divePoint,
 };

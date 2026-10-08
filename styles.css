@@ -375,6 +375,18 @@ canvas.sign { height: 120px; cursor: url("data:image/svg+xml,<svg xmlns='http://
 .map-legend .dot.add { background: #ef7a5a; }
 .leaflet-container { background: #041018; font-family: inherit; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #072a38; color: #e7fbf7; }
+.sat-place { position: relative; overflow: hidden; border-radius: 14px; margin: 10px 0 8px; }
+.sat-place img { width: 100%; height: 180px; object-fit: cover; display: block; }
+.sat-place .sat-name {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 12px 14px 10px;
+  background: linear-gradient(transparent, rgba(2, 16, 24, 0.88));
+  font-family: Fraunces, Georgia, serif;
+  font-size: 17px;
+}
+.dive-shot .sat-place { margin: 0; border-radius: 0; height: 118px; }
+.dive-shot .sat-place img { height: 118px; min-height: 118px; }
+.dive-shot .sat-name { font-size: 15px; }
 .geo-map {
   width: 100%;
   height: 190px;

@@ -380,20 +380,87 @@ function geoCoords(lat, lng) {
 }
 
 function geoText(d) {
-  const g = geoCoords(d?.lat, d?.lng);
+  const g = coordsForDive(d);
   if (!g) return "";
   return `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`;
 }
 
-function geoMapHtml(lat, lng) {
-  const g = geoCoords(lat, lng);
+function coordsForDive(d) {
+  const direct = geoCoords(d?.lat, d?.lng);
+  if (direct) return direct;
+  const hit = window.SeaDiveSites?.matchCatalog?.(d);
+  if (hit) return { lat: Number(hit.lat), lng: Number(hit.lng) };
+  return null;
+}
+
+function minutesSpan(a, b) {
+  if (!a || !b) return 0;
+  const pa = String(a).split(":").map(Number);
+  const pb = String(b).split(":").map(Number);
+  if (pa.length < 2 || pb.length < 2) return 0;
+  let n = pb[0] * 60 + pb[1] - (pa[0] * 60 + pa[1]);
+  if (n < 0) n += 24 * 60;
+  return n;
+}
+
+function autoProfile(d) {
+  const max = Number(d.maxDepth) || Number(d.plannedDepth) || 0;
+  const stop = Number(d.safetyStop) || (max >= 10 ? 3 : 0);
+  let bottom = Number(d.bottomTime) || 0;
+  let total = Number(d.totalTime) || minutesSpan(d.timeIn, d.timeOut) || 0;
+  if (!max) return [];
+  if (!bottom && !total) total = Math.max(20, Math.round(max * 1.2));
+  if (!total) total = bottom + stop + Math.max(4, Math.round(max / 8));
+  if (!bottom) bottom = Math.max(1, total - stop - Math.max(4, Math.round(max / 8)));
+  const descent = Math.max(2, Math.round(max / 10));
+  const toStop = Math.max(2, Math.round(Math.max(max - 5, 1) / 10));
+  const pts = [{ t: 0, d: 0 }, { t: descent, d: max }];
+  let t = descent + Math.max(1, bottom);
+  pts.push({ t, d: Math.round(max * 0.9 * 10) / 10 });
+  if (stop > 0 && max > 6) {
+    t += toStop;
+    pts.push({ t, d: 5 });
+    t += stop;
+    pts.push({ t, d: 5 });
+  }
+  t = Math.max(t + 2, total);
+  pts.push({ t, d: 0 });
+  return pts;
+}
+
+function profileFor(d) {
+  if (d.profileFromComputer && d.profilePoints?.length >= 3) return d.profilePoints;
+  const auto = autoProfile(d);
+  return auto.length ? auto : d.profilePoints || [];
+}
+
+function satMapHtml(d, cls) {
+  const g = coordsForDive(d);
   if (!g) return "";
-  const pad = 0.045;
+  const pad = 0.038;
   const bbox = `${g.lng - pad},${g.lat - pad},${g.lng + pad},${g.lat + pad}`;
-  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${g.lat}%2C${g.lng}`;
-  const open = `https://www.openstreetmap.org/?mlat=${g.lat}&mlon=${g.lng}#map=14/${g.lat}/${g.lng}`;
-  return `<iframe class="geo-map" title="Mappa del sito" src="${src}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
-    <p class="meta"><a href="${open}" target="_blank" rel="noopener">Apri in OpenStreetMap</a></p>`;
+  const src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(
+    bbox
+  )}&bboxSR=4326&imageSR=4326&size=800,360&format=jpg&f=image`;
+  const name = d.site || d.location || "Sito di immersione";
+  return `<div class="${cls || "sat-place"}"><img alt="" src="${src}" /><span class="sat-name">${escapeHtml(name)}</span></div>`;
+}
+
+function geoMapHtml(lat, lng, name) {
+  return satMapHtml({ lat, lng, site: name });
+}
+
+function applyPlaceToDive(d) {
+  const hit = window.SeaDiveSites?.matchCatalog?.(d);
+  if (hit) {
+    if (!geoCoords(d.lat, d.lng)) {
+      d.lat = hit.lat;
+      d.lng = hit.lng;
+    }
+    if (!String(d.location || "").trim()) d.location = hit.country || d.location;
+  }
+  window.SeaDiveSites?.ensureSiteFromDive?.(d);
+  return d;
 }
 
 function setPageSkin() {
@@ -739,9 +806,10 @@ function emptyState() {
 
 function diveCard(d) {
   const art = document.createElement("article");
-  art.className = `dive-shot${d.photo ? " has-photo" : ""}`;
+  const place = satMapHtml(d, "sat-place in-card");
+  art.className = `dive-shot${d.photo || place ? " has-photo" : ""}`;
   art.innerHTML = `
-    <div class="shot-media">${d.photo ? `<img alt="" src="${d.photo}" />` : `<canvas class="spark"></canvas>`}</div>
+    <div class="shot-media">${place || (d.photo ? `<img alt="" src="${d.photo}" />` : `<canvas class="spark"></canvas>`)}</div>
     <div class="shot-body">
       <p class="eyebrow">${escapeHtml(d.date || "—")} · n° ${escapeHtml(d.number)}</p>
       <h4>${escapeHtml(d.site || "Sito da nominare")}</h4>
@@ -759,7 +827,7 @@ function diveCard(d) {
   };
   queueMicrotask(() => {
     const c = art.querySelector("canvas.spark");
-    if (c) drawSpark(c, d.profilePoints || []);
+    if (c) drawSpark(c, profileFor(d));
   });
   return art;
 }
@@ -841,7 +909,7 @@ function renderComputer() {
   hero.className = "card hero";
   hero.innerHTML = `
     <h2>Dal polso al diario</h2>
-    <p class="tagline">Carica il file esportato dall’app del computer: <strong>UDDF, FIT, JSON, XML, CSV, GPX</strong> (Suunto, Garmin, Shearwater, Mares, Cressi e altri). Il Bluetooth resta una prova solo per EON su Chrome Android.</p>
+    <p class="tagline">Carica il file: le immersioni vanno <strong>subito nel diario</strong>, con profilo, luogo e mappa. Formati: UDDF, FIT, JSON, XML, CSV, GPX. Bluetooth sperimentale solo EON su Chrome Android.</p>
     <div class="actions">
       <label class="btn primary">Carica file
         <input type="file" accept=".uddf,.xml,.csv,.txt,.json,.fit,.gpx,.log,.sml,.ssrf,.zxu,.divelog,application/json,application/xml,application/gpx+xml,*/*" multiple hidden data-files />
@@ -860,8 +928,9 @@ function renderComputer() {
         view.computerHint = m;
         if (hint) hint.textContent = m;
       });
-      view.pending = dives;
-      view.computerHint = `${name}: ${dives.length} immersioni pronte. Conferma per aggiungerle al diario.`;
+      const added = mergeImported(dives);
+      view.name = added ? "log" : "computer";
+      view.computerHint = `${name}: ${added} immersioni sincronizzate nel diario.`;
     } catch (err) {
       view.computerHint = err.message || String(err);
     }
@@ -882,33 +951,6 @@ function renderComputer() {
   });
   brands.append(grid);
   frag.append(brands);
-
-  if (view.pending?.length) {
-    const preview = document.createElement("section");
-    preview.className = "card section";
-    preview.innerHTML = `<h3 class="serif" style="margin-top:0">Pronte da importare (${view.pending.length})</h3>`;
-    view.pending.forEach((d, i) => {
-      const row = document.createElement("label");
-      row.className = "import-row";
-      row.innerHTML = `<span><input type="checkbox" checked data-i="${i}" /> <strong>${escapeHtml(d.site || "Sito")}</strong>
-        <span class="meta"> ${escapeHtml(d.date)} · ${escapeHtml(d.maxDepth || "—")} m · ${escapeHtml(d.bottomTime || "—")} min · ${escapeHtml(d.instruments || "")}</span></span>`;
-      preview.append(row);
-    });
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    actions.innerHTML = `<button class="btn primary" type="button">Aggiungi al diario</button>
-      <button class="btn ghost" type="button">Annulla</button>`;
-    actions.children[0].onclick = () => {
-      const chosen = [...preview.querySelectorAll("input[type=checkbox]:checked")].map((el) => view.pending[Number(el.dataset.i)]);
-      mergeImported(chosen);
-    };
-    actions.children[1].onclick = () => {
-      view.pending = [];
-      render();
-    };
-    preview.append(actions);
-    frag.append(preview);
-  }
   return frag;
 }
 
@@ -927,10 +969,23 @@ async function ingestFiles(fileList) {
       notes.push(`${file.name}: ${err.message}`);
     }
   }
-  view.pending = found;
-  view.computerHint = notes.join(" · ") || "Nessun file.";
-  view.name = "computer";
+  if (found.length) {
+    const added = mergeImported(found);
+    view.computerHint = `${notes.join(" · ")} → ${added} immersioni nel diario.`;
+    view.name = added ? "log" : "computer";
+  } else {
+    view.computerHint = notes.join(" · ") || "Nessun file.";
+    view.name = "computer";
+  }
   render();
+}
+
+function enrichImported(d) {
+  if (d.profilePoints?.length >= 3) d.profileFromComputer = true;
+  applyPlaceToDive(d);
+  if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
+  if (!d.certOnDive) d.certOnDive = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
+  return d;
 }
 
 function mergeImported(dives) {
@@ -938,20 +993,18 @@ function mergeImported(dives) {
   const existing = new Set(state.dives.map(api.diveKey));
   let n = nextNumber();
   let added = 0;
-  dives.forEach((d) => {
+  dives.forEach((raw) => {
+    const d = enrichImported(raw);
     const key = api.diveKey(d);
     if (existing.has(key)) return;
     d.number = n++;
-    if (!d.certOnDive) d.certOnDive = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
     state.dives.push(d);
     existing.add(key);
     added += 1;
   });
   save(state);
   view.pending = [];
-  view.computerHint = added ? `${added} immersioni aggiunte al diario.` : "Nessuna nuova immersione (possibili duplicati).";
-  view.name = added ? "log" : "computer";
-  render();
+  return added;
 }
 
 function renderStats() {
@@ -1083,7 +1136,7 @@ function renderDetail() {
       <div class="num">${escapeHtml(d.number)}</div>
     </div>
     ${d.photo ? `<img class="cover" alt="" src="${d.photo}" />` : ""}
-    ${geoMapHtml(d.lat, d.lng)}
+    ${satMapHtml(d, "sat-place")}
     <div class="kv">
       <div><b>Coordinate</b>${escapeHtml(geoText(d) || "—")}</div>
       <div><b>Prof. max</b>${escapeHtml(d.maxDepth || "—")} m</div>
@@ -1136,7 +1189,7 @@ function renderDetail() {
     render();
   };
   frag.append(card);
-  queueMicrotask(() => drawProfile(card.querySelector("canvas"), d.profilePoints || [], false));
+  queueMicrotask(() => drawProfile(card.querySelector("canvas"), profileFor(d), false));
   return frag;
 }
 
@@ -1166,8 +1219,8 @@ function renderEdit() {
     <div class="actions" style="margin-top:4px">
       <button class="btn ghost" type="button" data-geo>Usa posizione attuale</button>
     </div>
-    <p class="hint" data-geohint>Coordinate del sito: GPS del telefono a riva, oppure valori dal file del computer.</p>
-    ${geoMapHtml(d.lat, d.lng)}
+    <p class="hint" data-geohint>Coordinate del sito: GPS del telefono a riva, oppure dal nome del luogo e dal computer.</p>
+    <div data-sat>${satMapHtml(d, "sat-place")}</div>
     <div class="form-grid">
       ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
       ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
@@ -1203,9 +1256,9 @@ function renderEdit() {
     <label class="field full" style="margin-top:12px">Note e sensazioni
       <textarea name="notes">${escapeHtml(d.notes)}</textarea>
     </label>
-    <h3 class="serif">Disegna il profilo</h3>
+    <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-profile></canvas>
-    <p class="hint">Tocca il grafico per aggiungere punti (minuti → profondità). Doppio clic per azzerare.</p>
+    <p class="hint" data-profilehint>${d.profileFromComputer ? "Curva letta dal computer subacqueo." : "Il profilo si disegna da solo da profondità, tempi e sosta."}</p>
     <div class="sign-legal">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Aggiungiamo anche buddy e centro.</p>
@@ -1277,10 +1330,14 @@ function renderEdit() {
           const a = info.address || {};
           const loc = [a.village || a.town || a.city || a.municipality, a.country].filter(Boolean).join(", ");
           const locField = form.querySelector("[name=location]");
-          if (loc && locField && !String(locField.value || "").trim()) locField.value = loc;
+          if (loc && locField && !String(locField.value || "").trim()) {
+            locField.value = loc;
+            d.location = loc;
+          }
         } catch {
           /* la mappa resta sulle coordinate */
         }
+        refreshSat();
       },
       () => {
         hint.textContent = "Posizione non disponibile. Inserisci latitudine e longitudine a mano.";
@@ -1297,8 +1354,35 @@ function renderEdit() {
     preview.hidden = false;
   };
   const canvas = form.querySelector("[data-profile]");
+  const refreshSat = () => {
+    const box = form.querySelector("[data-sat]");
+    if (box) box.innerHTML = satMapHtml(d, "sat-place");
+  };
+  const refreshProfile = () => {
+    if (!d.profileFromComputer) d.profilePoints = autoProfile(d);
+    drawProfile(canvas, profileFor(d), false);
+  };
+  ["site", "location", "lat", "lng"].forEach((name) => {
+    form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
+      d[name] = form.querySelector(`[name=${name}]`).value;
+      applyPlaceToDive(d);
+      if (geoCoords(d.lat, d.lng)) {
+        form.querySelector("[name=lat]").value = d.lat;
+        form.querySelector("[name=lng]").value = d.lng;
+      }
+      refreshSat();
+    });
+  });
+  ["maxDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "timeIn", "timeOut"].forEach((name) => {
+    form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
+      d[name] = form.querySelector(`[name=${name}]`).value;
+      refreshProfile();
+    });
+  });
   queueMicrotask(() => {
-    drawProfile(canvas, d.profilePoints, true, (pts) => (d.profilePoints = pts));
+    applyPlaceToDive(d);
+    refreshSat();
+    refreshProfile();
     bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => (d.buddySign = v));
     bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => (d.guideSign = v));
     bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
@@ -1307,17 +1391,18 @@ function renderEdit() {
     e.preventDefault();
     const fd = new FormData(form);
     fd.delete("photoFile");
-    const next = {
+    const next = applyPlaceToDive({
       ...d,
       ...Object.fromEntries(fd.entries()),
       types: d.types,
-      profilePoints: d.profilePoints,
       photo: d.photo,
       feeling: d.feeling,
       buddySign: d.buddySign,
       guideSign: d.guideSign,
       centerSign: d.centerSign,
-    };
+      profileFromComputer: d.profileFromComputer,
+    });
+    next.profilePoints = profileFor(next);
     if (next.guideSign && !String(next.guideName || "").trim()) {
       alert("Per la firma legale della guida indica le generalità (L. 70/2026).");
       return;
