@@ -29,6 +29,7 @@ const emptyProfile = () => ({
   specialties: "",
   recoverPhone: "",
   recoverEmail: "",
+  hrThreshold: "",
   certs: [],
 });
 
@@ -61,6 +62,7 @@ const emptyDive = () => ({
   cns: "",
   otu: "",
   tss: "",
+  tssKind: "",
   ascentRate: "",
   ascentMax: "",
   sac: "",
@@ -494,6 +496,77 @@ function computeAscent(d) {
   return { avg, max: fromProf.max || fromLog.max || d.ascentMax || avg };
 }
 
+function lactateHr(d) {
+  const fromProfile = Number(state?.profile?.hrThreshold);
+  if (fromProfile > 80 && fromProfile < 230) return fromProfile;
+  const max = Number(d?.computerLog?.hrMax);
+  if (max > 100 && max < 230) return Math.round(max * 0.9);
+  return 165;
+}
+
+function computeTss(d) {
+  const hours = (Number(d.totalTime) || diveDuration(d) || 0) / 60;
+  if (d.tssKind === "manual") {
+    const n = Number(d.tss);
+    return { value: n > 0 ? String(Math.round(n * 10) / 10) : "", kind: "manual", label: "TSS(Manuale)" };
+  }
+  const file = Number(d.computerLog?.tss);
+  if (file > 0 && file < 500) {
+    const hr = Number(d.computerLog?.hrAvg) > 40;
+    return {
+      value: String(Math.round(file * 10) / 10),
+      kind: hr ? "hr" : "file",
+      label: hr ? "TSS(hr) dal computer · FC vs soglia zona 4/5" : "TSS dal file FIT",
+    };
+  }
+  const hrAvg = Number(d.computerLog?.hrAvg);
+  if (hrAvg > 40 && hours > 0) {
+    const iff = Math.max(0.25, Math.min(1.35, hrAvg / lactateHr(d)));
+    const tss = hours * iff * iff * 100;
+    return { value: String(Math.round(tss * 10) / 10), kind: "hr", label: "TSS(hr) · frequenza vs soglia zona 4/5" };
+  }
+  if (hours > 0) {
+    const sac = diveSac(d) || Number(d.sac) || 0;
+    const depth = meanDepthM(d);
+    const climb = Number(d.ascentMax || d.ascentRate) || 0;
+    let met = 4;
+    if (sac > 0) met += Math.min(6, (sac / 18) * 3.5);
+    else met += Math.min(3.2, depth / 15);
+    if (climb > 15) met += 0.7;
+    if ((d.types || []).includes("Corrente")) met += 0.8;
+    const iff = Math.max(0.3, Math.min(1.4, met / 7));
+    const tss = hours * iff * iff * 100;
+    return { value: String(Math.round(tss * 10) / 10), kind: "met", label: "TSS(MET) · carico metabolico (senza FC/potenza)" };
+  }
+  return { value: "", kind: "", label: "" };
+}
+
+function trainingLoad() {
+  const byDay = {};
+  (state.dives || []).forEach((d) => {
+    const n = Number(computeTss(d).value);
+    if (!(n > 0) || !d.date) return;
+    byDay[d.date] = (byDay[d.date] || 0) + n;
+  });
+  const days = Object.keys(byDay).sort();
+  if (!days.length) return { ctl: 0, atl: 0, tsb: 0 };
+  const start = new Date(`${days[0]}T12:00:00`);
+  const end = new Date();
+  let ctl = 0;
+  let atl = 0;
+  for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+    const iso = new Date(t).toISOString().slice(0, 10);
+    const tss = byDay[iso] || 0;
+    ctl += (tss - ctl) / 42;
+    atl += (tss - atl) / 7;
+  }
+  return {
+    ctl: Math.round(ctl * 10) / 10,
+    atl: Math.round(atl * 10) / 10,
+    tsb: Math.round((ctl - atl) * 10) / 10,
+  };
+}
+
 function applyDiveMetrics(d) {
   if (!d) return d;
   const ascent = computeAscent(d);
@@ -501,6 +574,12 @@ function applyDiveMetrics(d) {
   d.ascentMax = ascent.max || "";
   const sac = diveSac(d);
   d.sac = sac > 0 ? String(Math.round(sac * 10) / 10) : d.sac || "";
+  const tss = computeTss(d);
+  if (d.tssKind !== "manual") {
+    d.tss = tss.value;
+    d.tssKind = tss.kind;
+  }
+  d.tssLabel = tss.label;
   return d;
 }
 
@@ -1193,6 +1272,11 @@ function renderHome() {
       <strong>${avgSac()}</strong>
       ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
     </button>
+    <button class="kpi" type="button" data-go="stats">
+      <p>Bilancio stress <span>◈</span></p>
+      <strong>${trainingLoad().tsb || "—"}</strong>
+      <em>TSB</em>
+    </button>
     <button class="kpi kpi-chart" type="button" data-go="stats">
       <p>Immersioni per anno <span>▣</span></p>
       <div class="year-chart">
@@ -1605,6 +1689,7 @@ function renderStats() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("il tuo mare"));
   const t = totals();
+  const load = trainingLoad();
   const sites = [...new Set(state.dives.map((d) => d.site).filter(Boolean))];
   const nitrox = state.dives.filter((d) => Number(d.mix) > 21).length;
   const card = document.createElement("section");
@@ -1617,6 +1702,12 @@ function renderStats() {
       <div class="stat"><b>${t.max || "—"}</b><span>Max assoluta</span></div>
       <div class="stat"><b>${fmtMins(t.mins)}</b><span>Fondo</span></div>
     </div>
+    <div class="stats" style="margin-top:8px">
+      <div class="stat"><b>${load.ctl || "—"}</b><span>CTL</span></div>
+      <div class="stat"><b>${load.atl || "—"}</b><span>ATL</span></div>
+      <div class="stat"><b>${load.tsb || "—"}</b><span>TSB</span></div>
+    </div>
+    <p class="hint">TSS = intensità² × durata (soglia zona 4/5). CTL carico cronico 42 gg, ATL acuto 7 gg, TSB = CTL − ATL. Un TSB negativo è affaticamento; salire troppo in fretta aumenta il rischio.</p>
   `;
   frag.append(card);
   const extra = document.createElement("section");
@@ -1631,7 +1722,7 @@ function renderStats() {
     <div style="overflow:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="opacity:.6;text-align:left">
-          <th style="padding:8px 6px">N°</th><th>Data</th><th>Sito</th><th>Diving</th><th>m</th><th>min</th>
+          <th style="padding:8px 6px">N°</th><th>Data</th><th>Sito</th><th>Diving</th><th>m</th><th>min</th><th>TSS</th>
         </tr></thead>
         <tbody>
           ${[...state.dives]
@@ -1644,6 +1735,7 @@ function renderStats() {
               <td>${escapeHtml(d.centerName)}</td>
               <td>${escapeHtml(d.maxDepth)}</td>
               <td>${escapeHtml(d.bottomTime)}</td>
+              <td>${escapeHtml(computeTss(d).value || "—")}</td>
             </tr>`
             )
             .join("")}
@@ -1686,7 +1778,9 @@ function renderProfile() {
           ${field("medicalExpiry", "Scadenza medico", p.medicalExpiry, false, "date")}
           ${field("insurance", "Assicurazione", p.insurance)}
         </div>
+        ${field("hrThreshold", "Soglia FC zona 4/5 (bpm) per TSS(hr)", p.hrThreshold, false, "number")}
       </div>
+      <p class="hint">La soglia anaerobica (limite zona 4/5) pesa l’intensità del TSS. Se manca, si usa il 90% della FC max dell’immersione oppure 165 bpm. Senza FC il TSS è metabolico (MET) da SAC, profondità e durata.</p>
     </section>
     <section class="profile-block">
       <h3>Emergenza</h3>
@@ -1827,7 +1921,7 @@ function renderDetail() {
       <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp || "—")} °C</div>
       <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
       <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
-      <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}</div>
+      <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}${d.tssLabel ? " · " + escapeHtml(d.tssLabel) : ""}</div>
       <div><b>Corrente</b>${escapeHtml(d.current || "—")}</div>
       <div><b>Mare</b>${escapeHtml(d.seaConditions || "—")}</div>
       <div><b>Muta / zavorra</b>${escapeHtml(d.wetsuit || "—")} mm · ${escapeHtml(d.ballast || "—")} kg</div>
@@ -1953,7 +2047,7 @@ function renderEdit() {
       ${field("airTemp", "Temp. aria (°C)", d.airTemp, false, "number")}
       ${field("cns", "CNS %", d.cns, false, "number")}
       ${field("otu", "OTU", d.otu, false, "number")}
-      ${field("tss", "TSS", d.tss, false, "number")}
+      ${field("tss", "TSS stress allenamento", d.tss, false, "number")}
       ${field("current", "Corrente", d.current)}
       ${field("seaConditions", "Mare / condizioni", d.seaConditions)}
       ${field("wetsuit", "Muta (mm)", d.wetsuit)}
@@ -1990,7 +2084,7 @@ function renderEdit() {
         <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
         <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
         <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
-        <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}</div>
+        <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}${d.tssLabel ? " · " + escapeHtml(d.tssLabel) : ""}</div>
         <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp ? d.bottomTemp + " °C" : "—")}</div>
         <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
         <div><b>Risalita</b>${escapeHtml(d.ascentRate ? d.ascentRate + " m/min" : "—")}${d.ascentMax ? " (max " + escapeHtml(d.ascentMax) + ")" : ""}</div>
@@ -2004,6 +2098,7 @@ function renderEdit() {
     ${fitDumpHtml(log)}
     <h3 class="serif">Fatica — litri/minuto in superficie</h3>
     <div data-effortwrap>${effortHtml(d)}</div>
+    <p class="hint" data-tsshint>${escapeHtml(d.tssLabel || "TSS = intensità² × durata, ponderata sulla soglia zona 4/5. Senza FC si usa TSS(MET) da SAC e profondità. Puoi sovrascrivere a mano (TSS Manuale).")}</p>
     <h3 class="serif">Profilo di immersione</h3>
     <canvas class="profile" data-profile></canvas>
     <p class="hint" data-profilehint>Curva profondità dal computer, aggiornata in automatico.</p>
@@ -2140,6 +2235,8 @@ function renderEdit() {
     });
     const wrap = form.querySelector("[data-effortwrap]");
     if (wrap) wrap.innerHTML = effortHtml(d);
+    const th = form.querySelector("[data-tsshint]");
+    if (th) th.textContent = d.tssLabel || th.textContent;
   };
   ["site", "location"].forEach((name) => {
     form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
@@ -2156,6 +2253,13 @@ function renderEdit() {
       d[name] = form.querySelector(`[name=${name}]`).value;
       refreshProfile();
     });
+  });
+  form.querySelector("[name=tss]")?.addEventListener("input", () => {
+    d.tss = form.querySelector("[name=tss]").value;
+    d.tssKind = "manual";
+    d.tssLabel = "TSS(Manuale)";
+    const th = form.querySelector("[data-tsshint]");
+    if (th) th.textContent = d.tssLabel;
   });
   queueMicrotask(() => {
     applyPlaceToDive(d);
@@ -2202,6 +2306,8 @@ function renderEdit() {
       types: d.types,
       photo: d.photo,
       feeling: d.feeling,
+      tssKind: d.tssKind,
+      tssLabel: d.tssKind === "manual" ? "TSS(Manuale)" : d.tssLabel,
       buddySign: d.buddySign,
       guideSign: d.guideSign,
       centerSign: d.centerSign,
