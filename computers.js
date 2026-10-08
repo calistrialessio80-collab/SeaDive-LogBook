@@ -1275,6 +1275,130 @@ function harvestDev(rec, desc, bag) {
   });
 }
 
+function ingestDevEntry(cat, k, v, desc) {
+  if (v == null || v === "") return;
+  if (typeof v === "number" && !Number.isFinite(v)) return;
+  const meta = desc.get(k) || {};
+  let name = String(meta.name || "").replace(/\0/g, "").trim();
+  if (!name) name = String(k);
+  const key = name.toLowerCase().replace(/\s+/g, "_");
+  if (!key || key === "undefined") return;
+  const n = Number(v);
+  if (!cat[key]) {
+    cat[key] = { first: v, last: v, min: n, max: n, units: meta.units || "" };
+    return;
+  }
+  cat[key].last = v;
+  if (Number.isFinite(n)) {
+    if (!Number.isFinite(cat[key].min) || n < cat[key].min) cat[key].min = n;
+    if (!Number.isFinite(cat[key].max) || n > cat[key].max) cat[key].max = n;
+  }
+}
+
+function buildDevCatalog(bag, desc) {
+  const cat = {};
+  const walk = (dev) => {
+    Object.entries(dev || {}).forEach(([k, v]) => ingestDevEntry(cat, k, v, desc));
+  };
+  (bag.sessions || []).forEach((s) => walk(s.dev));
+  (bag.laps || []).forEach((s) => walk(s.dev));
+  (bag.summaries || []).forEach((s) => walk(s.dev));
+  (bag.samples || []).forEach((s) => walk(s.dev));
+  bag.devLast = {};
+  Object.entries(cat).forEach(([k, row]) => {
+    bag.devLast[k] = row.last;
+  });
+  return cat;
+}
+
+function prettyFitVal(v, units) {
+  if (v == null || v === "") return "";
+  if (typeof v === "string" && !v.trim()) return "";
+  const n = Number(v);
+  let text;
+  if (typeof v === "string" && !Number.isFinite(n)) text = v;
+  else if (!Number.isFinite(n)) text = String(v);
+  else if (Math.abs(n) >= 100 && Number.isInteger(n)) text = String(n);
+  else text = String(Math.round(n * 100) / 100);
+  const u = String(units || "").replace(/\0/g, "").trim();
+  return u ? `${text} ${u}` : text;
+}
+
+const FIT_IT = {
+  cns: "CNS",
+  end_cns: "CNS fine",
+  start_cns: "CNS inizio",
+  o2_toxicity: "CNS (o2_toxicity)",
+  otu: "OTU",
+  otus: "OTU",
+  hrtss: "TSS",
+  tss: "TSS",
+  sac: "SAC",
+  rmv: "RMV",
+  air_consumption: "Consumo aria",
+  gas_consumption: "Consumo gas",
+  max_depth: "Prof. max",
+  avg_depth: "Prof. media",
+  depth: "Profondità",
+  temperature: "Temperatura",
+  temp: "Temperatura",
+  tank_pressure: "Pressione bombola",
+  start_pressure: "Press. inizio",
+  end_pressure: "Press. fine",
+  tank_volume: "Volume bombola",
+  tank_size: "Bombola",
+  dive_mode: "Modo immersione",
+  feeling: "Feeling",
+  recovery_time: "Recupero",
+  peak_epoc: "EPOC",
+  surface_time: "Tempo superficie",
+  dive_number_in_series: "N° in serie",
+  ndl: "NDL",
+  tts: "TTS",
+  helium: "Elio",
+  oxygen: "Ossigeno",
+};
+
+function catalogDump(cat, extra) {
+  const all = {};
+  Object.keys(cat)
+    .sort()
+    .forEach((k) => {
+      const row = cat[k];
+      const label = FIT_IT[k] || k.replace(/_/g, " ");
+      const last = prettyFitVal(row.last, row.units);
+      if (last === "") return;
+      const maxN = Number(row.max);
+      const lastN = Number(row.last);
+      const max = Number.isFinite(maxN) && Number.isFinite(lastN) && maxN > lastN + 0.05 ? ` · max ${prettyFitVal(row.max, row.units)}` : "";
+      all[label] = last + max;
+    });
+  Object.entries(extra || {}).forEach(([k, v]) => {
+    if (v == null || v === "") return;
+    if (all[k] == null) all[k] = String(v);
+  });
+  return all;
+}
+
+function catPick(cat, names, how = "last") {
+  for (const n of names) {
+    const row = cat[n.toLowerCase().replace(/\s+/g, "_")];
+    if (!row) continue;
+    const v = how === "max" ? row.max : how === "first" ? row.first : row.last;
+    if (v != null && v !== "") return v;
+  }
+  const keys = Object.keys(cat);
+  for (const n of names) {
+    const want = n.toLowerCase();
+    const hit = keys.find((k) => k.includes(want));
+    if (hit && cat[hit]) {
+      const v = how === "max" ? cat[hit].max : cat[hit].last;
+      if (v != null && v !== "") return v;
+    }
+  }
+  return "";
+}
+
 function pickBagDev(bag, matcher) {
   const last = bag.devLast || {};
   const keys = Object.keys(last);
@@ -1479,6 +1603,9 @@ function parseFitBlock(bytes, origin) {
     gfLow: "",
     gfHigh: "",
     devLast: {},
+    catalog: {},
+    hr: [],
+    he: [],
   };
 
   while (i < end) {
@@ -1537,6 +1664,7 @@ function parseFitBlock(bytes, origin) {
   }
 
   inferFitChannels(bag.samples, desc);
+  bag.catalog = buildDevCatalog(bag, desc);
   const bindDev = (row) => {
     if (!row) return row;
     if (!row.maxDepth) row.maxDepth = pickDev(row.dev, desc, ["max_depth", "maxdepth"]);
@@ -1638,9 +1766,10 @@ function parseFitBlock(bytes, origin) {
     const timeIn = when.time || created.time;
     const extras = {
       format: brand,
-      avgDepth: avgM || "",
+      avgDepth: avgM || fitDepthM(catPick(bag.catalog, ["avg_depth"])) || "",
       cns: bestNum(
         [
+          catPick(bag.catalog, ["end_cns", "cns", "o2_toxicity", "cns_load"], "max"),
           pickBagDev(bag, isCnsName),
           pickDev(s.dev, desc, ["end_cns", "cns", "o2_toxicity", "cns_load"]),
           lastDevVal(use, desc, ["end_cns", "cns", "o2_toxicity", "cns_load"], 79),
@@ -1650,6 +1779,7 @@ function parseFitBlock(bytes, origin) {
       ),
       otu: bestNum(
         [
+          catPick(bag.catalog, ["otu", "otus", "otu_total"], "max"),
           pickBagDev(bag, isOtuName),
           pickDev(s.dev, desc, ["otu", "otus", "otu_total"]),
           lastDevVal(use, desc, ["otu", "otus", "otu_total"]),
@@ -1659,6 +1789,7 @@ function parseFitBlock(bytes, origin) {
       ),
       tss: bestNum(
         [
+          catPick(bag.catalog, ["hrtss", "tss", "hr_tss", "relative_effort", "training_load", "training_stress"], "last"),
           pickBagDev(bag, isTssName),
           pickDev(s.dev, desc, ["hrtss", "tss", "relative_effort", "training_load"]),
           lastDevVal(use, desc, ["hrtss", "tss", "relative_effort", "training_load"]),
@@ -1680,22 +1811,28 @@ function parseFitBlock(bytes, origin) {
     const pStart =
       fitPressureBar(bag.tankStart[0]) ||
       fitPressureBar(s.pressStart) ||
+      fitPressureBar(catPick(bag.catalog, ["start_pressure", "tank_pressure_start", "begin_pressure"], "first")) ||
       fitPressureBar(pickBagDev(bag, (n) => /start_pressure|begin_pressure|tank_pressure_start/.test(n))) ||
       (sampleBars.length ? String(sampleBars[0]) : "") ||
+      fitPressureBar(catPick(bag.catalog, ["tank_pressure", "cylinder_pressure"], "first")) ||
       (bag.tanks[0] != null ? fitPressureBar(bag.tanks[0]) : "");
     const pEnd =
       fitPressureBar(bag.tankEnd[0]) ||
       fitPressureBar(s.pressEnd) ||
+      fitPressureBar(catPick(bag.catalog, ["end_pressure", "tank_pressure_end"], "last")) ||
       fitPressureBar(pickBagDev(bag, (n) => /end_pressure|tank_pressure_end/.test(n))) ||
       (sampleBars.length ? String(sampleBars[sampleBars.length - 1]) : "") ||
+      fitPressureBar(catPick(bag.catalog, ["tank_pressure", "cylinder_pressure"], "last")) ||
       (bag.tanks.length ? fitPressureBar(bag.tanks[bag.tanks.length - 1]) : "");
     const tankL =
       volumeLiters(bag.tankVol[0]) ||
       volumeLiters(s.tankVol) ||
+      volumeLiters(catPick(bag.catalog, ["tank_volume", "tank_size", "cylinder_size", "cylinder_volume"])) ||
       volumeLiters(pickBagDev(bag, isTankVolName)) ||
       (pStart && pEnd ? "12" : "");
     extras.sacFit = bestNum(
       [
+        catPick(bag.catalog, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac"]),
         pickBagDev(bag, isSacName),
         s.sacFit,
         s.sacVol,
@@ -1717,6 +1854,38 @@ function parseFitBlock(bytes, origin) {
       if (a > 1 && b > 1 && Math.abs(a - b) < 14) ascentRate = round1((a + b) / 2);
     }
     const ascentMax = fromProf.max || extras.ascentMax || ascentRate;
+    const hrAvg = bag.hr.length ? round1(bag.hr.reduce((a, b) => a + b, 0) / bag.hr.length) : fitScore(s.hrAvg, 250);
+    const hrMax = bag.hr.length ? String(Math.max(...bag.hr)) : fitScore(s.hrMax, 250);
+    extras.hrAvg = hrAvg || "";
+    extras.hrMax = hrMax || "";
+    extras.ndl = last.fields?.[78] ?? catPick(bag.catalog, ["ndl", "no_deco_time"]);
+    extras.tts = last.fields?.[77] ?? catPick(bag.catalog, ["tts", "time_to_surface"]);
+    extras.helium = bag.he[0] != null ? o2Percent(bag.he[0]) : catPick(bag.catalog, ["helium", "he"]);
+    extras.all = catalogDump(bag.catalog, {
+      Computer: brand,
+      "Prof. max": maxM ? maxM + " m" : "",
+      "Prof. media": extras.avgDepth ? extras.avgDepth + " m" : "",
+      "Durata": mins ? mins + " min" : "",
+      "Tempo fondo": fondo ? fondo + " min" : "",
+      CNS: extras.cns !== "" ? extras.cns + "%" : "",
+      OTU: extras.otu,
+      TSS: extras.tss,
+      SAC: extras.sacFit ? extras.sacFit + " L/min" : "",
+      "Press. inizio": pStart ? pStart + " bar" : "",
+      "Press. fine": pEnd ? pEnd + " bar" : "",
+      Bombola: tankL ? tankL + " L" : "",
+      "Temp. fondo": bottomTemp ? bottomTemp + " °C" : "",
+      "Temp. acqua": water ? water + " °C" : "",
+      Risalita: ascentRate ? ascentRate + " m/min" : "",
+      "Risalita max": ascentMax ? ascentMax + " m/min" : "",
+      "FC media": hrAvg ? hrAvg + " bpm" : "",
+      "FC max": hrMax ? hrMax + " bpm" : "",
+      NDL: extras.ndl,
+      TTS: extras.tts,
+      Elio: extras.helium,
+      Modo: mode,
+      Campioni: extras.samples,
+    });
     dives.push(
       baseImported({
         date,
@@ -1813,6 +1982,7 @@ function collectFit(global, rec, bag, desc) {
     }
     const temp = fitSampleTemp(rec[13]);
     if (temp != null) bag.temps.push(temp);
+    if (rec[3] > 20 && rec[3] < 240) bag.hr.push(rec[3]);
     const tankBar = Number(fitPressureBar(pickDev(rec.dev, desc, ["tank_pressure", "cylinder_pressure", "cyl_pressure", "gas_pressure"])));
     bag.samples.push({
       ts: ts || 0,
@@ -1835,6 +2005,9 @@ function collectFit(global, rec, bag, desc) {
       timer: rec[8],
       tss: rec[35],
       te: rec[24],
+      hrAvg: rec[16],
+      hrMax: rec[17],
+      hrMin: rec[18],
       maxTemp: rec[58] ?? rec[14],
       avgTemp: rec[57],
       minTemp: rec[80],
@@ -1842,6 +2015,8 @@ function collectFit(global, rec, bag, desc) {
       avgDepth: rec[92],
       lat: fitSemicircle(rec[3]),
       lng: fitSemicircle(rec[4]),
+      calories: rec[11],
+      work: rec[48],
       dev: rec.dev,
     };
     if (global === 18) bag.sessions.push(row);
@@ -1851,6 +2026,7 @@ function collectFit(global, rec, bag, desc) {
   if (global === 259) {
     const o2 = rec[1] != null ? rec[1] : rec[2];
     if (o2 != null) bag.gases.push(o2 > 1.5 ? o2 : o2 * 100);
+    if (rec[0] != null) bag.he.push(rec[0] > 1.5 ? rec[0] : rec[0] * 100);
   }
   if (global === 319 && (rec[1] != null || rec[2] != null)) bag.tanks.push(rec[1] ?? rec[2]);
   if (global === 323) {
@@ -1874,6 +2050,7 @@ function collectFit(global, rec, bag, desc) {
       hang: rec[25] ?? rec[26],
       ascentAvg: rec[17] != null ? Number(rec[17]) / 1000 : "",
       ascentMax: rec[23] != null ? Number(rec[23]) / 1000 : "",
+      dev: rec.dev,
     });
   }
 }

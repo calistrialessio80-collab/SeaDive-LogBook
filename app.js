@@ -1775,6 +1775,18 @@ function field(name, label, value, full = false, type = "text") {
   return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="${type}" value="${escapeHtml(value)}" /></label>`;
 }
 
+function fitDumpHtml(log) {
+  const all = log?.all;
+  const keys = all && typeof all === "object" ? Object.keys(all) : [];
+  if (!keys.length) return "";
+  return `<div class="computer-log">
+    <h3 class="serif">Tutti i dati del file</h3>
+    <div class="kv fit-dump">${keys
+      .map((k) => `<div><b>${escapeHtml(k)}</b>${escapeHtml(all[k])}</div>`)
+      .join("")}</div>
+  </div>`;
+}
+
 function renderDetail() {
   const d = state.dives.find((x) => x.id === view.diveId);
   const frag = document.createDocumentFragment();
@@ -1825,6 +1837,7 @@ function renderDetail() {
       <div><b>Strumentazione</b>${escapeHtml(d.instruments || "—")}</div>
       <div><b>Brevetto in scheda</b>${escapeHtml(d.certOnDive || "—")}</div>
     </div>
+    ${fitDumpHtml(d.computerLog)}
     <h3 class="serif">Consumo in superficie</h3>
     ${effortHtml(d)}
     <h3 class="serif">Profilo di immersione</h3>
@@ -1984,8 +1997,11 @@ function renderEdit() {
         <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
         <div><b>GF</b>${escapeHtml(log.gf || "—")}</div>
         <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
+        ${log.hrAvg ? `<div><b>FC media</b>${escapeHtml(String(log.hrAvg))} bpm</div>` : ""}
+        ${log.hrMax ? `<div><b>FC max</b>${escapeHtml(String(log.hrMax))} bpm</div>` : ""}
       </div>
     </div>
+    ${fitDumpHtml(log)}
     <h3 class="serif">Fatica — litri/minuto in superficie</h3>
     <div data-effortwrap>${effortHtml(d)}</div>
     <h3 class="serif">Profilo di immersione</h3>
