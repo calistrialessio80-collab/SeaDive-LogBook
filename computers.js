@@ -1,10 +1,10 @@
-/** Import immersioni da computer subacquei (UDDF, XML Suunto, CSV). */
+/** Import immersioni da computer subacquei (FIT Suunto/Garmin, UDDF, XML, CSV). */
 const COMPUTERS = [
   {
     id: "suunto-eon-core",
     brand: "Suunto",
     models: "EON Core (priorità), EON Steel, D5, D4i Novo, Vyper, Zoop",
-    how: "Carica UDDF, XML, JSON o LOG dall’app Suunto. Bluetooth sperimentale solo su Chrome Android.",
+    how: "Carica il file FIT, UDDF, XML o JSON dall’app Suunto. Bluetooth sperimentale solo su Chrome Android.",
     ble: true,
   },
   {
@@ -726,9 +726,31 @@ function parseEonSteelLog(bytes, instrument) {
 }
 
 function downsampleProfile(pts) {
-  if (pts.length <= 40) return pts;
-  const step = Math.ceil(pts.length / 40);
-  return pts.filter((_, i) => i % step === 0);
+  const cleaned = (pts || [])
+    .map((p) => ({ t: Number(p.t), d: Number(p.d) }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.d) && p.d >= 0 && p.t >= 0)
+    .sort((a, b) => a.t - b.t || a.d - b.d);
+  if (cleaned.length <= 1) return cleaned;
+  const uniq = [];
+  cleaned.forEach((p) => {
+    const prev = uniq[uniq.length - 1];
+    if (!prev || Math.abs(prev.t - p.t) > 0.04 || Math.abs(prev.d - p.d) > 0.05) uniq.push(p);
+    else if (p.d > prev.d) uniq[uniq.length - 1] = p;
+  });
+  if (uniq.length <= 100) return uniq;
+  let deepI = 0;
+  uniq.forEach((p, i) => {
+    if (p.d > uniq[deepI].d) deepI = i;
+  });
+  const out = [];
+  const step = (uniq.length - 1) / 99;
+  for (let i = 0; i < 100; i++) out.push(uniq[Math.round(i * step)]);
+  const deep = uniq[deepI];
+  if (!out.some((p) => p.t === deep.t && p.d === deep.d)) {
+    out.push(deep);
+    out.sort((a, b) => a.t - b.t);
+  }
+  return out;
 }
 
 function sampleKinds(desc) {
@@ -931,9 +953,12 @@ function parseGpx(xml) {
   ];
 }
 
+function isFitAt(bytes, o) {
+  return o + 12 <= bytes.length && String.fromCharCode(bytes[o + 8], bytes[o + 9], bytes[o + 10], bytes[o + 11]) === ".FIT";
+}
+
 function isFit(bytes) {
-  if (bytes.length < 14) return false;
-  return String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) === ".FIT";
+  return isFitAt(bytes, 0);
 }
 
 function fitU16(b, i, le) {
@@ -944,53 +969,155 @@ function fitU32(b, i, le) {
     ? (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0
     : ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
 }
+function fitS16(b, i, le) {
+  const v = fitU16(b, i, le);
+  return v & 0x8000 ? v - 0x10000 : v;
+}
 function fitS32(b, i, le) {
   return fitU32(b, i, le) | 0;
 }
-
-function fitTime(v) {
-  if (!v || v === 0xffffffff) return null;
-  return new Date((v + 631065600) * 1000);
+function fitF32(b, i, le) {
+  return new DataView(b.buffer, b.byteOffset + i, 4).getFloat32(0, le);
+}
+function fitF64(b, i, le) {
+  return new DataView(b.buffer, b.byteOffset + i, 8).getFloat64(0, le);
+}
+function fitString(b, i, size) {
+  let s = "";
+  for (let k = 0; k < size; k++) {
+    if (!b[i + k]) break;
+    s += String.fromCharCode(b[i + k]);
+  }
+  return s.trim();
 }
 
-function fitReadFields(bytes, i, def) {
-  const rec = {};
+function fitScalar(bytes, o, size, base, le) {
+  const t = base & 0x1f;
+  if (t === 7 || ((t === 13 || t === 0) && size > 1)) return fitString(bytes, o, size);
+  if (t === 8) return size >= 4 ? fitF32(bytes, o, le) : null;
+  if (t === 9) return size >= 8 ? fitF64(bytes, o, le) : null;
+  if (t === 1) return bytes[o] << 24 >> 24;
+  if (t === 0 || t === 2 || t === 10 || t === 13) return bytes[o];
+  if (t === 3) return fitS16(bytes, o, le);
+  if (t === 4 || t === 11) return fitU16(bytes, o, le);
+  if (t === 5) return fitS32(bytes, o, le);
+  if (t === 6 || t === 12) return fitU32(bytes, o, le);
+  if (size === 1) return bytes[o];
+  if (size === 2) return fitU16(bytes, o, le);
+  if (size === 4) return fitU32(bytes, o, le);
+  if (size === 8 && t === 9) return fitF64(bytes, o, le);
+  return fitString(bytes, o, size);
+}
+
+function fitIsInvalid(base, val) {
+  if (val == null || val === "") return true;
+  const t = base & 0x1f;
+  if (typeof val === "number" && !Number.isFinite(val)) return true;
+  if (t === 0 || t === 2 || t === 10 || t === 13) return val === 0xff;
+  if (t === 4 || t === 11) return val === 0xffff;
+  if (t === 6 || t === 12) return val === 0xffffffff;
+  if (t === 5) return val === 0x7fffffff;
+  if (t === 3) return val === 0x7fff;
+  return false;
+}
+
+function fitReadRecord(bytes, i, def) {
+  const rec = { dev: {} };
   let o = i;
   def.fields.forEach((f) => {
-    let val;
-    if (f.size === 1) val = bytes[o];
-    else if (f.size === 2) val = fitU16(bytes, o, def.le);
-    else if (f.size === 4) val = f.base === 0x85 || f.base === 0x86 ? fitS32(bytes, o, def.le) : fitU32(bytes, o, def.le);
-    else val = null;
-    rec[f.num] = val;
+    const val = fitScalar(bytes, o, f.size, f.base, def.le);
+    if (!fitIsInvalid(f.base, val)) rec[f.num] = val;
+    o += f.size;
+  });
+  (def.devFields || []).forEach((f) => {
+    const val = fitScalar(bytes, o, f.size, f.base != null ? f.base : 0x88, def.le);
+    rec.dev[`${f.devIdx}:${f.num}`] = val;
     o += f.size;
   });
   return rec;
 }
 
-function fitMeters(v) {
+function fitClock(v, offset) {
+  if (!v || v === 0xffffffff) return { date: "", time: "" };
+  const d = new Date((Number(v) + 631065600 + (offset || 0)) * 1000);
+  if (Number.isNaN(d.getTime())) return { date: "", time: "" };
+  return { date: d.toISOString().slice(0, 10), time: d.toISOString().slice(11, 16) };
+}
+
+function fitDepthM(v) {
   const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  if (n > 200) return n / 1000;
-  return n;
+  if (!Number.isFinite(n) || n <= 0 || n >= 0xffffffff) return 0;
+  if (n > 130 && n <= 200000) return Math.round(n / 100) / 10;
+  if (n > 200000) return 0;
+  return Math.round(n * 10) / 10;
 }
 
 function fitMinutes(v) {
   const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  if (n > 100000) return String(Math.round(n / 60000));
-  if (n > 180) return String(Math.round(n / 1000 / 60) || Math.round(n / 60));
+  if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff) return "";
+  if (n > 100000) return String(Math.max(1, Math.round(n / 60000)));
+  if (n >= 180) return String(Math.max(1, Math.round(n / 60)));
   return String(Math.round(n));
 }
 
+function fitSemicircle(v) {
+  if (v == null || v === 0x7fffffff) return "";
+  const deg = Number(v) * (180 / 2147483648);
+  return Number.isFinite(deg) && Math.abs(deg) <= 180 ? deg : "";
+}
+
+function pickDev(dev, desc, names) {
+  const want = names.map((n) => n.toLowerCase());
+  for (const [k, v] of Object.entries(dev || {})) {
+    const name = String(desc.get(k)?.name || "").toLowerCase();
+    if (want.includes(name) && v != null && v !== "") return v;
+  }
+  return "";
+}
+
+const SUUNTO_DIVE_MODE = ["Off", "Gauge", "Free", "Air", "EAN", "Mixed", "CCR", "Nitrox", "Trimix", "CCR Nitrox", "CCR Trimix"];
+
 function parseFit(bytes) {
-  const headerSize = bytes[0] || 14;
-  const dataSize = fitU32(bytes, 4, true);
-  const end = Math.min(bytes.length - 2, headerSize + dataSize);
+  const dives = [];
+  let offset = 0;
+  while (offset + 14 <= bytes.length) {
+    if (!isFitAt(bytes, offset)) {
+      if (!offset) break;
+      offset += 1;
+      continue;
+    }
+    const block = parseFitBlock(bytes, offset);
+    dives.push(...block.dives);
+    offset = Math.max(offset + 1, block.next);
+  }
+  if (!dives.length) throw new Error("File FIT senza immersioni (sessioni, campioni o dive summary).");
+  return dives;
+}
+
+function parseFitBlock(bytes, origin) {
+  const headerSize = bytes[origin] || 14;
+  const dataSize = fitU32(bytes, origin + 4, true);
+  const end = Math.min(bytes.length, origin + headerSize + dataSize);
   const defs = {};
-  let i = headerSize;
+  const desc = new Map();
+  let i = origin + headerSize;
   let lastTs = 0;
-  const bag = { sessions: [], summaries: [], gps: [], samples: [], temps: [], gases: [], tanks: [] };
+  const bag = {
+    sessions: [],
+    summaries: [],
+    laps: [],
+    gps: [],
+    samples: [],
+    temps: [],
+    gases: [],
+    tanks: [],
+    tankStart: [],
+    tankEnd: [],
+    tankVol: [],
+    mfg: 0,
+    product: "",
+    tz: 0,
+  };
 
   while (i < end) {
     const h = bytes[i++];
@@ -999,150 +1126,231 @@ function parseFit(bytes) {
       const def = defs[local];
       if (!def) break;
       lastTs += h & 0x1f;
-      const rec = fitReadFields(bytes, i, def);
+      const rec = fitReadRecord(bytes, i, def);
       rec[253] = lastTs;
       i += def.dataSize;
-      collectFit(def.global, rec, bag);
+      collectFit(def.global, rec, bag, desc);
       continue;
     }
     const isDef = h & 0x40;
     const local = h & 0x0f;
     const hasDev = h & 0x20;
     if (isDef) {
+      if (i + 5 > bytes.length) break;
       i += 1;
       const le = bytes[i++] === 0;
       const global = fitU16(bytes, i, le);
       i += 2;
       const nfields = bytes[i++];
       const fields = [];
-      let dataSize = 0;
+      let recSize = 0;
       for (let f = 0; f < nfields; f++) {
         const num = bytes[i++];
         const size = bytes[i++];
         const base = bytes[i++];
         fields.push({ num, size, base });
-        dataSize += size;
+        recSize += size;
       }
+      const devFields = [];
       if (hasDev) {
         const nd = bytes[i++];
         for (let f = 0; f < nd; f++) {
-          i += 1;
+          const num = bytes[i++];
           const size = bytes[i++];
-          i += 1;
-          dataSize += size;
+          const devIdx = bytes[i++];
+          const meta = desc.get(`${devIdx}:${num}`) || {};
+          devFields.push({ num, size, devIdx, base: meta.base != null ? meta.base : 0x88 });
+          recSize += size;
         }
       }
-      defs[local] = { global, fields, dataSize, le };
+      defs[local] = { global, fields, devFields, dataSize: recSize, le };
       continue;
     }
     const def = defs[local];
     if (!def) break;
-    const rec = fitReadFields(bytes, i, def);
+    const rec = fitReadRecord(bytes, i, def);
     if (rec[253]) lastTs = rec[253];
     i += def.dataSize;
-    collectFit(def.global, rec, bag);
+    collectFit(def.global, rec, bag, desc);
   }
 
-  const depths = bag.samples.map((s) => s.depth).filter((n) => n > 0);
-  const profilePoints = [];
-  if (bag.samples.length) {
-    const t0 = bag.samples[0].ts || 0;
-    bag.samples.forEach((s) => {
-      if (!s.depth) return;
-      profilePoints.push({ t: Math.max(0, Math.round(((s.ts - t0) % 86400) / 60)), d: Math.round(s.depth * 10) / 10 });
+  bag.samples.forEach((s) => {
+    if (!(s.depth > 0)) s.depth = fitDepthM(pickDev(s.dev, desc, ["depth"]));
+    if (s.temp == null) {
+      const t = Number(pickDev(s.dev, desc, ["temperature", "temp"]));
+      if (t > -5 && t < 45) s.temp = t;
+    }
+  });
+  const bindDev = (row) => {
+    if (!row) return row;
+    if (!row.maxDepth) row.maxDepth = pickDev(row.dev, desc, ["max_depth", "maxdepth"]);
+    if (!row.avgDepth) row.avgDepth = pickDev(row.dev, desc, ["avg_depth", "avgdepth"]);
+    if (row.surfaceTime == null || row.surfaceTime === "") row.surfaceTime = pickDev(row.dev, desc, ["surface_time", "surfacetime"]);
+    if (row.diveMode == null || row.diveMode === "") row.diveMode = pickDev(row.dev, desc, ["dive_mode", "divemode"]);
+    if (!row.feeling) row.feeling = Number(pickDev(row.dev, desc, ["feeling"])) || 0;
+    if (!row.description) row.description = pickDev(row.dev, desc, ["description"]);
+    return row;
+  };
+  bag.sessions.forEach(bindDev);
+  bag.laps.forEach(bindDev);
+  if (bag.sessions.length && bag.summaries.length) {
+    bag.sessions.forEach((s, i) => {
+      const u = bag.summaries[i];
+      if (!u) return;
+      if (!s.maxDepth) s.maxDepth = u.maxDepth;
+      if (!s.avgDepth) s.avgDepth = u.avgDepth;
+      if (!s.bottom) s.bottom = u.bottom;
+      if (!s.surface) s.surface = u.surface;
+      if (s.cns == null) s.cns = u.cns;
+      if (!s.hang) s.hang = u.hang;
     });
   }
-  const g = bag.gps[0] || {};
-  const minTemp = bag.temps.length ? Math.min(...bag.temps) : "";
+  const brand = bag.product || (bag.mfg === 23 ? "Suunto" : bag.mfg === 1 ? "Garmin" : "Computer FIT");
+  const sources = bag.sessions.length ? bag.sessions : bag.summaries.length ? bag.summaries : bag.laps;
   const dives = [];
-  const sources = bag.summaries.length ? bag.summaries : bag.sessions;
-  sources.forEach((s) => {
-    const when = fitTime(s.start || s.ts);
-    const maxM = fitMeters(s.maxDepth) || (depths.length ? Math.max(...depths) : 0);
-    const mins = fitMinutes(s.bottom) || fitMinutes(s.elapsed) || "";
+  const pushDive = (s, idx) => {
+    const start = s.start || s.ts || 0;
+    const next = sources[idx + 1];
+    const until = next ? next.start || next.ts || Infinity : s.ts && s.start && s.ts > s.start ? s.ts : Infinity;
+    const samples = bag.samples.filter((x) => x.ts >= start && (until === Infinity || x.ts <= until));
+    const use = samples.length ? samples : bag.samples;
+    const t0 = use[0]?.ts || start;
+    const span = (use[use.length - 1]?.ts || 0) - t0;
+    const profilePoints = use.some((x) => x.depth > 0)
+      ? use.map((x, i) => ({
+          t: Math.max(0, Math.round(((span > 1 ? (x.ts - t0) / 60 : (i * 10) / 60) * 10)) / 10),
+          d: Math.round((x.depth || 0) * 10) / 10,
+        }))
+      : [];
+    const depths = use.map((x) => x.depth).filter((n) => n > 0);
+    const temps = use.map((x) => x.temp).filter((n) => n != null && n > -5 && n < 45);
+    const gps = use.find((x) => x.lat) || bag.gps[0] || {};
+    const maxM = fitDepthM(s.maxDepth) || (depths.length ? Math.max(...depths) : 0);
+    const avgM = fitDepthM(s.avgDepth);
+    const mins =
+      fitMinutes(s.bottom) ||
+      fitMinutes(s.elapsed) ||
+      (use.length >= 2 ? String(Math.max(1, Math.round((use[use.length - 1].ts - use[0].ts) / 60))) : "");
+    const when = fitClock(s.start || s.ts || use[0]?.ts, bag.tz);
+    const modeNum = Number(s.diveMode);
+    const mode =
+      Number.isFinite(modeNum) && SUUNTO_DIVE_MODE[modeNum]
+        ? SUUNTO_DIVE_MODE[modeNum]
+        : s.diveMode
+          ? String(s.diveMode)
+          : "";
+    const o2 = bag.gases[0] != null ? o2Percent(bag.gases[0]) : mode === "Air" ? "21" : "";
+    const water =
+      temps.length ? String(Math.round(Math.min(...temps) * 10) / 10) : tempC(s.minTemp || s.avgTemp || s.maxTemp);
     dives.push(
       baseImported({
-        date: when ? when.toISOString().slice(0, 10) : "",
-        timeIn: when ? when.toISOString().slice(11, 16) : "",
-        maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
+        date: when.date,
+        timeIn: when.time,
+        maxDepth: maxM ? String(maxM) : "",
+        plannedDepth: maxM ? String(maxM) : "",
         bottomTime: mins,
         totalTime: mins,
-        surfaceInterval: fitMinutes(s.surface),
-        waterTemp: minTemp !== "" ? String(minTemp) : tempC(s.bottomTemp || s.startTemp || s.maxTemp),
-        mix: bag.gases[0] ? o2Percent(bag.gases[0]) : "",
-        tank: "",
-        pressureStart: bag.tanks[0] != null ? pressureBar(bag.tanks[0]) : "",
-        pressureEnd: bag.tanks.length ? pressureBar(bag.tanks[bag.tanks.length - 1]) : "",
-        site: "Garmin",
-        lat: g.lat || s.lat || "",
-        lng: g.lng || s.lng || "",
-        instruments: "Garmin (FIT)",
-        sourceComputer: "fit",
+        surfaceInterval: fitMinutes(s.surface) || fitMinutes(s.surfaceTime),
+        waterTemp: water,
+        mix: o2,
+        tank: bag.tankVol[0] != null ? volumeLiters(bag.tankVol[0]) : "",
+        pressureStart: bag.tankStart[0] != null ? pressureBar(bag.tankStart[0]) : bag.tanks[0] != null ? pressureBar(bag.tanks[0]) : "",
+        pressureEnd:
+          bag.tankEnd[0] != null
+            ? pressureBar(bag.tankEnd[0])
+            : bag.tanks.length
+              ? pressureBar(bag.tanks[bag.tanks.length - 1])
+              : "",
+        site: "",
+        lat: gps.lat || s.lat || "",
+        lng: gps.lng || s.lng || "",
+        instruments: brand,
+        sourceComputer: bag.mfg === 23 ? "suunto-fit" : "fit",
+        feeling: s.feeling >= 1 && s.feeling <= 5 ? s.feeling : 0,
         profilePoints,
         notes: [
-          s.avgDepth ? `prof. media ${fitMeters(s.avgDepth)} m` : "",
+          avgM ? `prof. media ${avgM} m` : "",
+          mode ? `modo ${mode}` : "",
+          s.cns != null && s.cns !== "" ? `CNS ${s.cns}%` : "",
           s.hang ? `sosta ${fitMinutes(s.hang)} min` : "",
+          s.description ? String(s.description) : "",
+          `${use.filter((x) => x.depth > 0).length} campioni profilo`,
         ]
           .filter(Boolean)
           .join(" · "),
       })
     );
-  });
-  if (!dives.length && (bag.gps.length || depths.length || bag.sessions.length)) {
-    const when = fitTime(bag.sessions[0]?.start || bag.samples[0]?.ts);
-    dives.push(
-      baseImported({
-        date: when ? when.toISOString().slice(0, 10) : "",
-        timeIn: when ? when.toISOString().slice(11, 16) : "",
-        maxDepth: depths.length ? String(Math.max(...depths)) : "",
-        waterTemp: minTemp !== "" ? String(minTemp) : "",
-        site: "Garmin",
-        lat: g.lat ?? "",
-        lng: g.lng ?? "",
-        instruments: "Garmin (FIT)",
-        sourceComputer: "fit",
-        profilePoints,
-      })
-    );
-  }
-  if (!dives.length) throw new Error("File FIT senza immersioni (sessioni / dive summary).");
-  return dives;
+  };
+
+  sources.forEach(pushDive);
+  if (!dives.length && bag.samples.some((s) => s.depth > 0)) pushDive({ start: bag.samples[0].ts, ts: bag.samples[bag.samples.length - 1].ts }, 0);
+  return { dives, next: end + 2 };
 }
 
-function collectFit(global, rec, bag) {
+function collectFit(global, rec, bag, desc) {
   const ts = rec[253];
-  if (global === 20) {
-    let lat = null;
-    let lng = null;
-    if (rec[0] != null && rec[1] != null && rec[0] !== 0x7fffffff && rec[1] !== 0x7fffffff) {
-      lat = rec[0] * (180 / 2147483648);
-      lng = rec[1] * (180 / 2147483648);
-      if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) bag.gps.push({ lat, lng });
-    }
-    const depthRaw = rec[78] ?? rec[73] ?? rec[15];
-    const depth = depthRaw != null && depthRaw > 0 && depthRaw < 500000 ? fitMeters(depthRaw) : 0;
-    if (rec[13] != null && rec[13] > -20 && rec[13] < 50) bag.temps.push(rec[13]);
-    bag.samples.push({ ts: ts || 0, depth, lat, lng });
+  if (global === 206) {
+    const key = `${rec[0]}:${rec[1]}`;
+    const name = String(rec[3] || "").replace(/\0/g, "").trim();
+    if (name) desc.set(key, { name, base: rec[2], units: rec[8] });
+    return;
   }
-  if (global === 18) {
-    let lat = "";
-    let lng = "";
-    if (rec[3] != null && rec[4] != null && rec[3] !== 0x7fffffff) {
-      lat = rec[3] * (180 / 2147483648);
-      lng = rec[4] * (180 / 2147483648);
+
+  if (global === 0) {
+    bag.mfg = rec[1] || bag.mfg;
+    if (typeof rec[8] === "string" && rec[8]) bag.product = rec[8];
+  }
+  if (global === 34 && rec[5] && ts && rec[5] !== 0xffffffff) bag.tz = Number(rec[5]) - Number(ts);
+
+  if (global === 20) {
+    const lat = fitSemicircle(rec[0]);
+    const lng = fitSemicircle(rec[1]);
+    if (lat !== "" && lng !== "") bag.gps.push({ lat, lng });
+    let depth = fitDepthM(rec[74]);
+    if (!depth && rec[73] > 110000 && rec[73] < 2500000) {
+      depth = Math.max(0, Math.round(((rec[73] - 101325) / 10000) * 10) / 10);
     }
-    bag.sessions.push({
+    const temp = rec[13];
+    if (temp != null && temp > -5 && temp < 45) bag.temps.push(temp);
+    bag.samples.push({
+      ts: ts || 0,
+      depth,
+      temp: temp != null && temp > -5 && temp < 45 ? temp : null,
+      lat,
+      lng,
+      dev: rec.dev,
+    });
+  }
+
+  if (global === 18 || global === 19) {
+    const row = {
       ts,
       start: rec[2] || ts,
       sport: rec[5],
       elapsed: rec[7] ?? rec[8],
-      maxTemp: rec[14] ?? rec[13],
-      lat,
-      lng,
-    });
+      maxTemp: rec[58] ?? rec[14],
+      avgTemp: rec[57],
+      minTemp: rec[80],
+      maxDepth: rec[93],
+      avgDepth: rec[92],
+      lat: fitSemicircle(rec[3]),
+      lng: fitSemicircle(rec[4]),
+      dev: rec.dev,
+    };
+    if (global === 18) bag.sessions.push(row);
+    else bag.laps.push(row);
   }
-  if (global === 259 && rec[1] != null) bag.gases.push(rec[1] > 1 ? rec[1] / 100 : rec[1]);
-  if (global === 319 && rec[2] != null && rec[2] !== 0xffff) bag.tanks.push(rec[2]);
+
+  if (global === 259) {
+    const o2 = rec[1] != null ? rec[1] : rec[2];
+    if (o2 != null) bag.gases.push(o2 > 1.5 ? o2 : o2 * 100);
+  }
+  if (global === 319 && rec[2] != null) bag.tanks.push(rec[2]);
+  if (global === 323) {
+    if (rec[2] != null) bag.tankStart.push(rec[2]);
+    if (rec[3] != null) bag.tankEnd.push(rec[3]);
+    if (rec[4] != null) bag.tankVol.push(rec[4]);
+  }
   if (global === 268) {
     bag.summaries.push({
       ts,
@@ -1150,10 +1358,11 @@ function collectFit(global, rec, bag) {
       avgDepth: rec[2],
       maxDepth: rec[3],
       surface: rec[4],
+      cns: rec[6],
       bottom: rec[11],
-      hang: rec[16],
-      startTemp: rec[17] ?? rec[11],
-      bottomTemp: rec[18] ?? rec[12],
+      hang: rec[26] ?? rec[16],
+      minTemp: rec[17],
+      avgTemp: rec[18],
     });
   }
 }
@@ -1182,7 +1391,11 @@ function parseComputerFile(name, text) {
 function parseComputerBytes(name, buffer) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const lower = name.toLowerCase();
-  if (lower.endsWith(".fit") || isFit(bytes)) return { dives: parseFit(bytes), format: "Garmin FIT" };
+  if (lower.endsWith(".fit") || isFit(bytes)) {
+    const dives = parseFit(bytes);
+    const suunto = dives.some((d) => d.sourceComputer === "suunto-fit" || /suunto/i.test(d.instruments || ""));
+    return { dives, format: suunto ? "Suunto FIT" : "FIT" };
+  }
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   return parseComputerFile(name, text);
 }
