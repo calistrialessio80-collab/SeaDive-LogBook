@@ -377,6 +377,25 @@ function normalizeImported(d) {
   d.wetsuit = strField(d.wetsuit);
   d.ballast = strField(d.ballast);
   d.regulator = strField(d.regulator);
+  d.ndl = strField(d.ndl);
+  if (d.deco == null && d.noDeco == null) {
+    d.deco = false;
+    d.noDeco = true;
+  } else {
+    d.deco = Boolean(d.deco);
+    d.noDeco = d.noDeco != null ? Boolean(d.noDeco) : !d.deco;
+  }
+  if (d.circuitOpen == null && d.circuitClosed == null) {
+    const r = String(d.regulator || "");
+    const closed = /chiuso|ccr|rebreather/i.test(r);
+    const open = /aperto|open circuit|\boc\b/i.test(r);
+    d.circuitClosed = closed;
+    d.circuitOpen = open || !closed;
+  } else {
+    d.circuitOpen = Boolean(d.circuitOpen);
+    d.circuitClosed = Boolean(d.circuitClosed);
+  }
+  d.regulator = [d.circuitOpen && "Circuito aperto", d.circuitClosed && "Circuito chiuso"].filter(Boolean).join(" + ");
   d.bottomTime = d.bottomTime === "" || d.bottomTime == null ? "" : String(Math.round(Number(d.bottomTime) || 0) || "");
   d.totalTime = d.totalTime === "" || d.totalTime == null ? "" : String(Math.round(Number(d.totalTime) || 0) || "");
   if (!d.totalTime && d.bottomTime) d.totalTime = d.bottomTime;
@@ -1183,6 +1202,15 @@ function fitMinutes(v) {
   return String(Math.round(n));
 }
 
+function fitNdlMin(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n === 0xffffffff) return "";
+  if (n === 0) return "0";
+  if (n > 100000) return String(Math.round(n / 60000));
+  if (n >= 180) return String(Math.round(n / 60));
+  return String(Math.round(n));
+}
+
 function fitSemicircle(v) {
   if (v == null || v === 0x7fffffff) return "";
   const deg = Number(v) * (180 / 2147483648);
@@ -1860,6 +1888,18 @@ function parseFitBlock(bytes, origin) {
     extras.hrMax = hrMax || "";
     extras.ndl = last.fields?.[78] ?? catPick(bag.catalog, ["ndl", "no_deco_time"]);
     extras.tts = last.fields?.[77] ?? catPick(bag.catalog, ["tts", "time_to_surface"]);
+    const ndlRaw = use
+      .map((x) => Number(x.fields?.[78]))
+      .filter((n) => Number.isFinite(n) && n >= 0 && n !== 0xffffffff);
+    extras.ndl = fitNdlMin(extras.ndl);
+    const ceiling = Number(catPick(bag.catalog, ["ceiling", "deco_ceiling", "next_stop_depth"]));
+    const decoTime = Number(catPick(bag.catalog, ["deco_time"]));
+    extras.deco =
+      ndlRaw.some((n) => n === 0) ||
+      extras.ndl === "0" ||
+      (ceiling > 0.3 && ceiling < 120) ||
+      (decoTime > 0 && decoTime < 400) ||
+      Number(hang) > 5;
     extras.helium = bag.he[0] != null ? o2Percent(bag.he[0]) : catPick(bag.catalog, ["helium", "he"]);
     extras.all = catalogDump(bag.catalog, {
       Computer: brand,
@@ -1880,7 +1920,9 @@ function parseFitBlock(bytes, origin) {
       "Risalita max": ascentMax ? ascentMax + " m/min" : "",
       "FC media": hrAvg ? hrAvg + " bpm" : "",
       "FC max": hrMax ? hrMax + " bpm" : "",
-      NDL: extras.ndl,
+      NDL: extras.ndl !== "" && extras.ndl != null ? extras.ndl + " min" : "",
+      Deco: extras.deco ? "Deco" : "No deco",
+      Circuito: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
       TTS: extras.tts,
       Elio: extras.helium,
       Modo: mode,
@@ -1906,6 +1948,12 @@ function parseFitBlock(bytes, origin) {
         ascentRate,
         ascentMax,
         sac: extras.sacFit || "",
+        ndl: extras.ndl || "",
+        deco: Boolean(extras.deco),
+        noDeco: !extras.deco,
+        circuitClosed: /ccr/i.test(mode),
+        circuitOpen: !/ccr/i.test(mode),
+        regulator: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
         mix: o2,
         tank: tankL,
         pressureStart: pStart,

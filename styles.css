@@ -570,8 +570,16 @@ canvas.thermo-detail {
 .form-grid > input[type="hidden"] { display: none !important; }
 .computer-log { margin: 16px 0 8px; }
 .computer-log h3 { margin: 0 0 8px; font-size: 18px; }
-.effort-meter { margin: 10px 0 4px; }
-.effort-meter.compact { margin: 10px 4px 2px; }
+.effort-meter { margin: 10px 0 4px; padding-top: 18px; }
+.effort-meter.compact { margin: 10px 4px 2px; padding-top: 14px; }
+.effort-tick {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
 .effort-track {
   position: relative;
   height: 14px;
@@ -592,6 +600,47 @@ canvas.thermo-detail {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
 }
 .effort-meter.compact .effort-mark { height: 17px; top: -4px; width: 5px; }
+.effort-mark em {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  background: #083848;
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.check-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 12px;
+}
+.check-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(8, 56, 72, 0.14);
+  font-size: 13px;
+  cursor: pointer;
+}
+.check-pick:has(input:checked) {
+  background: #083848;
+  color: #fff;
+  border-color: #083848;
+}
+.check-pick input {
+  accent-color: #2ad4c9;
+  width: 16px;
+  height: 16px;
+}
 .effort-scale {
   display: flex;
   justify-content: space-between;

@@ -66,6 +66,11 @@ const emptyDive = () => ({
   ascentRate: "",
   ascentMax: "",
   sac: "",
+  ndl: "",
+  deco: false,
+  noDeco: true,
+  circuitOpen: true,
+  circuitClosed: false,
   regulator: "",
   instruments: "",
   certOnDive: "",
@@ -572,8 +577,17 @@ function applyDiveMetrics(d) {
   const ascent = computeAscent(d);
   d.ascentRate = ascent.avg || "";
   d.ascentMax = ascent.max || "";
-  const sac = diveSac(d);
-  d.sac = sac > 0 ? String(Math.round(sac * 10) / 10) : d.sac || "";
+  const calc = diveSac(d);
+  const imported = Number(d.computerLog?.sacFit);
+  if (d.sacManual) {
+    /* SAC digitato a mano */
+  } else if (imported > 0.5 && imported < 80) {
+    d.sac = String(Math.round(imported * 10) / 10);
+  } else if (calc > 0) {
+    d.sac = String(Math.round(calc * 10) / 10);
+  } else {
+    d.sac = d.sac || "";
+  }
   const tss = computeTss(d);
   if (d.tssKind !== "manual") {
     d.tss = tss.value;
@@ -583,50 +597,98 @@ function applyDiveMetrics(d) {
   return d;
 }
 
+function effortSac(d) {
+  const imported = Number(d.computerLog?.sacFit);
+  const stored = Number(d.sac);
+  const calc = diveSac(d);
+  if (imported > 0.5 && imported < 80) return imported;
+  if (stored > 0.5 && stored < 80) return stored;
+  return calc;
+}
+
+function sacBarPct(n) {
+  return Math.max(4, Math.min(96, ((n - 8) / 24) * 100));
+}
+
 function effortModel(d) {
-  const sac = diveSac(d);
-  const tss = Number(d.tss);
-  const maxA = Number(d.ascentMax || d.ascentRate);
-  let score = sac;
-  if (sac > 0 && tss >= 60 && tss < 400) score += tss >= 90 ? 5 : 3;
-  if (sac > 0 && maxA > 18) score += 2;
-  const pct = sac > 0 ? Math.max(5, Math.min(96, ((score - 8) / 24) * 100)) : 0;
+  const sac = effortSac(d);
+  const imported = Number(d.computerLog?.sacFit) > 0.5;
+  const pct = sac > 0 ? sacBarPct(sac) : 0;
   let label = "Dati incompleti";
-  let hint = "Servono bombola, pressioni inizio/fine e durata per i L/min in superficie.";
+  let hint = "Il segno sulla barra segue il SAC importato (L/min in superficie).";
   if (sac > 0) {
-    if (score < 14) {
-      label = "Ottima";
-      hint = "Consumo basso: immersione rilassata.";
-    } else if (score < 18) {
-      label = "Buona";
-      hint = "Ritmo regolare, fatica contenuta.";
-    } else if (score < 22) {
-      label = "Nella media";
-      hint = "Sforzo tipico di un’immersione ricreativa.";
-    } else if (score < 28) {
-      label = "Faticosa";
-      hint = "Consumo alto: corrente, profondità o stress.";
-    } else {
-      label = "Troppo faticosa";
-      hint = "Litri/minuto elevati: valuta sosta e pianifica la prossima più tranquilla.";
-    }
+    if (sac < 14) label = "Ottima";
+    else if (sac < 18) label = "Buona";
+    else if (sac < 22) label = "Nella media";
+    else if (sac < 28) label = "Faticosa";
+    else label = "Troppo faticosa";
+    hint = imported
+      ? `Indicatore sul SAC del computer: ${fmtDepth(sac)} L/min.`
+      : `Indicatore sul SAC calcolato: ${fmtDepth(sac)} L/min.`;
     if (tankForSac(d).assumed) hint += " Bombola 12 L presunta.";
-    if (maxA > 18) hint += " Risalita sopra 18 m/min.";
   }
-  return { sac, score, pct, label, hint, assumed: tankForSac(d).assumed };
+  return { sac, pct, label, hint, imported };
 }
 
 function effortHtml(d, compact = false) {
   const e = effortModel(d);
-  const val = e.sac > 0 ? `${fmtDepth(e.sac)} L/min · ${e.label}` : e.label;
+  const val = e.sac > 0 ? `SAC ${fmtDepth(e.sac)} L/min · ${e.label}` : e.label;
+  const ticks = [12, 16, 20, 24, 28]
+    .map((n) => `<i class="effort-tick" style="left:${sacBarPct(n)}%"></i>`)
+    .join("");
   return `<div class="effort-meter${compact ? " compact" : ""}">
     <div class="effort-track" role="img" aria-label="${escapeHtml(val)}">
-      ${e.sac > 0 ? `<span class="effort-mark" style="left:${e.pct}%"></span>` : ""}
+      ${ticks}
+      ${
+        e.sac > 0
+          ? `<span class="effort-mark" style="left:${e.pct}%"><em>${fmtDepth(e.sac)}</em></span>`
+          : ""
+      }
     </div>
-    <div class="effort-scale"><span>ottima</span><span>troppo faticosa</span></div>
+    <div class="effort-scale"><span>12</span><span>16</span><span>20</span><span>24</span><span>28 L/min</span></div>
     <strong>${escapeHtml(val)}</strong>
     ${compact ? "" : `<p class="hint">${escapeHtml(e.hint)}</p>`}
   </div>`;
+}
+
+function ensureCircuit(d) {
+  if (!d) return d;
+  if (d.circuitOpen === true || d.circuitClosed === true || d.circuitOpen === false) {
+    d.regulator = circuitLabel(d);
+    if (d.regulator === "—") d.regulator = "";
+    return d;
+  }
+  const r = String(d.regulator || "");
+  const closed = /chiuso|ccr|rebreather/i.test(r);
+  const open = /aperto|open circuit|\boc\b/i.test(r);
+  d.circuitClosed = closed;
+  d.circuitOpen = open || !closed;
+  d.regulator = circuitLabel(d);
+  if (d.regulator === "—") d.regulator = "";
+  return d;
+}
+
+function circuitLabel(d) {
+  const parts = [];
+  if (d.circuitOpen) parts.push("Circuito aperto");
+  if (d.circuitClosed) parts.push("Circuito chiuso");
+  return parts.join(" + ") || d.regulator || "—";
+}
+
+function decoLabel(d) {
+  if (d.deco && d.noDeco) return d.ndl ? `Deco e no-deco · NDL ${d.ndl} min` : "Deco e no-deco";
+  if (d.deco) return d.ndl ? `Deco · NDL ${d.ndl} min` : "Deco";
+  if (d.noDeco) return d.ndl ? `No deco · NDL ${d.ndl} min` : "No deco";
+  return d.ndl ? `NDL ${d.ndl} min` : "—";
+}
+
+function checkPicks(pairs) {
+  return `<div class="check-picks">${pairs
+    .map(
+      (p) =>
+        `<label class="check-pick"><input type="checkbox" name="${p.name}" ${p.on ? "checked" : ""} /> ${escapeHtml(p.label)}</label>`
+    )
+    .join("")}</div>`;
 }
 
 function ascentClass(v) {
@@ -1883,6 +1945,7 @@ function fitDumpHtml(log) {
 
 function renderDetail() {
   const d = state.dives.find((x) => x.id === view.diveId);
+  if (d) ensureCircuit(d);
   const frag = document.createDocumentFragment();
   if (!d) {
     view = { name: "log" };
@@ -1927,7 +1990,8 @@ function renderDetail() {
       <div><b>Muta / zavorra</b>${escapeHtml(d.wetsuit || "—")} mm · ${escapeHtml(d.ballast || "—")} kg</div>
       <div><b>Bombola / miscela</b>${escapeHtml(d.tank || "—")} L · EAN ${escapeHtml(d.mix || "21")}</div>
       <div><b>Pressione</b>${escapeHtml(d.pressureStart || "—")} → ${escapeHtml(d.pressureEnd || "—")} bar</div>
-      <div><b>Autorespiratore</b>${escapeHtml(d.regulator || "—")}</div>
+      <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
+      <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
       <div><b>Strumentazione</b>${escapeHtml(d.instruments || "—")}</div>
       <div><b>Brevetto in scheda</b>${escapeHtml(d.certOnDive || "—")}</div>
     </div>
@@ -1935,6 +1999,7 @@ function renderDetail() {
     <h3 class="serif">Consumo in superficie</h3>
     ${effortHtml(d)}
     <h3 class="serif">Profilo di immersione</h3>
+    <p class="hint">${escapeHtml(decoLabel(d))}</p>
     <canvas class="profile" data-readonly="1"></canvas>
     <h3 class="serif">Temperatura / profondità</h3>
     <canvas class="profile thermo-detail" data-thermo="1"></canvas>
@@ -2009,6 +2074,7 @@ function startNew() {
 
 function renderEdit() {
   const d = view.draft;
+  ensureCircuit(d);
   applyDiveMetrics(d);
   const frag = document.createDocumentFragment();
   frag.append(topbar(d.number ? `scheda n° ${d.number}` : "nuova scheda"));
@@ -2058,9 +2124,16 @@ function renderEdit() {
       ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
-      ${field("sac", "Consumo superficie (L/min)", d.sac, false, "number")}
-      ${field("regulator", "Tipo autorespiratore", d.regulator)}
+      ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "number")}
+      ${field("ndl", "NDL residuo (min)", d.ndl, false, "number")}
       ${field("instruments", "Strumentazione", d.instruments)}
+    </div>
+    <p class="hint">Autorespiratore — spunta circuito aperto, chiuso o entrambi</p>
+    ${checkPicks([
+      { name: "circuitOpen", label: "Circuito aperto", on: d.circuitOpen },
+      { name: "circuitClosed", label: "Circuito chiuso", on: d.circuitClosed },
+    ])}
+    <div class="form-grid">
       ${field("certOnDive", "Il tuo brevetto (livello e n°)", d.certOnDive, true)}
     </div>
     <div class="cert-picks" data-certpicks></div>
@@ -2089,6 +2162,8 @@ function renderEdit() {
         <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
         <div><b>Risalita</b>${escapeHtml(d.ascentRate ? d.ascentRate + " m/min" : "—")}${d.ascentMax ? " (max " + escapeHtml(d.ascentMax) + ")" : ""}</div>
         <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
+        <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
+        <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
         <div><b>GF</b>${escapeHtml(log.gf || "—")}</div>
         <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
         ${log.hrAvg ? `<div><b>FC media</b>${escapeHtml(String(log.hrAvg))} bpm</div>` : ""}
@@ -2100,6 +2175,11 @@ function renderEdit() {
     <div data-effortwrap>${effortHtml(d)}</div>
     <p class="hint" data-tsshint>${escapeHtml(d.tssLabel || "TSS = intensità² × durata, ponderata sulla soglia zona 4/5. Senza FC si usa TSS(MET) da SAC e profondità. Puoi sovrascrivere a mano (TSS Manuale).")}</p>
     <h3 class="serif">Profilo di immersione</h3>
+    <p class="hint">Deco o no-deco dal computer — puoi correggere con la spunta</p>
+    ${checkPicks([
+      { name: "noDeco", label: "No deco", on: d.noDeco },
+      { name: "hadDeco", label: "Deco", on: d.deco },
+    ])}
     <canvas class="profile" data-profile></canvas>
     <p class="hint" data-profilehint>Curva profondità dal computer, aggiornata in automatico.</p>
     <h3 class="serif">Temperatura / profondità</h3>
@@ -2254,6 +2334,12 @@ function renderEdit() {
       refreshProfile();
     });
   });
+  form.querySelector("[name=sac]")?.addEventListener("input", () => {
+    d.sac = form.querySelector("[name=sac]").value;
+    d.sacManual = true;
+    const wrap = form.querySelector("[data-effortwrap]");
+    if (wrap) wrap.innerHTML = effortHtml(d);
+  });
   form.querySelector("[name=tss]")?.addEventListener("input", () => {
     d.tss = form.querySelector("[name=tss]").value;
     d.tssKind = "manual";
@@ -2313,7 +2399,14 @@ function renderEdit() {
       centerSign: d.centerSign,
       profileFromComputer: d.profileFromComputer,
       computerLog: d.computerLog || null,
+      sacManual: d.sacManual,
     });
+    next.circuitOpen = fd.has("circuitOpen");
+    next.circuitClosed = fd.has("circuitClosed");
+    next.noDeco = fd.has("noDeco");
+    next.deco = fd.has("hadDeco");
+    delete next.hadDeco;
+    ensureCircuit(next);
     next.profilePoints = ensureThermoProfile(next);
     applyDiveMetrics(next);
     if (next.guideSign && !String(next.guideName || "").trim()) {
