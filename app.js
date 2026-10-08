@@ -343,7 +343,27 @@ function daysSinceBackup() {
 }
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("./sw.js?v=10", { updateViaCache: "none" }).catch(() => {});
+  (async () => {
+    try {
+      const wanted = new URL("./sw.js", location.href);
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(
+        regs
+          .filter((reg) => {
+            const href = (reg.active || reg.waiting || reg.installing || {}).scriptURL || "";
+            return href && href.split("?")[0] !== wanted.href;
+          })
+          .map((reg) => reg.unregister())
+      );
+      const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
+      await reg.update();
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (sessionStorage.getItem("seadive-sw-reload")) return;
+        sessionStorage.setItem("seadive-sw-reload", "1");
+        location.reload();
+      });
+    } catch (_) {}
+  })();
 }
 
 let state = load();
