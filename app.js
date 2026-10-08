@@ -343,7 +343,7 @@ function daysSinceBackup() {
 }
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("./sw.js?v=8", { updateViaCache: "none" }).catch(() => {});
+  navigator.serviceWorker.register("./sw.js?v=9", { updateViaCache: "none" }).catch(() => {});
 }
 
 let state = load();
@@ -672,7 +672,7 @@ function topbar(subtitle, mode) {
   if (mode === "home") {
     wrap.innerHTML = `
       <div class="home-brand">
-        <h1>SeaDive</h1>
+        <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
       </div>
       <div class="home-tools">
