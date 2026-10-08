@@ -212,9 +212,9 @@ const FIELD_ALIASES = {
   lat: ["latitude", "lat", "gpslat"],
   lng: ["longitude", "long", "lon", "lng", "gpslon"],
   feeling: ["rating", "stars", "score", "feeling", "voto"],
-  cns: ["cns", "endcns", "o2_toxicity", "cns_load"],
-  otu: ["otu", "otus", "o2_used"],
-  tss: ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress"],
+  cns: ["cns", "endcns", "o2_toxicity", "cns_load", "cnspercent"],
+  otu: ["otu", "otus", "otu_total"],
+  tss: ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress", "training_load"],
   bottomTemp: ["bottomtemp", "tempfondo", "lowesttemperature"],
   ascentRate: ["ascentrate", "avgascentrate", "ascent_rate", "verticalspeed"],
   ascentMax: ["maxascentrate", "maxascent", "ascentmax"],
@@ -1072,7 +1072,28 @@ function fitIsInvalid(base, val) {
   return false;
 }
 
-function fitReadRecord(bytes, i, def) {
+function guessDevBase(size, metaBase) {
+  if (metaBase != null && metaBase !== "") return metaBase;
+  if (size === 4) return 0x88;
+  if (size === 1) return 2;
+  if (size === 2) return 4;
+  if (size === 8) return 0x89;
+  return 0x88;
+}
+
+function fitDevScalar(bytes, o, size, base, le) {
+  const v = fitScalar(bytes, o, size, base, le);
+  if (v != null && v !== "" && !(typeof v === "number" && !Number.isFinite(v))) return v;
+  if (size >= 4) {
+    const f = fitF32(bytes, o, le);
+    if (Number.isFinite(f)) return f;
+  }
+  if (size === 1) return bytes[o];
+  if (size === 2) return fitU16(bytes, o, le);
+  return v;
+}
+
+function fitReadRecord(bytes, i, def, desc) {
   const rec = { dev: {} };
   let o = i;
   def.fields.forEach((f) => {
@@ -1081,7 +1102,9 @@ function fitReadRecord(bytes, i, def) {
     o += f.size;
   });
   (def.devFields || []).forEach((f) => {
-    const val = fitScalar(bytes, o, f.size, f.base != null ? f.base : 0x88, def.le);
+    const meta = desc?.get(`${f.devIdx}:${f.num}`);
+    const base = guessDevBase(f.size, meta?.base != null ? meta.base : f.base);
+    const val = fitDevScalar(bytes, o, f.size, base, def.le);
     rec.dev[`${f.devIdx}:${f.num}`] = val;
     o += f.size;
   });
@@ -1224,14 +1247,72 @@ function fitPct(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n === 0xffffffff) return "";
   if (n <= 1.5) return String(Math.round(n * 1000) / 10);
-  if (n > 500) return "";
-  return String(Math.round(n * 10) / 10);
+  if (n <= 300) return String(Math.round(n * 10) / 10);
+  return "";
 }
 
 function fitScore(v, max) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n > max) return "";
   return String(Math.round(n * 10) / 10);
+}
+
+function fitTssVal(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n === 0xffffffff) return "";
+  if (n > 200 && n <= 2000) return String(Math.round(n) / 10);
+  if (n > 2000) return "";
+  return String(Math.round(n * 10) / 10);
+}
+
+function harvestDev(rec, desc, bag) {
+  if (!bag.devLast) bag.devLast = {};
+  Object.entries(rec.dev || {}).forEach(([k, v]) => {
+    if (v == null || v === "") return;
+    if (typeof v === "number" && !Number.isFinite(v)) return;
+    const name = String(desc.get(k)?.name || "").toLowerCase().replace(/\s+/g, "_");
+    if (name) bag.devLast[name] = v;
+  });
+}
+
+function pickBagDev(bag, matcher) {
+  const last = bag.devLast || {};
+  const keys = Object.keys(last);
+  const hit = keys.find((k) => matcher(k));
+  return hit != null ? last[hit] : "";
+}
+
+function isCnsName(name) {
+  if (/otu|start_cns/.test(name)) return false;
+  return /(^|_)cns(_|$)|o2_toxicity|oxygen_toxicity|cnspercent|cns_pct|cns_load/.test(name);
+}
+
+function isOtuName(name) {
+  return /(^|_)otu(s)?(_|$)|pulmonary|uptd|oxygen_tolerance|otu_total/.test(name);
+}
+
+function isTssName(name) {
+  return /(^|_)(hr)?tss(_|$)|relative_effort|training_stress|training_load|dive_load/.test(name);
+}
+
+function bestNum(vals, mapFn) {
+  let best = "";
+  vals.forEach((v) => {
+    const s = mapFn(v);
+    if (s === "") return;
+    if (best === "" || Number(s) >= Number(best)) best = s;
+  });
+  return best;
+}
+
+function estimateOtu(avgM, maxM, mix, minutes) {
+  const depth = Number(avgM) > 0.5 ? Number(avgM) : Number(maxM) * 0.65;
+  const t = Number(minutes);
+  const fo2 = (Number(mix) || 21) / 100;
+  if (!(depth > 0) || !(t > 0) || !(fo2 > 0)) return "";
+  const po2 = (1 + depth / 10) * fo2;
+  if (po2 <= 0.5) return "0";
+  return round1(t * Math.pow((po2 - 0.5) / 0.5, 0.83));
 }
 
 function pickDev(dev, desc, names) {
@@ -1348,6 +1429,7 @@ function parseFitBlock(bytes, origin) {
     waterType: "",
     gfLow: "",
     gfHigh: "",
+    devLast: {},
   };
 
   while (i < end) {
@@ -1357,7 +1439,7 @@ function parseFitBlock(bytes, origin) {
       const def = defs[local];
       if (!def) continue;
       lastTs += h & 0x1f;
-      const rec = fitReadRecord(bytes, i, def);
+      const rec = fitReadRecord(bytes, i, def, desc);
       rec[253] = lastTs;
       i += def.dataSize;
       collectFit(def.global, rec, bag, desc);
@@ -1399,7 +1481,7 @@ function parseFitBlock(bytes, origin) {
     }
     const def = defs[local];
     if (!def) continue;
-    const rec = fitReadRecord(bytes, i, def);
+    const rec = fitReadRecord(bytes, i, def, desc);
     if (rec[253]) lastTs = rec[253];
     i += def.dataSize;
     collectFit(def.global, rec, bag, desc);
@@ -1416,9 +1498,9 @@ function parseFitBlock(bytes, origin) {
     if (!row.description) row.description = pickDev(row.dev, desc, ["description"]);
     if (!row.elapsed) row.elapsed = pickDev(row.dev, desc, ["total_elapsed_time", "total_timer_time", "duration"]);
     if (!row.timer) row.timer = pickDev(row.dev, desc, ["total_timer_time"]);
-    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["cns", "end_cns", "o2_toxicity", "cns_load"]);
-    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "o2_used"]);
-    if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress_score", "training_stress"]);
+    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["end_cns", "cns", "o2_toxicity", "cns_load", "cns_percent"]);
+    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "otu_total"]);
+    if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["hrtss", "tss", "hr_tss", "relative_effort", "training_stress_score", "training_stress", "training_load"]);
     if (!row.ascentAvg) row.ascentAvg = pickDev(row.dev, desc, ["avg_ascent_rate", "average_ascent_rate", "ascent_rate", "ascent_speed", "vertical_speed"]);
     if (!row.ascentMax) row.ascentMax = pickDev(row.dev, desc, ["max_ascent_rate", "max_ascent", "ascent_max"]);
     if (!row.sacFit) row.sacFit = pickDev(row.dev, desc, ["sac", "rmv", "air_consumption", "surface_air_consumption"]);
@@ -1502,20 +1584,32 @@ function parseFitBlock(bytes, origin) {
     const extras = {
       format: brand,
       avgDepth: avgM || "",
-      cns: fitPct(
-        s.cns != null && s.cns !== ""
-          ? s.cns
-          : lastDevVal(use, desc, ["cns", "end_cns", "o2_toxicity", "cns_load"], 79)
+      cns: bestNum(
+        [
+          pickBagDev(bag, isCnsName),
+          pickDev(s.dev, desc, ["end_cns", "cns", "o2_toxicity", "cns_load"]),
+          lastDevVal(use, desc, ["end_cns", "cns", "o2_toxicity", "cns_load"], 79),
+          s.cns,
+        ],
+        fitPct
       ),
-      otu: fitScore(
-        s.otu != null && s.otu !== "" ? s.otu : lastDevVal(use, desc, ["otu", "otus", "o2_used"]),
-        800
+      otu: bestNum(
+        [
+          pickBagDev(bag, isOtuName),
+          pickDev(s.dev, desc, ["otu", "otus", "otu_total"]),
+          lastDevVal(use, desc, ["otu", "otus", "otu_total"]),
+          Number(s.otu) > 0 && Number(s.otu) <= 500 ? s.otu : "",
+        ],
+        (v) => fitScore(v, 800)
       ),
-      tss: fitScore(
-        s.tss != null && s.tss !== ""
-          ? s.tss
-          : lastDevVal(use, desc, ["tss", "hrtss", "hr_tss", "relative_effort", "training_stress_score", "training_stress"]),
-        500
+      tss: bestNum(
+        [
+          pickBagDev(bag, isTssName),
+          pickDev(s.dev, desc, ["hrtss", "tss", "relative_effort", "training_load"]),
+          lastDevVal(use, desc, ["hrtss", "tss", "relative_effort", "training_load"]),
+          s.tss,
+        ],
+        fitTssVal
       ),
       ndl: last.fields?.[78] ?? "",
       tts: last.fields?.[77] ?? "",
@@ -1527,6 +1621,7 @@ function parseFitBlock(bytes, origin) {
       ascentMax: fitAscentMmin(s.ascentMax) || ascentFromPoints(profilePoints).max,
       sacFit: fitScore(s.sacFit, 80),
     };
+    if (!extras.otu) extras.otu = estimateOtu(avgM, maxM, o2, mins);
     const fromProf = ascentFromPoints(profilePoints);
     const ratePc = extras.ascentAvg;
     const rateProf = fromProf.avg;
@@ -1603,10 +1698,11 @@ function collectFit(global, rec, bag, desc) {
   const ts = rec[253];
   if (global === 206) {
     const key = `${rec[0]}:${rec[1]}`;
-    const name = String(rec[3] || "").replace(/\0/g, "").trim();
+    const name = String(rec[3] || rec[4] || "").replace(/\0/g, "").trim();
     if (name) desc.set(key, { name, base: rec[2], units: rec[8] });
     return;
   }
+  harvestDev(rec, desc, bag);
 
   if (global === 0) {
     bag.mfg = rec[1] || bag.mfg;
@@ -1654,6 +1750,8 @@ function collectFit(global, rec, bag, desc) {
       sport: rec[5],
       elapsed: rec[7] ?? rec[8],
       timer: rec[8],
+      tss: rec[35],
+      te: rec[24],
       maxTemp: rec[58] ?? rec[14],
       avgTemp: rec[57],
       minTemp: rec[80],
@@ -1684,7 +1782,7 @@ function collectFit(global, rec, bag, desc) {
       avgDepth: rec[2],
       maxDepth: rec[3],
       surface: rec[4],
-      cns: rec[6],
+      cns: rec[6] ?? rec[5],
       otu: rec[9],
       bottom: rec[11],
       diveNumber: rec[10],
