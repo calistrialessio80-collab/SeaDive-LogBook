@@ -504,9 +504,57 @@ body.page-home .section-head h3 { color: #1c2430; }
   max-width: 100%;
 }
 .field textarea { min-height: 90px; resize: vertical; }
+.date-box, .time-box {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-sizing: border-box;
+}
+.date-box input[type="date"],
+.time-box input[type="time"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  box-sizing: border-box;
+  color-scheme: light;
+  -webkit-appearance: none;
+  appearance: none;
+  font-size: 16px;
+}
+.date-box input[type="date"]::-webkit-datetime-edit,
+.time-box input[type="time"]::-webkit-datetime-edit {
+  min-width: 0;
+  padding: 0;
+}
+.date-box input[type="date"]::-webkit-calendar-picker-indicator,
+.time-box input[type="time"]::-webkit-calendar-picker-indicator {
+  margin-left: auto;
+  flex-shrink: 0;
+}
 .dive-edit .form-grid { gap: 8px; }
 .dive-edit .field { gap: 3px; font-size: 10px; }
 .dive-edit .field input { padding: 8px 9px; border-radius: 10px; font-size: 15px; }
+.dive-edit .date-box,
+.dive-edit .time-box { border-radius: 10px; }
+.dive-edit .date-box input[type="date"],
+.dive-edit .time-box input[type="time"] {
+  min-height: 42px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  font-size: 15px;
+}
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   border: 1px solid var(--line); background: #fff; color: var(--foam);

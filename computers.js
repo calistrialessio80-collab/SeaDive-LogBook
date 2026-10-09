@@ -363,7 +363,7 @@ function normalizeImported(d) {
   d.sac = strField(d.sac);
   d.gf = strField(d.gf) || strField(d.computerLog?.gf);
   if (d.tank !== "" && d.tank != null) d.tank = volumeLiters(d.tank) || strField(d.tank);
-  if (!d.tank) d.tank = "12";
+  if (!d.tank) d.tank = "15";
   const mix = o2Percent(d.mix);
   d.mix = mix || "21";
   d.pressureStart = pressureBar(d.pressureStart) || "200";
@@ -560,7 +560,7 @@ function parseSuuntoXml(xml) {
           totalTime: totalTime === "" ? "" : String(totalTime),
           surfaceInterval: strField(durationToMin(txt(node, ["surfaceinterval", "si"]))),
           safetyStop: strField(durationToMin(txt(node, ["safetystop", "stoptime"]))),
-          site: txt(node, ["site", "spot", "divename", "divesite"]) || "Suunto",
+          site: txt(node, ["site", "spot", "divename", "divesite"]) || "",
           location: txt(node, ["city", "country", "place", "location"]) || "",
           lat: geo.lat,
           lng: geo.lng,
@@ -772,7 +772,7 @@ function parseEonSteelLog(bytes, instrument) {
     totalTime: mins ? String(mins) : "",
     waterTemp: temp,
     mix,
-    site: instrument || "Suunto EON",
+    site: "",
     instruments: instrument || "Suunto EON Core",
     sourceComputer: "suunto-ble",
     profilePoints,
@@ -1137,7 +1137,7 @@ function parseSuuntoDeviceLog(root) {
   };
   if (!extras.cns) extras.cns = computeCnsFromProfile(pts, mix);
   if (!extras.otu) extras.otu = estimateOtu(meanD, maxM, mix, mins);
-  if (!extras.sacFit) extras.sacFit = computeFitSac("12", pStart, pEnd, mins, meanD, maxM);
+  if (!extras.sacFit) extras.sacFit = computeFitSac("15", pStart, pEnd, mins, meanD, maxM);
   const deco = samples.some((s) => Number(s?.Ceiling) > 0.3) || String(ndl) === "0";
   return [
     baseImported({
@@ -2617,7 +2617,7 @@ function parseFitBlock(bytes, origin) {
       volumeLiters(s.tankVol) ||
       volumeLiters(catPick(bag.catalog, ["tank_volume", "tank_size", "cylinder_size", "cylinder_volume"])) ||
       volumeLiters(pickBagDev(bag, isTankVolName)) ||
-      "12";
+      "15";
     extras.pressureAssumed = !pStart;
     extras.tankAssumed = !tankFromFile;
     extras.sacFit = firstGood(
@@ -2740,7 +2740,7 @@ function parseFitBlock(bytes, origin) {
         pressureStart: pStart,
         pressureEnd: pEnd,
         seaConditions: bag.waterType === 1 ? "Acqua di mare" : bag.waterType === 0 ? "Acqua dolce" : "",
-        site: lat !== "" ? "Punto GPS" : brand,
+        site: "",
         lat,
         lng,
         instruments: brand,

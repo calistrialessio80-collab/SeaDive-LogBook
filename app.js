@@ -55,7 +55,7 @@ const emptyDive = () => ({
   seaConditions: "",
   wetsuit: "",
   ballast: "",
-  tank: "12",
+  tank: "15",
   mix: "21",
   pressureStart: "200",
   pressureEnd: "",
@@ -716,7 +716,7 @@ function tankForSac(d) {
   if (n > 0) return { v: n, assumed: false };
   const p0 = Number(d.pressureStart);
   const p1 = Number(d.pressureEnd);
-  if (p0 > 0 && p1 >= 0 && p0 > p1) return { v: 12, assumed: true };
+  if (p0 > 0 && p1 >= 0 && p0 > p1) return { v: 15, assumed: true };
   return { v: 0, assumed: false };
 }
 
@@ -934,7 +934,7 @@ function effortModel(d) {
     hint = imported
       ? `Indicatore sul SAC del computer: ${fmtDepth(sac)} L/min.`
       : `Indicatore sul SAC calcolato: ${fmtDepth(sac)} L/min.`;
-    if (tankForSac(d).assumed) hint += " Bombola 12 L presunta.";
+    if (tankForSac(d).assumed) hint += " Bombola 15 L presunta.";
     if (d.computerLog?.pressureAssumed && Number(d.pressureStart) === 200) hint += " Inizio 200 bar precompilato.";
   }
   return { sac, pct, label, hint, imported };
@@ -2569,6 +2569,9 @@ function field(name, label, value, full = false, type = "text") {
   if (type === "date") {
     return `<label class="${cls}">${escapeHtml(label)}<span class="date-box"><input name="${name}" type="date" value="${escapeHtml(value)}" /></span></label>`;
   }
+  if (type === "time") {
+    return `<label class="${cls}">${escapeHtml(label)}<span class="time-box"><input name="${name}" type="time" value="${escapeHtml(value)}" /></span></label>`;
+  }
   if (type === "decimal") {
     return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="text" inputmode="decimal" lang="it" enterkeyhint="done" value="${escapeHtml(value)}" /></label>`;
   }
@@ -2720,7 +2723,7 @@ function startNew() {
     const db = `${b.date || ""}T${b.timeIn || "00:00"}`;
     return da.localeCompare(db);
   }).pop();
-  if (prev && Number(prev.tank) > 0) draft.tank = String(prev.tank);
+  draft.tank = "15";
   draft.pressureStart = Number(prev?.pressureStart) >= 150 ? String(prev.pressureStart) : "200";
   view = { name: "edit", diveId: draft.id, draft, query: view.query };
   render();
@@ -2778,7 +2781,7 @@ function renderEdit() {
       ${field("pressureStart", "Press. inizio (bar)", d.pressureStart)}
       ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
     </div>
-    <p class="hint">Inizio precompilato a 200 bar e bombola 12 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
+    <p class="hint">Inizio precompilato a 200 bar e bombola 15 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
     <div class="form-grid">
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
