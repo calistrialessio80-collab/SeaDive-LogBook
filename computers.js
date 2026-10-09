@@ -167,6 +167,13 @@ function strField(v) {
   return String(v).trim();
 }
 
+function minutesImported(v) {
+  if (v === "" || v == null) return "";
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return String(Math.round(n * 10) / 10);
+}
+
 function geoFromXml(root) {
   if (!root) return {};
   const geo = findOne(root, "geography") || findOne(root, "gps") || root;
@@ -402,8 +409,8 @@ function normalizeImported(d) {
     d.circuitClosed = Boolean(d.circuitClosed);
   }
   d.regulator = [d.circuitOpen && "Circuito aperto", d.circuitClosed && "Circuito chiuso"].filter(Boolean).join(" + ");
-  d.bottomTime = d.bottomTime === "" || d.bottomTime == null ? "" : String(Math.round(Number(d.bottomTime) || 0) || "");
-  d.totalTime = d.totalTime === "" || d.totalTime == null ? "" : String(Math.round(Number(d.totalTime) || 0) || "");
+  d.bottomTime = minutesImported(d.bottomTime);
+  d.totalTime = minutesImported(d.totalTime);
   if (!d.totalTime && d.bottomTime) d.totalTime = d.bottomTime;
   if (!d.bottomTime && d.totalTime) d.bottomTime = d.totalTime;
   if (!d.timeOut && d.timeIn && d.totalTime) d.timeOut = addMinutes(d.timeIn, d.totalTime);
@@ -1403,6 +1410,14 @@ function fitDepthM(v) {
   return 0;
 }
 
+/** Profondità nativa FIT (campi 92/98/140/141): metri con scale 1000, cioè millimetri. */
+function fitNativeDepthM(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n >= 0xffffffff || n === 0xffff) return 0;
+  if (n >= 100) return Math.round((n / 1000) * 10) / 10;
+  return Math.round(n * 10) / 10;
+}
+
 function normFitName(raw) {
   return String(raw || "")
     .replace(/\0/g, "")
@@ -1440,8 +1455,8 @@ function pickSampleDepth(dev, desc) {
 function recordDepthM(rec, desc) {
   const fromDev = pickSampleDepth(rec.dev, desc);
   if (fromDev > 0 && fromDev < 130) return fromDev;
-  const n98 = fitDepthM(rec[98]);
-  if (n98 > 0 && n98 < 130) return n98;
+  const native = fitNativeDepthM(rec[98] ?? rec[92]);
+  if (native > 0 && native < 130) return native;
   const pa = rec[97] > 110000 ? rec[97] : rec[91];
   if (pa > 110000 && pa < 2500000) return Math.max(0, Math.round(((pa - 101325) / 10000) * 10) / 10);
   return 0;
@@ -1744,9 +1759,11 @@ function fitScore(v, max) {
 function fitTssVal(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n === 0xffffffff) return "";
-  if (n > 200 && n <= 2000) return String(Math.round(n) / 10);
-  if (n > 2000) return "";
-  return String(Math.round(n * 10) / 10);
+  let tss = n;
+  if (n > 200 && n <= 2000) tss = n / 10;
+  else if (n > 2000) return "";
+  if (tss < 0 || tss > 400) return "";
+  return String(Math.round(tss));
 }
 
 function harvestDev(rec, desc, bag) {
@@ -2020,6 +2037,7 @@ function pickDev(dev, desc, names) {
     if (hit) return hit.v;
   }
   for (const w of want) {
+    if (w.length <= 3) continue;
     const hit = rows.find((r) => r.name.includes(w) && r.v != null && r.v !== "");
     if (hit) return hit.v;
   }
@@ -2069,8 +2087,7 @@ function readSampleNdl(x, desc) {
   if (named !== "" && named != null) return named;
   const mapped = pickDevByNative(x.dev, desc, 102);
   if (mapped !== "" && mapped != null) return mapped;
-  const n102 = x.fields?.[102];
-  if (n102 != null && n102 !== "" && Number(n102) !== 0) return n102;
+  if (x.fields && Object.prototype.hasOwnProperty.call(x.fields, 102)) return x.fields[102];
   return "";
 }
 
@@ -2079,21 +2096,23 @@ function pickNdlMinutes(samples, bag, session, desc) {
   const list = src.length >= 3 ? src : samples || [];
   let lastPos = "";
   let lastAny = "";
+  let saw = false;
   list.forEach((x) => {
-    const m = fitNdlMin(readSampleNdl(x, desc));
+    const raw = readSampleNdl(x, desc);
+    if (raw === "" || raw == null) return;
+    saw = true;
+    const m = fitNdlMin(raw);
     if (m === "") return;
     lastAny = m;
     if (m !== "0") lastPos = m;
   });
   if (lastPos) return lastPos;
   const fromSess = fitNdlMin(session?.ndl || pickDev(session?.dev, desc, NDL_NAMES));
-  if (fromSess !== "") return fromSess;
-  const fromCat = fitNdlMin(
-    catPick(bag.catalog, NDL_NAMES, "max") || pickBagDev(bag, isNdlName)
-  );
+  if (fromSess !== "" && fromSess !== "0") return fromSess;
+  const fromCat = fitNdlMin(catPick(bag.catalog, NDL_NAMES, "max") || pickBagDev(bag, isNdlName));
   if (fromCat !== "" && fromCat !== "0") return fromCat;
-  if (lastAny === "0") return "0";
-  return fromCat;
+  if (saw && lastAny === "0") return "0";
+  return "";
 }
 
 function fitPressureBar(v) {
@@ -2351,8 +2370,14 @@ function parseFitBlock(bytes, origin) {
     const span = (curve[curve.length - 1]?.ts || 0) - t0;
     const timeDiv = span > 18 * 3600 ? 60000 : 60;
     const spanMin = curve.length >= 2 && span > 2 ? span / timeDiv : 0;
+    const wetClock = use.filter((x) => Number(x.depth) >= 0.7);
+    let wetMin = 0;
+    if (wetClock.length >= 2) {
+      const sec = Number(wetClock[wetClock.length - 1].ts) - Number(wetClock[0].ts);
+      if (sec > 20 && sec < 24 * 3600) wetMin = Math.round((sec / 60) * 10) / 10;
+    }
     const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => fitDurationMin(v) || 0);
-    const totalMin = Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
+    const totalMin = wetMin >= 1 ? wetMin : Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
     const mins = totalMin >= 1 ? String(totalMin) : "";
     let lastC = null;
     const rawProfile = curve.some((x) => x.depth > 0)
@@ -2376,12 +2401,13 @@ function parseFitBlock(bytes, origin) {
     const gps = use.find((x) => x.lat) || bag.gps[0] || {};
     const sampleMax = depths.length ? Math.max(...depths) : 0;
     const maxM =
+      fitNativeDepthM(s.maxDepth) ||
       fitDepthM(s.maxDepth) ||
       fitDepthM(catPick(bag.catalog, ["max_depth"], "max")) ||
       sampleMax;
     const profilePoints = alignDepthToMax(rawProfile, maxM);
     const avgM =
-      saneDiveDepth(s.avgDepth, maxM) ||
+      saneDiveDepth(fitNativeDepthM(s.avgDepth) || s.avgDepth, maxM) ||
       saneDiveDepth(catPick(bag.catalog, ["avg_depth", "average_depth", "depth_avg"], "max"), maxM) ||
       meanProfileDepthM(profilePoints) ||
       meanSampleDepth(wet.length ? wet : use) ||
@@ -2527,12 +2553,13 @@ function parseFitBlock(bytes, origin) {
     extras.tts =
       last.fields?.[101] ?? last.fields?.[77] ?? catPick(bag.catalog, ["tts", "time_to_surface"]);
     const ndlRaw = use
-      .map((x) => Number(x.fields?.[102]))
+      .filter((x) => x.fields && Object.prototype.hasOwnProperty.call(x.fields, 102))
+      .map((x) => Number(x.fields[102]))
       .filter((n) => Number.isFinite(n) && n >= 0 && n !== 0xffffffff && n !== 0xffff);
     const ceiling = Number(catPick(bag.catalog, ["ceiling", "deco_ceiling", "next_stop_depth"]));
     const decoTime = Number(catPick(bag.catalog, ["deco_time"]));
     extras.deco =
-      ndlRaw.some((n) => n === 0) ||
+      (ndlRaw.length > 0 && ndlRaw.some((n) => n === 0)) ||
       extras.ndl === "0" ||
       (ceiling > 0.3 && ceiling < 120) ||
       (decoTime > 0 && decoTime < 400) ||

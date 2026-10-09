@@ -8,6 +8,8 @@ const WORLD_SITES = [
   { id: "coticcio", name: "Cala Coticcio", country: "Italia", lat: 41.215, lng: 9.361 },
   { id: "ustica", name: "Punta del Diavolo", country: "Italia", lat: 38.703, lng: 13.193 },
   { id: "elba", name: "Relitto Anna Bianca", country: "Italia", lat: 42.76, lng: 10.3 },
+  { id: "calafuria", name: "Calafuria", country: "Italia", lat: 43.4686, lng: 10.3403 },
+  { id: "livorno", name: "Livorno", country: "Italia", lat: 43.548, lng: 10.316 },
   { id: "giglio", name: "Isola del Giglio", country: "Italia", lat: 42.35, lng: 10.9 },
   { id: "palinuro", name: "Capo Palinuro", country: "Italia", lat: 40.028, lng: 15.275 },
   { id: "capri", name: "Punta Campanella", country: "Italia", lat: 40.58, lng: 14.325 },
