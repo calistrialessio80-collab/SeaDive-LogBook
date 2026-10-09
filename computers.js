@@ -363,7 +363,9 @@ function normalizeImported(d) {
   d.pressureStart = pressureBar(d.pressureStart);
   d.pressureEnd = pressureBar(d.pressureEnd);
   d.maxDepth = d.maxDepth === "" || d.maxDepth == null ? "" : String(Math.round(Number(d.maxDepth) * 10) / 10);
-  d.avgDepth = d.avgDepth === "" || d.avgDepth == null ? "" : String(Math.round(Number(d.avgDepth) * 10) / 10);
+  const avgN = Number(d.avgDepth);
+  d.avgDepth = Number.isFinite(avgN) && avgN > 0.05 ? String(Math.round(avgN * 10) / 10) : "";
+  if (Number.isNaN(Number(d.maxDepth))) d.maxDepth = "";
   d.plannedDepth = strField(d.plannedDepth) || d.maxDepth;
   d.visibility = strField(d.visibility);
   d.current = strField(d.current);
@@ -1214,7 +1216,7 @@ function computeCnsFromProfile(pts, mix) {
     const lim = limMin(po2);
     if (lim > 0) cns += (dt / lim) * 100;
   }
-  if (!(cns > 0.05)) return "";
+  if (!(cns > 0.05)) return "0";
   return String(Math.round(cns * 10) / 10);
 }
 
@@ -1396,6 +1398,7 @@ function fitDepthM(v) {
 function fitFieldName(desc, k) {
   return String(desc.get(k)?.name || "")
     .toLowerCase()
+    .replace(/%/g, "pct")
     .replace(/[\s.]+/g, "_");
 }
 
@@ -1431,6 +1434,35 @@ function meanSampleDepth(samples) {
   const ds = (samples || []).map((s) => Number(s.depth)).filter((d) => d > 0.4 && d < 130);
   if (ds.length < 3) return 0;
   return Math.round((ds.reduce((a, b) => a + b, 0) / ds.length) * 10) / 10;
+}
+
+function meanProfileDepthM(pts) {
+  const s = [...(pts || [])]
+    .filter((p) => Number.isFinite(Number(p.t)) && Number(p.d) > 0.15 && Number(p.d) < 130)
+    .sort((a, b) => Number(a.t) - Number(b.t));
+  if (s.length < 3) return 0;
+  let acc = 0;
+  let dt = 0;
+  for (let i = 1; i < s.length; i++) {
+    const w = Number(s[i].t) - Number(s[i - 1].t);
+    if (!(w > 0)) continue;
+    const d = (Number(s[i].d) + Number(s[i - 1].d)) / 2;
+    if (d < 0.3) continue;
+    acc += d * w;
+    dt += w;
+  }
+  if (dt >= 0.15) return Math.round((acc / dt) * 10) / 10;
+  const ds = s.map((p) => Number(p.d)).filter((d) => d > 0.3);
+  if (ds.length < 3) return 0;
+  return Math.round((ds.reduce((a, b) => a + b, 0) / ds.length) * 10) / 10;
+}
+
+function saneDiveDepth(v, maxM) {
+  const m = fitDepthM(v);
+  if (!(m > 0.3) || m >= 130) return 0;
+  if (maxM > 1 && m > maxM * 1.25 + 0.8) return 0;
+  if (maxM > 3 && m < maxM * 0.12) return 0;
+  return m;
 }
 
 function trimDiveSamples(samples) {
@@ -1549,7 +1581,7 @@ function lastDevVal(list, desc, names, field) {
 
 function fitPct(v) {
   const n = Number(v);
-  if (!Number.isFinite(n) || n < 0 || n === 0xffffffff || n === 0xff) return "";
+  if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff || n === 0xff || n === 0xffff) return "";
   if (n <= 1.5) return String(Math.round(n * 1000) / 10);
   if (n <= 130) return String(Math.round(n * 10) / 10);
   if (n <= 13000) return String(Math.round(n) / 100);
@@ -1723,13 +1755,15 @@ function pickBagDev(bag, matcher) {
 }
 
 function isCnsName(name) {
-  if (/otu|start_cns/.test(name) && !/o2_toxicity/.test(name)) return false;
-  return /(^|[._-])cns([._-]|$)|o2_toxicity|oxygen_toxicity|cnspercent|cns_pct|cns_load/.test(name);
+  const n = String(name || "").toLowerCase().replace(/%/g, "pct");
+  if (/otu|start_cns/.test(n) && !/o2_toxicity/.test(n)) return false;
+  return /(^|[._-])cns([._-]|pct|$)|o2_toxicity|oxygen_toxicity|cnspercent|cns_pct|cns_load|cns_percent/.test(n);
 }
 
 function isOtuName(name) {
-  if (/o2_toxicity/.test(name)) return false;
-  return /(^|[._-])otu(s)?([._-]|$)|pulmonary|uptd|oxygen_tolerance|otu_total/.test(name);
+  const n = String(name || "").toLowerCase().replace(/%/g, "pct");
+  if (/o2_toxicity/.test(n)) return false;
+  return /(^|[._-])otu(s)?([._-]|pct|$)|pulmonary|uptd|oxygen_tolerance|otu_total/.test(n);
 }
 
 function isTssName(name) {
@@ -2026,8 +2060,8 @@ function parseFitBlock(bytes, origin) {
     if (!row.description) row.description = pickDev(row.dev, desc, ["description"]);
     if (!row.elapsed) row.elapsed = pickDev(row.dev, desc, ["total_elapsed_time", "total_timer_time", "duration"]);
     if (!row.timer) row.timer = pickDev(row.dev, desc, ["total_timer_time"]);
-    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["end_cns", "cns", "o2_toxicity", "cns_load", "cns_percent"]);
-    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "otu_total"]);
+    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["end_cns", "cns", "o2_toxicity", "cns_load", "cns_percent", "cns_pct", "cnspercent"]);
+    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "otu_total", "otu_pct"]);
     if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["hrtss", "tss", "hr_tss", "relative_effort", "training_stress_score", "training_stress", "training_load"]);
     if (!row.ascentAvg) row.ascentAvg = pickDev(row.dev, desc, ["avg_ascent_rate", "average_ascent_rate", "ascent_rate", "ascent_speed", "vertical_speed"]);
     if (!row.ascentMax) row.ascentMax = pickDev(row.dev, desc, ["max_ascent_rate", "max_ascent", "ascent_max"]);
@@ -2097,9 +2131,11 @@ function parseFitBlock(bytes, origin) {
     const maxM = fitDepthM(s.maxDepth) || fitDepthM(catPick(bag.catalog, ["max_depth"])) || (depths.length ? Math.max(...depths) : 0);
     const profilePoints = alignDepthToMax(rawProfile, maxM);
     const avgM =
-      fitDepthM(s.avgDepth) ||
-      fitDepthM(catPick(bag.catalog, ["avg_depth", "average_depth"])) ||
-      meanSampleDepth(wet.length ? wet : use);
+      meanProfileDepthM(profilePoints) ||
+      meanSampleDepth(wet.length ? wet : use) ||
+      saneDiveDepth(s.avgDepth, maxM) ||
+      saneDiveDepth(catPick(bag.catalog, ["avg_depth", "average_depth", "depth_avg"]), maxM) ||
+      (maxM > 1 ? Math.round(maxM * 0.65 * 10) / 10 : 0);
     const bottomMin = Number(fitMinutes(s.bottom));
     const fondo = bottomMin >= 1 && bottomMin <= totalMin + 2 ? String(Math.round(bottomMin)) : mins;
     const when = fitClock(s.start || s.ts || use[0]?.ts, bag.tz);
@@ -2136,8 +2172,8 @@ function parseFitBlock(bytes, origin) {
           catPick(bag.catalog, ["cns"], "last"),
           suunto ? catPick(bag.catalog, ["o2_toxicity"], "last") : "",
           pickBagDev(bag, isCnsName),
-          pickDev(s.dev, desc, ["end_cns", "cns", "cns_load", "o2_toxicity"]),
-          lastDevVal(use, desc, ["end_cns", "cns", "cns_load", "o2_toxicity"], 103),
+          pickDev(s.dev, desc, ["end_cns", "cns", "cns_load", "o2_toxicity", "cns_percent", "cns_pct"]),
+          lastDevVal(use, desc, ["end_cns", "cns", "cns_load", "o2_toxicity", "cns_percent", "cns_pct"], 103),
           s.cns,
           suunto ? s.otu : "",
           last?.fields?.[103],
@@ -2148,12 +2184,15 @@ function parseFitBlock(bytes, origin) {
         [
           catPick(bag.catalog, ["otu", "otus", "otu_total"], "last"),
           pickBagDev(bag, isOtuName),
-          pickDev(s.dev, desc, ["otu", "otus", "otu_total"]),
+          pickDev(s.dev, desc, ["otu", "otus", "otu_total", "otu_pct"]),
           lastDevVal(use, desc, ["otu", "otus", "otu_total"]),
           suunto ? "" : s.otu,
           suunto ? "" : catPick(bag.catalog, ["o2_toxicity"], "last"),
         ],
-        (v) => fitScore(v, 800)
+        (v) => {
+          const s = fitScore(v, 800);
+          return Number(s) > 0 ? s : "";
+        }
       ),
       tss: bestNum(
         [
@@ -2219,8 +2258,8 @@ function parseFitBlock(bytes, origin) {
       const barMin = ps > 80 && ps <= 8000 ? ps / 100 : ps;
       if (Number(tankL) > 0 && barMin > 0.05 && barMin < 8) extras.sacFit = round1(Number(tankL) * barMin);
     }
-    if (!extras.otu) extras.otu = estimateOtu(avgM, maxM, o2, mins);
-    if (!extras.cns) extras.cns = computeCnsFromProfile(profilePoints, o2);
+    if (!extras.otu || !(Number(extras.otu) > 0)) extras.otu = estimateOtu(avgM, maxM, o2 || "21", mins);
+    if (!extras.cns || !(Number(extras.cns) > 0)) extras.cns = computeCnsFromProfile(profilePoints, o2 || "21");
     const fromProf = ascentFromPoints(profilePoints);
     const ratePc = extras.ascentAvg;
     const rateProf = fromProf.avg;
@@ -2416,8 +2455,8 @@ function collectFit(global, rec, bag, desc) {
       maxTemp: rec[58] ?? rec[14],
       avgTemp: rec[57],
       minTemp: rec[80],
-      maxDepth: rec[93],
-      avgDepth: rec[92],
+      maxDepth: rec[125] ?? rec[93],
+      avgDepth: rec[124] ?? rec[92],
       lat: fitSemicircle(rec[3]),
       lng: fitSemicircle(rec[4]),
       calories: rec[11],
@@ -2524,4 +2563,7 @@ window.SeaDiveComputers = {
   ascentFromPoints,
   fitAscentMmin,
   mergeSuuntoPair,
+  computeCnsFromProfile,
+  estimateOtu,
+  meanProfileDepthM,
 };

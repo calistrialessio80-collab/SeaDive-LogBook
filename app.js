@@ -810,8 +810,42 @@ function trainingLoad() {
   };
 }
 
+function fillAvgCnsOtu(d) {
+  if (!d) return d;
+  const api = window.SeaDiveComputers;
+  const mix = d.mix || "21";
+  const pts = d.profilePoints || [];
+  const mins = d.totalTime || d.bottomTime;
+  if (!(Number(d.avgDepth) > 0.3)) {
+    const fromProf = api?.meanProfileDepthM ? api.meanProfileDepthM(pts) : 0;
+    const fromLog = Number(d.computerLog?.avgDepth);
+    const fromMean = meanDepthM(d);
+    const v = fromProf > 0.3 ? fromProf : fromLog > 0.3 ? fromLog : fromMean;
+    if (v > 0.3) d.avgDepth = String(Math.round(v * 10) / 10);
+  }
+  if (d.cns === "" || d.cns == null || !(Number(d.cns) > 0)) {
+    const log = Number(d.computerLog?.cns);
+    const computed = api?.computeCnsFromProfile ? api.computeCnsFromProfile(pts, mix) : "";
+    if (log > 0) d.cns = String(Math.round(log * 10) / 10);
+    else if (computed !== "" && computed != null) d.cns = String(computed);
+  }
+  if (d.otu === "" || d.otu == null || !(Number(d.otu) > 0)) {
+    const log = Number(d.computerLog?.otu);
+    const computed = api?.estimateOtu ? api.estimateOtu(d.avgDepth, d.maxDepth, mix, mins) : "";
+    if (log > 0) d.otu = String(Math.round(log * 10) / 10);
+    else if (computed !== "" && computed != null) d.otu = String(computed);
+  }
+  if (d.computerLog) {
+    if (!(Number(d.computerLog.avgDepth) > 0.3) && Number(d.avgDepth) > 0.3) d.computerLog.avgDepth = d.avgDepth;
+    if (!(Number(d.computerLog.cns) > 0) && d.cns !== "" && d.cns != null) d.computerLog.cns = d.cns;
+    if (!(Number(d.computerLog.otu) > 0) && d.otu !== "" && d.otu != null) d.computerLog.otu = d.otu;
+  }
+  return d;
+}
+
 function applyDiveMetrics(d) {
   if (!d) return d;
+  fillAvgCnsOtu(d);
   const ascent = computeAscent(d);
   d.ascentRate = ascent.avg || "";
   d.ascentMax = ascent.max || "";
@@ -2535,8 +2569,8 @@ function renderDetail() {
       <div><b>Visibilità</b>${escapeHtml(d.visibility || "—")} m</div>
       <div><b>Temp. acqua / aria</b>${escapeHtml(d.waterTemp || "—")}° / ${escapeHtml(d.airTemp || "—")}°</div>
       <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp || "—")} °C</div>
-      <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
-      <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
+      <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : d.computerLog?.cns != null && d.computerLog.cns !== "" ? String(d.computerLog.cns) + "%" : "—")}</div>
+      <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : d.computerLog?.otu != null && d.computerLog.otu !== "" ? String(d.computerLog.otu) : "—")}</div>
       <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}${d.tssLabel ? " · " + escapeHtml(d.tssLabel) : ""}</div>
       <div><b>Corrente</b>${escapeHtml(d.current || "—")}</div>
       <div><b>Mare</b>${escapeHtml(d.seaConditions || "—")}</div>
@@ -2666,8 +2700,8 @@ function renderEdit() {
       ${field("waterTemp", "Temp. acqua (°C)", d.waterTemp, false, "number")}
       ${field("bottomTemp", "Temp. fondo (°C)", d.bottomTemp, false, "number")}
       ${field("airTemp", "Temp. aria (°C)", d.airTemp, false, "number")}
-      ${field("cns", "CNS %", d.cns, false, "number")}
-      ${field("otu", "OTU", d.otu, false, "number")}
+      ${field("cns", "CNS %", d.cns !== "" && d.cns != null ? d.cns : d.computerLog?.cns || "", false, "number")}
+      ${field("otu", "OTU", d.otu !== "" && d.otu != null ? d.otu : d.computerLog?.otu || "", false, "number")}
       ${field("tss", "TSS stress allenamento", d.tss, false, "number")}
       ${field("current", "Corrente", d.current)}
       ${field("seaConditions", "Mare / condizioni", d.seaConditions)}
@@ -2711,8 +2745,8 @@ function renderEdit() {
         <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "—"))}</div>
         <div><b>Prof. media</b>${escapeHtml(d.avgDepth || log.avgDepth ? (d.avgDepth || log.avgDepth) + " m" : "—")}</div>
         <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
-        <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : "—")}</div>
-        <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : "—")}</div>
+        <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : log.cns !== "" && log.cns != null ? String(log.cns) + "%" : "—")}</div>
+        <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : log.otu !== "" && log.otu != null ? String(log.otu) : "—")}</div>
         <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}${d.tssLabel ? " · " + escapeHtml(d.tssLabel) : ""}</div>
         <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp ? d.bottomTemp + " °C" : "—")}</div>
         <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
