@@ -2305,8 +2305,8 @@ function parseFitBlock(bytes, origin) {
     if (!row.description) row.description = pickDev(row.dev, desc, ["description"]);
     if (!row.elapsed) row.elapsed = pickDev(row.dev, desc, ["total_elapsed_time", "total_timer_time", "duration"]);
     if (!row.timer) row.timer = pickDev(row.dev, desc, ["total_timer_time"]);
-    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["end_cns", "cns", "o2_toxicity", "cns_load", "cns_percent", "cns_pct", "cnspercent"]);
-    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "otu_total", "otu_pct"]);
+    if (row.cns == null || row.cns === "") row.cns = pickDev(row.dev, desc, ["end_cns", "cns", "cns_load", "cns_percent", "cns_pct", "cnspercent"]);
+    if (row.otu == null || row.otu === "") row.otu = pickDev(row.dev, desc, ["otu", "otus", "otu_total", "otu_pct", "o2_toxicity"]);
     if (row.tss == null || row.tss === "") row.tss = pickDev(row.dev, desc, ["hrtss", "tss", "hr_tss", "relative_effort", "training_stress_score", "training_stress", "training_load"]);
     if (!row.ascentAvg) row.ascentAvg = pickDev(row.dev, desc, ["avg_ascent_rate", "average_ascent_rate", "ascent_rate", "ascent_speed", "vertical_speed"]);
     if (!row.ascentMax) row.ascentMax = pickDev(row.dev, desc, ["max_ascent_rate", "max_ascent", "ascent_max"]);
@@ -2414,9 +2414,9 @@ function parseFitBlock(bytes, origin) {
     const fromCat = catalogSurfaceRaw(bag.catalog);
     const fromSess = pickDev(s.dev, desc, ["surface_time", "surface_interval", "surfaceinterval", "surfacetime", "surf_time"]);
     const surfaceMin =
+      fitSurfaceMin(s.surface, "s") ||
       fitSurfaceMin(fromSess, "s") ||
       fitSurfaceMin(s.surfaceTime, "s") ||
-      fitSurfaceMin(s.surface, "s") ||
       fitSurfaceMin(fromCat.v, fromCat.units || "s") ||
       fitSurfaceMin(pickBagDev(bag, isSiName), "s") ||
       surfaceBetween(sources[idx - 1], s) ||
@@ -2426,20 +2426,19 @@ function parseFitBlock(bytes, origin) {
       avgDepth: avgM || "",
       cns: firstGood(
         [
+          s.cns,
           pickDev(s.dev, desc, ["end_cns", "cns", "cns_load", "cns_percent", "cns_pct"]),
           catPick(bag.catalog, ["end_cns", "cns_load", "cns"], "max"),
           lastDevVal(use, desc, ["end_cns", "cns", "cns_load", "cns_percent", "cns_pct"], 103),
-          s.cns,
-          last?.fields?.[103],
         ],
         fitPct
       ),
       otu: firstGood(
         [
+          s.otu,
           pickDev(s.dev, desc, ["otu", "otus", "otu_total", "o2_toxicity"]),
-          catPick(bag.catalog, ["otu", "otus", "otu_total"], "max"),
-          lastDevVal(use, desc, ["otu", "otus", "otu_total"]),
-          suunto ? catPick(bag.catalog, ["o2_toxicity"], "max") : s.otu,
+          catPick(bag.catalog, ["otu", "otus", "otu_total", "o2_toxicity"], "max"),
+          lastDevVal(use, desc, ["otu", "otus", "otu_total", "o2_toxicity"]),
         ],
         (v) => {
           const out = fitScore(v, 800);
@@ -2706,13 +2705,18 @@ function collectFit(global, rec, bag, desc) {
       hrMin: rec[18],
       maxTemp: rec[58] ?? rec[14],
       avgTemp: rec[57],
-      minTemp: rec[80],
-      maxDepth: rec[125] ?? rec[93],
-      avgDepth: rec[124] ?? rec[92],
+      minTemp: rec[150] ?? rec[80],
+      maxDepth: rec[141],
+      avgDepth: rec[140],
+      surface: rec[142],
+      cns: rec[144] ?? rec[143],
+      otu: rec[155],
+      diveNumber: rec[156],
       lat: fitSemicircle(rec[3]),
       lng: fitSemicircle(rec[4]),
       calories: rec[11],
       work: rec[48],
+      fields: rec,
       dev: rec.dev,
     };
     if (global === 18) bag.sessions.push(row);
