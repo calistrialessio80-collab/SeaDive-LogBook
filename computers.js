@@ -1527,6 +1527,16 @@ function fitMinutes(v) {
   return String(Math.round(n));
 }
 
+function fitDurationMin(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff) return 0;
+  let sec = n;
+  if (n > 100000) sec = n / 1000;
+  else if (n > 180) sec = n;
+  else return Math.round(n * 10) / 10;
+  return Math.round((sec / 60) * 10) / 10;
+}
+
 function fitNdlMin(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || n === 0xffffffff || n === 0xffff || n === 0xff) return "";
@@ -2031,24 +2041,23 @@ function parseGfPair(v) {
   return m ? formatGf(m[1], m[2]) : "";
 }
 
-function catalogGf(cat, bag, session) {
+function catalogGf(cat, bag, session, desc) {
   const loNames = ["gf_low", "gflow", "low_gf", "gradient_factor_low", "gf_lo", "lowgf", "gradientfactorlow"];
   const hiNames = ["gf_high", "gfhigh", "high_gf", "gradient_factor_high", "gf_hi", "highgf", "gradientfactorhigh"];
   const paired =
-    parseGfPair(catPick(cat, ["gf", "gradient_factor", "gradientfactors", "gf_pair"], "first")) ||
-    parseGfPair(session?.gf) ||
-    parseGfPair(bag?.gf);
+    parseGfPair(pickDev(session?.dev, desc, ["gf", "gradient_factor", "gradientfactors", "gf_pair"])) ||
+    parseGfPair(session?.gf);
   if (paired) return paired;
   const lo =
-    catPick(cat, loNames, "first") ||
-    pickBagDev(bag, isGfLowName) ||
+    pickDev(session?.dev, desc, loNames) ||
     session?.gfLow ||
-    bag?.gfLow;
+    bag?.gfLow ||
+    catPick(cat, loNames, "first");
   const hi =
-    catPick(cat, hiNames, "first") ||
-    pickBagDev(bag, isGfHighName) ||
+    pickDev(session?.dev, desc, hiNames) ||
     session?.gfHigh ||
-    bag?.gfHigh;
+    bag?.gfHigh ||
+    catPick(cat, hiNames, "first");
   return formatGf(lo, hi);
 }
 
@@ -2084,28 +2093,7 @@ function pickNdlMinutes(samples, bag, session, desc) {
   );
   if (fromCat !== "" && fromCat !== "0") return fromCat;
   if (lastAny === "0") return "0";
-
-  const keys = new Set();
-  (samples || []).forEach((s) => Object.keys(s.dev || {}).forEach((k) => keys.add(k)));
-  let best = "";
-  keys.forEach((k) => {
-    const name = fitFieldName(desc, k);
-    if (/depth|temp|cns|otu|press|sac|gf|ascent|ceiling/.test(name)) return;
-    if (!(isNdlName(name) || Number(desc.get(k)?.nativeField) === 102)) {
-      const vals = list.map((s) => Number(s.dev?.[k])).filter((n) => Number.isFinite(n) && n >= 0 && n <= 99);
-      if (vals.length < Math.max(6, list.length * 0.4)) return;
-      const max = Math.max(...vals);
-      const min = Math.min(...vals);
-      if (!(max >= 8 && max <= 99 && max - min >= 4)) return;
-    }
-    const last = [...list].reverse().find((s) => {
-      const n = Number(s.dev?.[k]);
-      return Number.isFinite(n) && n >= 0 && n !== 0xffffffff;
-    });
-    const m = fitNdlMin(last?.dev?.[k]);
-    if (m !== "") best = m;
-  });
-  return best || fromCat;
+  return fromCat;
 }
 
 function fitPressureBar(v) {
@@ -2363,8 +2351,8 @@ function parseFitBlock(bytes, origin) {
     const span = (curve[curve.length - 1]?.ts || 0) - t0;
     const timeDiv = span > 18 * 3600 ? 60000 : 60;
     const spanMin = curve.length >= 2 && span > 2 ? span / timeDiv : 0;
-    const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => Number(fitMinutes(v)) || 0);
-    const totalMin = Math.round(Math.max(spanMin, ...durCandidates));
+    const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => fitDurationMin(v) || 0);
+    const totalMin = Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
     const mins = totalMin >= 1 ? String(totalMin) : "";
     let lastC = null;
     const rawProfile = curve.some((x) => x.depth > 0)
@@ -2386,16 +2374,20 @@ function parseFitBlock(bytes, origin) {
     const depths = use.map((x) => x.depth).filter((n) => n > 0);
     const temps = use.map((x) => x.temp).filter((n) => n != null && n > -5 && n < 45);
     const gps = use.find((x) => x.lat) || bag.gps[0] || {};
-    const maxM = fitDepthM(s.maxDepth) || fitDepthM(catPick(bag.catalog, ["max_depth"])) || (depths.length ? Math.max(...depths) : 0);
+    const sampleMax = depths.length ? Math.max(...depths) : 0;
+    const maxM =
+      fitDepthM(s.maxDepth) ||
+      fitDepthM(catPick(bag.catalog, ["max_depth"], "max")) ||
+      sampleMax;
     const profilePoints = alignDepthToMax(rawProfile, maxM);
     const avgM =
+      saneDiveDepth(s.avgDepth, maxM) ||
+      saneDiveDepth(catPick(bag.catalog, ["avg_depth", "average_depth", "depth_avg"], "max"), maxM) ||
       meanProfileDepthM(profilePoints) ||
       meanSampleDepth(wet.length ? wet : use) ||
-      saneDiveDepth(s.avgDepth, maxM) ||
-      saneDiveDepth(catPick(bag.catalog, ["avg_depth", "average_depth", "depth_avg"]), maxM) ||
       (maxM > 1 ? Math.round(maxM * 0.65 * 10) / 10 : 0);
-    const bottomMin = Number(fitMinutes(s.bottom));
-    const fondo = bottomMin >= 1 && bottomMin <= totalMin + 2 ? String(Math.round(bottomMin)) : mins;
+    const bottomMin = fitDurationMin(s.bottom);
+    const fondo = bottomMin >= 1 && bottomMin <= totalMin + 2 ? String(bottomMin) : mins;
     const when = fitClock(s.start || s.ts || use[0]?.ts, bag.tz);
     const modeNum = Number(s.diveMode);
     const mode =
@@ -2434,30 +2426,24 @@ function parseFitBlock(bytes, origin) {
       avgDepth: avgM || "",
       cns: firstGood(
         [
-          catPick(bag.catalog, ["end_cns", "cns_load"], "last"),
-          catPick(bag.catalog, ["cns"], "last"),
-          suunto ? catPick(bag.catalog, ["o2_toxicity"], "last") : "",
-          pickBagDev(bag, isCnsName),
-          pickDev(s.dev, desc, ["end_cns", "cns", "cns_load", "o2_toxicity", "cns_percent", "cns_pct"]),
-          lastDevVal(use, desc, ["end_cns", "cns", "cns_load", "o2_toxicity", "cns_percent", "cns_pct"], 103),
+          pickDev(s.dev, desc, ["end_cns", "cns", "cns_load", "cns_percent", "cns_pct"]),
+          catPick(bag.catalog, ["end_cns", "cns_load", "cns"], "max"),
+          lastDevVal(use, desc, ["end_cns", "cns", "cns_load", "cns_percent", "cns_pct"], 103),
           s.cns,
-          suunto ? s.otu : "",
           last?.fields?.[103],
         ],
         fitPct
       ),
       otu: firstGood(
         [
-          catPick(bag.catalog, ["otu", "otus", "otu_total"], "last"),
-          pickBagDev(bag, isOtuName),
-          pickDev(s.dev, desc, ["otu", "otus", "otu_total", "otu_pct"]),
+          pickDev(s.dev, desc, ["otu", "otus", "otu_total", "o2_toxicity"]),
+          catPick(bag.catalog, ["otu", "otus", "otu_total"], "max"),
           lastDevVal(use, desc, ["otu", "otus", "otu_total"]),
-          suunto ? "" : s.otu,
-          suunto ? "" : catPick(bag.catalog, ["o2_toxicity"], "last"),
+          suunto ? catPick(bag.catalog, ["o2_toxicity"], "max") : s.otu,
         ],
         (v) => {
-          const s = fitScore(v, 800);
-          return Number(s) > 0 ? s : "";
+          const out = fitScore(v, 800);
+          return Number(out) > 0 ? out : "";
         }
       ),
       tss: bestNum(
@@ -2473,7 +2459,7 @@ function parseFitBlock(bytes, origin) {
       ndl: "",
       tts: last.fields?.[101] ?? last.fields?.[77] ?? "",
       mode,
-      gf: catalogGf(bag.catalog, bag, s),
+      gf: catalogGf(bag.catalog, bag, s, desc),
       surfaceInterval: surfaceMin,
       diveNumber: s.diveNumber || pickDev(s.dev, desc, ["dive_number_in_series", "dive_number"]) || "",
       samples: use.filter((x) => x.depth > 0).length,
@@ -2522,8 +2508,8 @@ function parseFitBlock(bytes, origin) {
       const barMin = ps > 80 && ps <= 8000 ? ps / 100 : ps;
       if (Number(tankL) > 0 && barMin > 0.05 && barMin < 8) extras.sacFit = round1(Number(tankL) * barMin);
     }
-    if (!extras.otu || !(Number(extras.otu) > 0)) extras.otu = estimateOtu(avgM, maxM, o2 || "21", mins);
-    if (!extras.cns || !(Number(extras.cns) > 0)) extras.cns = computeCnsFromProfile(profilePoints, o2 || "21");
+    if (!extras.otu || !(Number(extras.otu) > 0)) extras.otu = "";
+    if (!extras.cns || !(Number(extras.cns) > 0)) extras.cns = extras.cns || "";
     const fromProf = ascentFromPoints(profilePoints);
     const ratePc = extras.ascentAvg;
     const rateProf = fromProf.avg;
@@ -2670,31 +2656,14 @@ function collectFit(global, rec, bag, desc) {
   if (global === 34 && rec[5] && ts && rec[5] !== 0xffffffff) bag.tz = Number(rec[5]) - Number(ts);
   if (global === 258) {
     if (rec[4] != null && Number(rec[4]) <= 3) bag.waterType = rec[4];
-    else if (rec[5] != null && Number(rec[5]) <= 3) bag.waterType = rec[5];
     const lo =
       fitGfPct(rec[2]) ||
-      fitGfPct(rec[0]) ||
       fitGfPct(pickDev(rec.dev, desc, ["gf_low", "gflow", "low_gf", "gradient_factor_low", "gradientfactorlow"]));
     const hi =
       fitGfPct(rec[3]) ||
-      fitGfPct(rec[1]) ||
       fitGfPct(pickDev(rec.dev, desc, ["gf_high", "gfhigh", "high_gf", "gradient_factor_high", "gradientfactorhigh"]));
     if (lo) bag.gfLow = lo;
     if (hi) bag.gfHigh = hi;
-    if (!bag.gfLow || !bag.gfHigh) {
-      const nums = Object.keys(rec)
-        .filter((k) => k !== "dev" && k !== "253")
-        .map((k) => Number(rec[k]))
-        .filter((n) => Number.isFinite(n) && n >= 5 && n <= 100);
-      if (nums.length >= 2) {
-        const a = Math.min(nums[0], nums[1]);
-        const b = Math.max(nums[0], nums[1]);
-        if (a <= 50 && b >= 40) {
-          if (!bag.gfLow) bag.gfLow = String(Math.round(a));
-          if (!bag.gfHigh) bag.gfHigh = String(Math.round(b));
-        }
-      }
-    }
   }
 
   const isRecord = global === 20;

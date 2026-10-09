@@ -825,15 +825,11 @@ function fillAvgCnsOtu(d) {
   }
   if (d.cns === "" || d.cns == null || !(Number(d.cns) > 0)) {
     const log = Number(d.computerLog?.cns);
-    const computed = api?.computeCnsFromProfile ? api.computeCnsFromProfile(pts, mix) : "";
     if (log > 0) d.cns = String(Math.round(log * 10) / 10);
-    else if (computed !== "" && computed != null) d.cns = String(computed);
   }
   if (d.otu === "" || d.otu == null || !(Number(d.otu) > 0)) {
     const log = Number(d.computerLog?.otu);
-    const computed = api?.estimateOtu ? api.estimateOtu(d.avgDepth, d.maxDepth, mix, mins) : "";
     if (log > 0) d.otu = String(Math.round(log * 10) / 10);
-    else if (computed !== "" && computed != null) d.otu = String(computed);
   }
   if (!String(d.surfaceInterval || "").trim()) {
     const si = d.computerLog?.surfaceInterval;
@@ -883,11 +879,17 @@ function applyDiveMetrics(d) {
     d.sac = d.sac || "";
   }
   const tss = computeTss(d);
-  if (d.tssKind !== "manual") {
+  if (d.tssKind === "manual") {
+    d.tssLabel = tss.label;
+  } else if (d.imported && !(Number(d.computerLog?.tss) > 0) && !(Number(d.computerLog?.hrAvg) > 40)) {
+    d.tss = d.tss || "";
+    d.tssKind = d.tss ? "file" : "";
+    d.tssLabel = d.tss ? "TSS dal computer" : "";
+  } else {
     d.tss = tss.value;
     d.tssKind = tss.kind;
+    d.tssLabel = tss.label;
   }
-  d.tssLabel = tss.label;
   return d;
 }
 
