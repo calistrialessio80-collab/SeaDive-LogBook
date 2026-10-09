@@ -725,19 +725,21 @@ body.page-map #app {
 .map-head .map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 13px; }
 .map-legend .flag-ico {
   display: inline-block;
-  width: 11px;
-  height: 15px;
+  width: 16px;
+  height: 11px;
   margin-right: 6px;
   vertical-align: middle;
-  clip-path: polygon(12% 0, 88% 0, 88% 58%, 50% 100%, 12% 58%);
-  box-shadow: inset 0 0 0 1px rgba(28, 36, 48, 0.25);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(28, 36, 48, 0.18);
 }
 .map-legend .flag-ico.done {
-  background: linear-gradient(135deg, #e23b2e 0 42%, #fff 42% 58%, #e23b2e 58%);
+  background: linear-gradient(135deg, #d61f26 0 40%, #fff 40% 58%, #d61f26 58%);
 }
 .map-legend .flag-ico.todo {
-  background: linear-gradient(135deg, #8d939c 0 42%, #fff 42% 58%, #8d939c 58%);
+  background: linear-gradient(135deg, #8e949c 0 40%, #fff 40% 58%, #8e949c 58%);
 }
+.world-map .gm-style { border-radius: 14px; overflow: hidden; }
+.gmap-pop { color: #1c2430; font: 13px/1.35 Outfit, system-ui, sans-serif; }
 .dive-flag-pin {
   background: none !important;
   border: 0 !important;

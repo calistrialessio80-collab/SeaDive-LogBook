@@ -1106,6 +1106,7 @@ async function finishAuth(user) {
 
 function render() {
   destroyDiveSiteMap();
+  destroyGoogleWorldMap();
   if (leafletMap) {
     leafletMap.remove();
     leafletMap = null;
@@ -1269,9 +1270,48 @@ function renderNav() {
 }
 
 let leafletMap = null;
+let googleWorldMap = null;
+let googleWorldMarkers = [];
 let diveSiteMap = null;
 let diveSiteMarker = null;
 let mapPick = null;
+
+function destroyGoogleWorldMap() {
+  googleWorldMarkers.forEach((m) => {
+    try {
+      m.setMap(null);
+    } catch {
+      /* già tolta */
+    }
+  });
+  googleWorldMarkers = [];
+  googleWorldMap = null;
+}
+
+function loadGoogleMaps() {
+  if (window.google?.maps?.Map) return Promise.resolve();
+  const key = (window.SEADIVE_GOOGLE_MAPS_KEY || "").trim();
+  if (!key || key.startsWith("client_secret_")) {
+    return Promise.reject(
+      new Error("Manca la chiave Google Maps. In Google Cloud (stesso progetto del login) attiva Maps JavaScript API e incolla la chiave in config.js: SEADIVE_GOOGLE_MAPS_KEY.")
+    );
+  }
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector("script[data-gmaps]");
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Google Maps non si è caricato.")));
+      return;
+    }
+    window.__seadiveGmapsReady = () => resolve();
+    const s = document.createElement("script");
+    s.dataset.gmaps = "1";
+    s.async = true;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&callback=__seadiveGmapsReady`;
+    s.onerror = () => reject(new Error("Google Maps non si è caricato. Controlla la chiave e che Maps JavaScript API sia attiva."));
+    document.head.appendChild(s);
+  });
+}
 
 function loadLeaflet() {
   if (window.L) return Promise.resolve();
@@ -1465,19 +1505,12 @@ function haversineMapKm(a, b) {
 }
 
 function diveFlagSvg(kind) {
-  const fill = kind === "done" ? "#e23b2e" : "#8d939c";
-  const stripe = "#fff";
-  return `<svg viewBox="0 0 28 36" width="22" height="30" aria-hidden="true"><path d="M4 1.5h20v18L14 34.5 4 19.5z" fill="${fill}" stroke="#1c2430" stroke-width="1.2"/><path d="M6.2 17.8 L21.8 3.8" stroke="${stripe}" stroke-width="5.2" stroke-linecap="square"/><circle cx="14" cy="34" r="1.4" fill="#1c2430"/></svg>`;
+  const fill = kind === "done" ? "#d61f26" : "#8e949c";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 46" width="36" height="46"><rect x="16.8" y="24" width="2.6" height="20" rx="1.1" fill="#4a5562"/><rect x="1.6" y="1.6" width="32.8" height="22.4" rx="3.2" fill="${fill}" stroke="#ffffff" stroke-width="1.7"/><path d="M3 22.2 L33 3.4" stroke="#ffffff" stroke-width="5.4"/></svg>`;
 }
 
-function diveFlagIcon(kind) {
-  return L.divIcon({
-    className: "dive-flag-pin",
-    html: `<span class="dive-flag ${kind === "done" ? "done" : "todo"}">${diveFlagSvg(kind)}</span>`,
-    iconSize: [22, 30],
-    iconAnchor: [11, 30],
-    popupAnchor: [0, -28],
-  });
+function diveFlagIconUrl(kind) {
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(diveFlagSvg(kind));
 }
 
 function renderWorldMap() {
@@ -1490,7 +1523,7 @@ function renderWorldMap() {
   hero.className = "card hero map-head";
   hero.innerHTML = `
     <h2>Mappa satellitare</h2>
-    <p class="tagline">Bandierine da immersione su siti e diving di tutto il mondo. <strong>Colorate</strong> = già fatti. <strong>Grigio e bianco</strong> = da scoprire. Avvicina la mappa per caricare i diving vicini. Tocca per aggiungere un sito.</p>
+    <p class="tagline">Google Maps, bandierine rettangolari da diving. <strong>Rosso e bianco</strong> = già fatti. <strong>Grigio e bianco</strong> = siti e diving da scoprire. Avvicina per caricare tutti i diving della zona. Tocca per aggiungere un sito.</p>
     <div class="map-legend">
       <span><i class="flag-ico done"></i> Fatti ${doneN}</span>
       <span><i class="flag-ico todo"></i> Catalogo e diving</span>
@@ -1538,67 +1571,107 @@ function renderWorldMap() {
   stack.append(form);
   frag.append(stack);
   queueMicrotask(() => {
-    loadLeaflet()
+    loadGoogleMaps()
       .then(() => {
         const el = mapWrap.querySelector("[data-worldmap]");
-        if (!el || !window.L) return;
-        if (leafletMap) {
-          leafletMap.remove();
-          leafletMap = null;
-        }
-        leafletMap = L.map(el, { worldCopyJump: true, scrollWheelZoom: true }).setView([20, 15], 2);
-        addSatTiles(leafletMap);
-        const catalogLayer = L.layerGroup().addTo(leafletMap);
-        const osmLayer = L.layerGroup().addTo(leafletMap);
-        const putFlag = (layer, site) => {
-          const m = L.marker([site.lat, site.lng], {
-            icon: diveFlagIcon(site.done ? "done" : "todo"),
-            keyboard: false,
-          }).addTo(layer);
-          const kind = site.kind === "diving" ? "Diving" : site.fromDive ? "Dal diario" : "Sito";
-          m.bindPopup(
-            `<strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(site.country || "")}<br>${kind} · ${
-              site.done ? "già immerso" : "da fare"
-            }${site.dives ? " · " + site.dives + " nel diario" : ""}`
-          );
+        if (!el || !window.google?.maps) return;
+        destroyGoogleWorldMap();
+        const gmap = new google.maps.Map(el, {
+          center: { lat: 20, lng: 12 },
+          zoom: 2,
+          mapTypeId: "hybrid",
+          gestureHandling: "greedy",
+          streetViewControl: false,
+          mapTypeControl: false,
+          fullscreenControl: false,
+          zoomControl: true,
+        });
+        googleWorldMap = gmap;
+        const info = new google.maps.InfoWindow();
+        const osmMarkers = [];
+        const iconDone = {
+          url: diveFlagIconUrl("done"),
+          scaledSize: new google.maps.Size(32, 42),
+          anchor: new google.maps.Point(17, 42),
         };
-        pack.sites.forEach((site) => putFlag(catalogLayer, site));
+        const iconTodo = {
+          url: diveFlagIconUrl("todo"),
+          scaledSize: new google.maps.Size(32, 42),
+          anchor: new google.maps.Point(17, 42),
+        };
+        const putFlag = (site, bucket) => {
+          const m = new google.maps.Marker({
+            position: { lat: Number(site.lat), lng: Number(site.lng) },
+            map: gmap,
+            icon: site.done ? iconDone : iconTodo,
+            title: site.name,
+            optimized: true,
+          });
+          m.addListener("click", () => {
+            const kind = site.kind === "diving" ? "Diving" : site.fromDive ? "Dal diario" : "Sito";
+            info.setContent(
+              `<div class="gmap-pop"><strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(
+                site.country || ""
+              )}<br>${kind} · ${site.done ? "già immerso" : "da fare"}${
+                site.dives ? " · " + site.dives + " nel diario" : ""
+              }</div>`
+            );
+            info.open({ map: gmap, anchor: m });
+          });
+          bucket.push(m);
+          googleWorldMarkers.push(m);
+        };
+        pack.sites.forEach((site) => putFlag(site, googleWorldMarkers));
         let osmTimer = 0;
         const loadOsm = () => {
-          if (!api.fetchOsmDivePlaces || leafletMap.getZoom() < 6) {
-            osmLayer.clearLayers();
+          if (!api.fetchOsmDivePlaces || gmap.getZoom() < 5) {
+            osmMarkers.forEach((m) => m.setMap(null));
+            osmMarkers.length = 0;
             return;
           }
           clearTimeout(osmTimer);
           osmTimer = setTimeout(() => {
+            const b = gmap.getBounds();
+            if (!b) return;
+            const ne = b.getNorthEast();
+            const sw = b.getSouthWest();
             api
-              .fetchOsmDivePlaces(leafletMap.getBounds())
+              .fetchOsmDivePlaces({
+                getSouth: () => sw.lat(),
+                getWest: () => sw.lng(),
+                getNorth: () => ne.lat(),
+                getEast: () => ne.lng(),
+              })
               .then((rows) => {
-                osmLayer.clearLayers();
+                osmMarkers.forEach((m) => m.setMap(null));
+                osmMarkers.length = 0;
                 const marked = api.markDoneAgainstDives?.(rows, state.dives) || rows;
                 marked.forEach((site) => {
                   const near = pack.sites.some((s) => haversineMapKm(s, site) < 1.2);
                   if (near) return;
-                  putFlag(osmLayer, site);
+                  putFlag(site, osmMarkers);
                 });
               })
               .catch(() => {});
-          }, 450);
+          }, 400);
         };
-        leafletMap.on("moveend", loadOsm);
-        leafletMap.on("click", (ev) => {
-          mapPick = { lat: ev.latlng.lat.toFixed(5), lng: ev.latlng.lng.toFixed(5), name: "", country: "" };
+        gmap.addListener("idle", loadOsm);
+        gmap.addListener("click", (ev) => {
+          if (!ev.latLng) return;
+          mapPick = {
+            lat: ev.latLng.lat().toFixed(5),
+            lng: ev.latLng.lng().toFixed(5),
+            name: "",
+            country: "",
+          };
           form.querySelector("[name=lat]").value = mapPick.lat;
           form.querySelector("[name=lng]").value = mapPick.lng;
           form.querySelector("[data-maphint]").textContent = "Punto preso. Dai un nome e salva.";
         });
-        setTimeout(() => {
-          leafletMap.invalidateSize();
-          loadOsm();
-        }, 120);
       })
       .catch((err) => {
-        mapWrap.querySelector("[data-worldmap]").textContent = err.message || "Mappa non disponibile.";
+        const box = mapWrap.querySelector("[data-worldmap]");
+        if (box) box.innerHTML = `<p class="hint" style="padding:14px">${escapeHtml(err.message || "Mappa non disponibile.")}</p>`;
       });
   });
   return frag;
