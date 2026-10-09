@@ -2187,10 +2187,8 @@ function renderProfile() {
       <h3>Brevetto principale</h3>
       <div class="form-grid">
         ${field("certLevel", "Didattica / livello", p.certLevel, true)}
-        <div class="form-pair">
-          ${field("certNumber", "N° brevetto", p.certNumber)}
-          ${field("certDate", "Conseguito il", p.certDate, false, "date")}
-        </div>
+        ${field("certNumber", "N° brevetto", p.certNumber, true)}
+        ${field("certDate", "Conseguito il", p.certDate, true, "date")}
       </div>
     </section>
     <section class="profile-block">
@@ -2198,9 +2196,7 @@ function renderProfile() {
       <div class="form-grid">
         ${field("medicalExpiry", "Certificato medico scadenza", p.medicalExpiry, true, "date")}
         ${field("insurance", "Assicurazione", p.insurance, true)}
-        ${field("hrThreshold", "Soglia FC zona 4/5 (bpm) per TSS(hr)", p.hrThreshold, false, "number")}
       </div>
-      <p class="hint">La soglia anaerobica (limite zona 4/5) pesa l’intensità del TSS. Se manca, si usa il 90% della FC max dell’immersione oppure 165 bpm. Senza FC il TSS è metabolico (MET) da SAC, profondità e durata.</p>
     </section>
     <section class="profile-block">
       <h3>Emergenza</h3>
@@ -2227,6 +2223,12 @@ function renderProfile() {
         </div>
       </div>
     </section>
+    <section class="profile-block certs-box">
+      <h3>Altri brevetti</h3>
+      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
+      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
+      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
+    </section>
     <section class="profile-block vault-box">
       <h3>Copia di sicurezza</h3>
       <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
@@ -2236,12 +2238,6 @@ function renderProfile() {
         <button class="btn ghost" type="button" data-sharebak>Copia sul telefono</button>
         <button class="btn ghost" type="button" data-dlbak>Scarica JSON</button>
       </div>
-    </section>
-    <section class="profile-block certs-box">
-      <h3>Altri brevetti</h3>
-      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
-      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
-      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
     </section>
     <div class="actions profile-actions">
       <button class="btn primary" type="submit">Salva profilo</button>
