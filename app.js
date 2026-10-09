@@ -1471,13 +1471,15 @@ function renderWorldMap() {
       <span><i class="dot add"></i> Tuoi aggiunti</span>
     </div>
   `;
-  frag.append(hero);
+  const stack = document.createElement("div");
+  stack.className = "map-stack";
+  stack.append(hero);
   const mapWrap = document.createElement("section");
   mapWrap.className = "card map-shell";
   mapWrap.innerHTML = `<div class="world-map" data-worldmap></div>`;
-  frag.append(mapWrap);
+  stack.append(mapWrap);
   const form = document.createElement("form");
-  form.className = "card section add-site";
+  form.className = "card add-site";
   form.innerHTML = `
     <h3 class="serif" style="margin:0 0 8px">Aggiungi un sito</h3>
     <p class="hint">Tocca la mappa oppure scrivi le coordinate. Resta sul tuo telefono, visibile a te.</p>
@@ -1508,7 +1510,8 @@ function renderWorldMap() {
       form.querySelector("[data-maphint]").textContent = err.message;
     }
   };
-  frag.append(form);
+  stack.append(form);
+  frag.append(stack);
   queueMicrotask(() => {
     loadLeaflet()
       .then(() => {
@@ -1541,7 +1544,7 @@ function renderWorldMap() {
           form.querySelector("[name=lng]").value = mapPick.lng;
           form.querySelector("[data-maphint]").textContent = "Punto preso. Dai un nome e salva.";
         });
-        setTimeout(() => leafletMap.invalidateSize(), 80);
+        setTimeout(() => leafletMap.invalidateSize(), 120);
       })
       .catch((err) => {
         mapWrap.querySelector("[data-worldmap]").textContent = err.message || "Mappa non disponibile.";

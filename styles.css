@@ -554,7 +554,25 @@ canvas.thermo-detail {
 .brand-card.featured { border-color: rgba(42, 212, 201, 0.45); background: rgba(42, 212, 201, 0.1); }
 .brand-card h4 { margin: 0 0 4px; }
 body.page-map #app {
-  padding-bottom: calc(var(--nav-h) + 28px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding-bottom: calc(var(--nav-h) + 16px + var(--safe-bottom));
+}
+.map-stack {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 16px;
+}
+.map-stack .map-head,
+.map-stack .add-site {
+  flex: 0 0 auto;
+}
+.map-stack .map-shell {
+  flex: 0 0 auto;
+  width: 100%;
 }
 .world-map {
   width: 100%;
@@ -687,7 +705,6 @@ body.page-map #app {
   position: relative;
   z-index: 0;
   isolation: isolate;
-  margin-bottom: 12px;
 }
 .world-map .leaflet-container {
   width: 100%;
