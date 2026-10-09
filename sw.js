@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v27";
+const CACHE = "seadive-logbook-v28";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,7 @@ const ASSETS = [
   "./computers.js",
   "./ble-eon.js",
   "./sites.js",
+  "./biology.js",
   "./drive.js",
   "./config.js",
   "./manifest.json",

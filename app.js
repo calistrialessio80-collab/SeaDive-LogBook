@@ -899,6 +899,7 @@ function render() {
   if (view.name === "profile") app.append(renderProfile());
   if (view.name === "computer") app.append(renderComputer());
   if (view.name === "map") app.append(renderWorldMap());
+  if (view.name === "bio") app.append(renderBiology());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   app.append(renderNav());
@@ -1011,6 +1012,7 @@ function renderNav() {
     ["home", "⌂", "SeaDive"],
     ["log", "☰", "Diario"],
     ["map", "⌖", "Mappa"],
+    ["bio", "🌿", "Bio"],
     ["computer", "⌚", "Computer"],
     ["profile", "✦", "Profilo"],
   ];
@@ -1020,7 +1022,15 @@ function renderNav() {
     b.className = on ? "active" : "";
     b.innerHTML = `<span>${icon}</span><small>${label}</small>`;
     b.onclick = () => {
-      view = { name: id, diveId: null, draft: null, query: view.query || "" };
+      view = {
+        name: id,
+        diveId: null,
+        draft: null,
+        query: view.query || "",
+        bioQuery: view.bioQuery || "",
+        bioFilter: view.bioFilter || "all",
+        computerHint: view.computerHint || "",
+      };
       render();
     };
     nav.append(b);
@@ -1564,6 +1574,102 @@ function drawTempDepth(canvas, points) {
   ctx.arc(x(pointTemp(deep)), y(deep.d), 4.5 * dpr, 0, Math.PI * 2);
   ctx.fillStyle = "#3dcf6a";
   ctx.fill();
+}
+
+function openLifePage(q) {
+  const url = window.SeaDiveBiology?.lifeWeb?.(q || "biologia marina mediterraneo");
+  if (url) window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function renderBiology() {
+  const api = window.SeaDiveBiology;
+  const frag = document.createDocumentFragment();
+  frag.append(topbar("Biologia marina"));
+  const sec = document.createElement("section");
+  sec.className = "card bio-page";
+  const filters = [
+    ["all", "Tutti"],
+    ["med", "Mediterraneo"],
+    ["flora", "Flora"],
+    ["fauna", "Fauna"],
+    ["alien", "Invasive"],
+    ["world", "Mondo"],
+  ];
+  sec.innerHTML = `
+    <h2 class="serif" style="margin:0 0 6px">Flora e fauna</h2>
+    <p class="hint">Elenco soprattutto mediterraneo, con specie di tutti i mari. Il tasto Cerca apre la descrizione su Wikipedia.</p>
+    <div class="bio-search">
+      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nome italiano o scientifico" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
+      <button class="btn primary" type="button" data-bioweb>Cerca in rete</button>
+    </div>
+    <div class="chips" data-biofilters></div>
+    <p class="meta" data-biocount></p>
+    <div class="bio-list" data-biolist></div>
+  `;
+  const input = sec.querySelector("[data-bioq]");
+  const list = sec.querySelector("[data-biolist]");
+  const count = sec.querySelector("[data-biocount]");
+  const chips = sec.querySelector("[data-biofilters]");
+  const paint = () => {
+    const q = input.value;
+    view.bioQuery = q;
+    const rows = api.filterMarineLife(q, view.bioFilter || "all");
+    count.textContent = `${rows.length} specie`;
+    list.innerHTML = rows
+      .map(
+        (x) => `<article class="bio-card">
+        <div>
+          <p class="meta">${escapeHtml(x.kind === "flora" ? "Flora" : "Fauna")} · ${escapeHtml(x.where)} · ${escapeHtml(x.group)}</p>
+          <h3>${escapeHtml(x.it)}</h3>
+          <p class="bio-la">${escapeHtml(x.la)}</p>
+        </div>
+        <div class="bio-actions">
+          <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Descrizione</a>
+          <a class="btn ghost" href="${api.lifeWorms(x.la)}" target="_blank" rel="noopener noreferrer">WoRMS</a>
+        </div>
+      </article>`
+      )
+      .join("");
+    if (!rows.length) {
+      list.innerHTML = `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
+    }
+  };
+  filters.forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${(view.bioFilter || "all") === id ? " on" : ""}`;
+    b.textContent = label;
+    b.onclick = () => {
+      view.bioFilter = id;
+      chips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
+      b.classList.add("on");
+      paint();
+    };
+    chips.append(b);
+  });
+  input.oninput = paint;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sec.querySelector("[data-bioweb]").click();
+    }
+  };
+  sec.querySelector("[data-bioweb]").onclick = () => {
+    const q = (input.value || "").trim();
+    const rows = api.filterMarineLife(q, view.bioFilter || "all");
+    const hit = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q)) || rows[0];
+    openLifePage(hit ? `${hit.it} ${hit.la}` : q);
+  };
+  paint();
+  frag.append(sec);
+  return frag;
+}
+
+function lifeNorm(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function renderLog() {

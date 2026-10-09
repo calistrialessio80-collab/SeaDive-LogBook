@@ -426,7 +426,7 @@ body.page-home .section-head h3 { color: #1c2430; }
 .nav {
   position: fixed; left: 50%; bottom: calc(8px + var(--safe-bottom)); transform: translateX(-50%);
   width: min(400px, calc(100% - 16px));
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   background: #fff;
   border: 0;
   border-radius: 28px;
@@ -757,6 +757,19 @@ canvas.thermo-detail {
   .form-pair { grid-template-columns: 1fr; }
   .profile-actions { grid-template-columns: 1fr; }
 }
+.bio-search { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 8px; }
+.bio-search .search { margin-bottom: 0; }
+.bio-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.bio-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(8, 56, 72, 0.12);
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+.bio-card h3 { margin: 2px 0 0; font-size: 18px; }
+.bio-la { margin: 2px 0 0; font-style: italic; font-size: 13px; opacity: 0.72; }
+.bio-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.bio-actions .btn { padding: 8px 12px; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; }
 @media (max-width: 360px) {
   .kpi { padding: 10px 10px 8px; min-height: 76px; }
   .kpi strong { font-size: 20px; }
