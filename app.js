@@ -71,6 +71,9 @@ const emptyDive = () => ({
   ndl: "",
   deco: false,
   noDeco: true,
+  decoCeiling: "",
+  decoStop: "",
+  decoTime: "",
   circuitOpen: true,
   circuitClosed: false,
   regulator: "",
@@ -859,6 +862,9 @@ function fillAvgCnsOtu(d) {
     const gf = d.computerLog?.gf;
     if (gf) d.gf = String(gf);
   }
+  if (!String(d.decoCeiling || "").trim() && d.computerLog?.decoCeiling) d.decoCeiling = String(d.computerLog.decoCeiling);
+  if (!String(d.decoStop || "").trim() && d.computerLog?.decoStop) d.decoStop = String(d.computerLog.decoStop);
+  if (!String(d.decoTime || "").trim() && d.computerLog?.decoTime) d.decoTime = String(d.computerLog.decoTime);
   if (d.computerLog) {
     if (!(Number(d.computerLog.avgDepth) > 0.3) && Number(d.avgDepth) > 0.3) d.computerLog.avgDepth = d.avgDepth;
     if (!(Number(d.computerLog.cns) > 0) && d.cns !== "" && d.cns != null) d.computerLog.cns = d.cns;
@@ -873,6 +879,7 @@ function fillAvgCnsOtu(d) {
 function applyDiveMetrics(d) {
   if (!d) return d;
   fillAvgCnsOtu(d);
+  ensureDecoProfile(d);
   const ascent = computeAscent(d);
   d.ascentRate = ascent.avg || "";
   d.ascentMax = ascent.max || "";
@@ -985,10 +992,34 @@ function circuitLabel(d) {
 }
 
 function decoLabel(d) {
-  if (d.deco && d.noDeco) return d.ndl ? `Deco e no-deco · NDL ${d.ndl} min` : "Deco e no-deco";
-  if (d.deco) return d.ndl ? `Deco · NDL ${d.ndl} min` : "Deco";
-  if (d.noDeco) return d.ndl ? `No deco · NDL ${d.ndl} min` : "No deco";
-  return d.ndl ? `NDL ${d.ndl} min` : "—";
+  const stop = d.decoStop || d.computerLog?.decoStop;
+  const ceil = d.decoCeiling || d.computerLog?.decoCeiling;
+  const tdeco = d.decoTime || d.computerLog?.decoTime;
+  const parts = [];
+  if (d.deco && d.noDeco) parts.push("Deco e no-deco");
+  else if (d.deco) parts.push(stop ? `Deco · sosta ${formatDecimal(stop) || stop} m` : "Deco");
+  else parts.push("No deco");
+  if (tdeco && d.deco) parts.push(`${formatDecimal(tdeco) || tdeco} min`);
+  if (ceil && Number(String(ceil).replace(",", ".")) > 0.3) parts.push(`tetto ${formatDecimal(ceil) || ceil} m`);
+  if (d.ndl) parts.push(`NDL ${d.ndl} min`);
+  return parts.join(" · ") || "—";
+}
+
+function ensureDecoProfile(d) {
+  if (!d) return d;
+  const pts = d.profilePoints;
+  if (!pts || pts.length < 8) return d;
+  const api = window.SeaDiveComputers;
+  if (!api?.decoTrackFromProfile) return d;
+  const calc = api.decoTrackFromProfile(pts, d.mix || "21", d.gf || d.computerLog?.gf, d.computerLog?.helium);
+  if (!d.decoCeiling && calc.ceiling) d.decoCeiling = calc.ceiling;
+  if (!d.decoStop && calc.decoStop) d.decoStop = calc.decoStop;
+  if (!d.decoTime && calc.decoTime) d.decoTime = calc.decoTime;
+  if (!d.computerLog) d.computerLog = {};
+  if (calc.ceiling) d.computerLog.decoCeiling = calc.ceiling;
+  if (calc.decoStop) d.computerLog.decoStop = calc.decoStop;
+  if (calc.decoTime) d.computerLog.decoTime = calc.decoTime;
+  return d;
 }
 
 function checkPicks(pairs) {
@@ -2625,6 +2656,9 @@ function renderDetail() {
       <div><b>Pressione</b>${escapeHtml(d.pressureStart || "—")} → ${escapeHtml(d.pressureEnd || "—")} bar</div>
       <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
       <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
+      <div><b>Sosta deco</b>${escapeHtml(d.decoStop || d.computerLog?.decoStop || "—")}${d.decoStop || d.computerLog?.decoStop ? " m" : ""}</div>
+      <div><b>Tetto deco</b>${escapeHtml(d.decoCeiling || d.computerLog?.decoCeiling || "—")}${d.decoCeiling || d.computerLog?.decoCeiling ? " m" : ""}</div>
+      <div><b>Tempo deco</b>${escapeHtml(d.decoTime || d.computerLog?.decoTime || "—")}${d.decoTime || d.computerLog?.decoTime ? " min" : ""}</div>
       <div><b>GF</b>${escapeHtml(d.gf || d.computerLog?.gf || "—")}</div>
       <div><b>Strumentazione</b>${escapeHtml(d.instruments || "—")}</div>
       <div><b>Brevetto in scheda</b>${escapeHtml(d.certOnDive || "—")}</div>
@@ -2633,7 +2667,7 @@ function renderDetail() {
     <h3 class="serif">Consumo in superficie</h3>
     ${effortHtml(d)}
     <h3 class="serif">Profilo di immersione</h3>
-    <p class="hint">${escapeHtml(decoLabel(d))}</p>
+    <p class="hint">${escapeHtml(decoLabel(d))}. La linea tratteggiata è il tetto deco (Bühlmann 16 GF).</p>
     <canvas class="profile" data-readonly="1"></canvas>
     <h3 class="serif">Temperatura / profondità</h3>
     <canvas class="profile thermo-detail" data-thermo="1"></canvas>
@@ -2809,6 +2843,9 @@ function renderEdit() {
         <div><b>Risalita</b>${escapeHtml(d.ascentRate ? d.ascentRate + " m/min" : "—")}${d.ascentMax ? " (max " + escapeHtml(d.ascentMax) + ")" : ""}</div>
         <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
         <div><b>Deco / NDL</b>${escapeHtml(decoLabel(d))}</div>
+        <div><b>Sosta deco</b>${escapeHtml(d.decoStop || log.decoStop || "—")}${d.decoStop || log.decoStop ? " m" : ""}</div>
+        <div><b>Tetto deco</b>${escapeHtml(d.decoCeiling || log.decoCeiling || "—")}${d.decoCeiling || log.decoCeiling ? " m" : ""}</div>
+        <div><b>Tempo deco</b>${escapeHtml(d.decoTime || log.decoTime || "—")}${d.decoTime || log.decoTime ? " min" : ""}</div>
         <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
         <div><b>GF</b>${escapeHtml(d.gf || log.gf || "—")}</div>
         <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
@@ -2821,7 +2858,7 @@ function renderEdit() {
     <div data-effortwrap>${effortHtml(d)}</div>
     <p class="hint" data-tsshint>${escapeHtml(d.tssLabel || "TSS = intensità² × durata, ponderata sulla soglia zona 4/5. Senza FC si usa TSS(MET) da SAC e profondità. Puoi sovrascrivere a mano (TSS Manuale).")}</p>
     <h3 class="serif">Profilo di immersione</h3>
-    <p class="hint">Deco o no-deco dal computer — puoi correggere con la spunta</p>
+    <p class="hint">Tetto deco (tratteggio) da Bühlmann 16 GF. Puoi correggere deco / no-deco con la spunta.</p>
     ${checkPicks([
       { name: "noDeco", label: "No deco", on: d.noDeco },
       { name: "hadDeco", label: "Deco", on: d.deco },
@@ -3321,6 +3358,30 @@ function drawProfile(canvas, points, editable, onChange) {
     ctx.lineWidth = 2.2 * dpr;
     ctx.lineJoin = "round";
     ctx.stroke();
+    const ceilPts = pts.filter((p) => Number(p.z) > 0.25);
+    if (ceilPts.length >= 2) {
+      ctx.beginPath();
+      let started = false;
+      pts.forEach((p) => {
+        const z = Number(p.z) || 0;
+        if (z < 0.25) {
+          started = false;
+          return;
+        }
+        if (!started) {
+          ctx.moveTo(x(p.t), y(z));
+          started = true;
+        } else ctx.lineTo(x(p.t), y(z));
+      });
+      ctx.strokeStyle = "#ffb070";
+      ctx.lineWidth = 1.8 * dpr;
+      ctx.setLineDash([5 * dpr, 4 * dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#ffb070";
+      ctx.font = `${10 * dpr}px Outfit, sans-serif`;
+      ctx.fillText("tetto deco", padL, padT + 10 * dpr);
+    }
     ctx.lineTo(x(pts[pts.length - 1].t), h - padB);
     ctx.lineTo(x(pts[0].t), h - padB);
     ctx.closePath();

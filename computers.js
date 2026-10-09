@@ -795,6 +795,7 @@ function downsampleProfile(pts) {
       const c = sampleTemp(p);
       const row = { t: Number(p.t), d: Number(p.d) };
       if (c != null) row.c = c;
+      if (Number(p.z) > 0) row.z = Math.round(Number(p.z) * 10) / 10;
       return row;
     })
     .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.d) && p.d >= 0 && p.t >= 0)
@@ -2177,32 +2178,46 @@ function remainingNdlMin(tissues, depthM, fo2, fhe, gfLow) {
   return lo;
 }
 
-function ndlFromProfile(pts, mix, gf, helium) {
+function decoTrackFromProfile(pts, mix, gf, helium) {
   const s = [...(pts || [])]
     .filter((p) => Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.d)))
     .sort((a, b) => Number(a.t) - Number(b.t));
-  if (s.length < 8) return { ndl: "", deco: false };
+  const empty = { points: s, ndl: "", deco: false, ceiling: "", decoTime: "", decoStop: "" };
+  if (s.length < 8) return empty;
   const fo2 = Math.max(0.1, Math.min(1, (Number(mix) || 21) / 100));
   const fhe = Math.max(0, Math.min(0.8, (Number(helium) || 0) / (Number(helium) > 1.5 ? 100 : 1)));
   const pair = String(gf || "").match(/(\d+(?:\.\d+)?)\s*[/|:]\s*(\d+(?:\.\d+)?)/);
+  const gfLow = pair ? Number(pair[1]) / 100 : 0.45;
   const gfHigh = pair ? Number(pair[2]) / 100 : 0.8;
   const surf = palvN2(0, fo2, fhe);
   let tissues = ZHL16C_N2.map(() => surf);
   let minNdl = 99;
-  let deco = false;
+  let maxCeil = 0;
+  let decoMin = 0;
+  if (s[0]) s[0].z = 0;
   for (let i = 1; i < s.length; i++) {
     const dt = Number(s[i].t) - Number(s[i - 1].t);
     const d = Number(s[i].d);
-    if (!(dt > 0) || dt > 8) continue;
-    tissues = loadTissues(tissues, d, dt, fo2, fhe);
+    if (dt > 0 && dt <= 8) tissues = loadTissues(tissues, d, dt, fo2, fhe);
+    const z = Math.max(0, ceilingM(tissues, gfLow));
+    s[i].z = Math.round(z * 10) / 10;
+    if (z > maxCeil) maxCeil = z;
+    if (z >= 2.8 && dt > 0 && dt < 8) decoMin += dt;
     if (d < 5) continue;
     const ndl = remainingNdlMin(tissues, d, fo2, fhe, gfHigh);
     if (ndl < minNdl) minNdl = ndl;
-    if (ndl === 0) deco = true;
   }
-  if (ceilingM(tissues, gfHigh) > 2.8) deco = true;
-  if (minNdl >= 99 && !deco) return { ndl: "99", deco: false };
-  return { ndl: String(minNdl), deco };
+  const deco = maxCeil >= 2.8;
+  const decoStop = deco ? String(Math.max(3, Math.round(maxCeil / 3) * 3)) : "";
+  const ceiling = maxCeil > 0.3 ? String(Math.round(maxCeil * 10) / 10) : "";
+  const decoTime = decoMin >= 0.2 ? String(Math.round(decoMin * 10) / 10) : "";
+  const ndl = minNdl >= 99 && !deco ? "99" : String(minNdl);
+  return { points: s, ndl, deco, ceiling, decoTime, decoStop };
+}
+
+function ndlFromProfile(pts, mix, gf, helium) {
+  const calc = decoTrackFromProfile(pts, mix, gf, helium);
+  return { ndl: calc.ndl, deco: calc.deco };
 }
 
 function fitPressureBar(v) {
@@ -2650,12 +2665,14 @@ function parseFitBlock(bytes, origin) {
     extras.helium = bag.he[0] != null ? o2Percent(bag.he[0]) : catPick(bag.catalog, ["helium", "he"]);
     extras.ndl = pickNdlMinutes(use, bag, s, desc);
     extras.ndlFromFile = extras.ndl !== "" && extras.ndl != null;
-    let ndlDeco = false;
+    const calc = decoTrackFromProfile(profilePoints, o2, extras.gf, extras.helium);
+    extras.decoCeiling = calc.ceiling;
+    extras.decoTime = calc.decoTime;
+    extras.decoStop = calc.decoStop;
+    let ndlDeco = Boolean(calc.deco);
     if (!extras.ndlFromFile) {
-      const calc = ndlFromProfile(profilePoints, o2, extras.gf, extras.helium);
       extras.ndl = calc.ndl;
       extras.ndlCalc = Boolean(calc.ndl !== "");
-      ndlDeco = Boolean(calc.deco);
     }
     extras.tts =
       last.fields?.[101] ?? last.fields?.[77] ?? catPick(bag.catalog, ["tts", "time_to_surface"]);
@@ -2694,6 +2711,9 @@ function parseFitBlock(bytes, origin) {
       NDL: extras.ndl !== "" && extras.ndl != null ? extras.ndl + " min" : "",
       "Int. superficie": extras.surfaceInterval ? extras.surfaceInterval + " min" : "",
       Deco: extras.deco ? "Deco" : "No deco",
+      "Tetto deco": extras.decoCeiling ? extras.decoCeiling + " m" : "",
+      "Sosta deco": extras.decoStop ? extras.decoStop + " m" : "",
+      "Tempo deco": extras.decoTime ? extras.decoTime + " min" : "",
       Circuito: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
       GF: extras.gf,
       TTS: extras.tts,
@@ -2726,6 +2746,9 @@ function parseFitBlock(bytes, origin) {
         ndl: extras.ndl || "",
         deco: Boolean(extras.deco),
         noDeco: !extras.deco,
+        decoCeiling: extras.decoCeiling || "",
+        decoStop: extras.decoStop || "",
+        decoTime: extras.decoTime || "",
         circuitClosed: /ccr/i.test(mode),
         circuitOpen: !/ccr/i.test(mode),
         regulator: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
@@ -2757,6 +2780,8 @@ function parseFitBlock(bytes, origin) {
               ? `NDL ${extras.ndl} min`
               : `NDL ${extras.ndl} min (Bühlmann 16 GF)`
             : "",
+          extras.decoStop ? `sosta deco ${extras.decoStop} m` : "",
+          extras.decoCeiling ? `tetto ${extras.decoCeiling} m` : "",
           extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
           hang ? `sosta ${hang} min` : "",
           extras.samples ? `${extras.samples} campioni profilo` : "",
@@ -2964,4 +2989,5 @@ window.SeaDiveComputers = {
   fillSurfaceFromFitTimes,
   surfaceFromPrevDives,
   ndlFromProfile,
+  decoTrackFromProfile,
 };
