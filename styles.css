@@ -687,7 +687,7 @@ canvas.thermo-detail {
   padding: 10px 0; border-top: 1px solid var(--line);
 }
 
-.profile-form { overflow: hidden; padding: 14px 12px 20px; }
+.profile-form { overflow: visible; padding: 14px 12px 20px; }
 .profile-title { margin: 0 0 4px; font-size: 22px; }
 .profile-block {
   margin-top: 14px;
@@ -705,6 +705,13 @@ canvas.thermo-detail {
   font-weight: 700;
 }
 .profile-form .form-grid { grid-template-columns: 1fr; }
+.profile-form .form-pair { grid-template-columns: 1fr; }
+.profile-form .field {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 12px;
+  font-weight: 600;
+}
 .profile-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -756,6 +763,7 @@ canvas.thermo-detail {
 @media (max-width: 640px) {
   .form-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .profile-form .form-grid { grid-template-columns: 1fr; }
+  .profile-form .form-pair { grid-template-columns: 1fr; }
   .field.full { grid-column: 1 / -1; }
   .kv { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .log-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }

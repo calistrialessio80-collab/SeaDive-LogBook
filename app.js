@@ -2196,10 +2196,8 @@ function renderProfile() {
     <section class="profile-block">
       <h3>Medico e assicurazione</h3>
       <div class="form-grid">
-        <div class="form-pair">
-          ${field("medicalExpiry", "Scadenza medico", p.medicalExpiry, false, "date")}
-          ${field("insurance", "Assicurazione", p.insurance)}
-        </div>
+        ${field("medicalExpiry", "Certificato medico scadenza", p.medicalExpiry, true, "date")}
+        ${field("insurance", "Assicurazione", p.insurance, true)}
         ${field("hrThreshold", "Soglia FC zona 4/5 (bpm) per TSS(hr)", p.hrThreshold, false, "number")}
       </div>
       <p class="hint">La soglia anaerobica (limite zona 4/5) pesa l’intensità del TSS. Se manca, si usa il 90% della FC max dell’immersione oppure 165 bpm. Senza FC il TSS è metabolico (MET) da SAC, profondità e durata.</p>
