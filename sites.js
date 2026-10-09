@@ -475,19 +475,61 @@ function annotateSites(dives) {
   return { sites: [...annotated, ...extras], done: annotated.filter((s) => s.done).length + extras.length };
 }
 
+function namesClose(siteName, diveSite) {
+  const a = normName(siteName);
+  const b = normName(diveSite);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a));
+}
+
 function addCustomSite(partial) {
+  const site = upsertCustomSite(partial);
+  if (!site) throw new Error("Servono nome, latitudine e longitudine.");
+  return site;
+}
+
+function upsertCustomSite(partial) {
+  const name = String(partial.name || "").trim();
+  const lat = Number(String(partial.lat ?? "").replace(",", "."));
+  const lng = Number(String(partial.lng ?? "").replace(",", "."));
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return null;
+  const country = String(partial.country || "").trim();
   const list = loadCustomSites();
+  const sameName = list.findIndex((s) => namesClose(s.name, name) && normName(s.name) === normName(name));
+  const sameSpot = list.findIndex((s) => haversineKm(s, { lat, lng }) <= 0.12);
+  if (sameName >= 0) {
+    list[sameName] = {
+      ...list[sameName],
+      lat,
+      lng,
+      country: country || list[sameName].country,
+    };
+    saveCustomSites(list);
+    return list[sameName];
+  }
+  if (sameSpot >= 0) {
+    list[sameSpot] = {
+      ...list[sameSpot],
+      name,
+      country: country || list[sameSpot].country,
+      lat,
+      lng,
+    };
+    saveCustomSites(list);
+    return list[sameSpot];
+  }
+  const worldNamed = WORLD_SITES.find((s) => normName(s.name) === normName(name));
+  if (worldNamed) return worldNamed;
   const site = {
     id: "custom-" + Date.now(),
-    name: String(partial.name || "Sito").trim(),
-    country: String(partial.country || "").trim(),
-    lat: Number(partial.lat),
-    lng: Number(partial.lng),
+    name,
+    country,
+    lat,
+    lng,
     custom: true,
   };
-  if (!site.name || !Number.isFinite(site.lat) || !Number.isFinite(site.lng)) {
-    throw new Error("Servono nome, latitudine e longitudine.");
-  }
   list.push(site);
   saveCustomSites(list);
   return site;
@@ -495,36 +537,32 @@ function addCustomSite(partial) {
 
 function matchCatalog(d) {
   const list = allCatalogSites();
+  const named = list.find((s) => namesClose(s.name, d.site));
+  if (named) return named;
   const p = divePoint(d);
+  if (!p) return null;
   let best = null;
-  let bestKm = 4;
-  if (p) {
-    list.forEach((s) => {
-      const km = haversineKm(p, s);
-      if (km <= bestKm) {
-        bestKm = km;
-        best = s;
-      }
-    });
-  }
-  if (best) return best;
-  return list.find((s) => siteMatchesDive(s, d)) || null;
+  let bestKm = 0.12;
+  list.forEach((s) => {
+    const km = haversineKm(p, s);
+    if (km <= bestKm) {
+      bestKm = km;
+      best = s;
+    }
+  });
+  return best;
 }
 
 function ensureSiteFromDive(d) {
   const p = divePoint(d);
-  if (!p) return;
-  if (matchCatalog(d)) return;
-  try {
-    addCustomSite({
-      name: d.site || "Sito immersione",
-      country: d.location || "",
-      lat: p.lat,
-      lng: p.lng,
-    });
-  } catch {
-    /* ignora duplicati incompleti */
-  }
+  const name = String(d.site || "").trim() || String(d.location || "").trim();
+  if (!p || !name) return null;
+  return upsertCustomSite({
+    name,
+    country: d.location || "",
+    lat: p.lat,
+    lng: p.lng,
+  });
 }
 
 function mergeCustomSites(incoming) {
@@ -623,6 +661,7 @@ window.SeaDiveSites = {
   allCatalogSites,
   annotateSites,
   addCustomSite,
+  upsertCustomSite,
   loadCustomSites,
   mergeCustomSites,
   matchCatalog,

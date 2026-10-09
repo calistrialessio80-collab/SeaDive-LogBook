@@ -473,6 +473,7 @@ async function hydrateFromIdb() {
   }
   state = mergeVaults(state, stored);
   persistLocal(state);
+  rememberCatalogFromDives();
 }
 
 async function syncWithDrive({ interactive = false } = {}) {
@@ -486,6 +487,7 @@ async function syncWithDrive({ interactive = false } = {}) {
       applyBackupExtras(cloud);
       state = mergeVaults(state, parseBackup(cloud));
       persistLocal(state);
+      rememberCatalogFromDives();
     }
     cloudHydrated = true;
     if (realDiveCount(state.dives)) await maybeBackupDrive();
@@ -619,6 +621,7 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
 }
 
 let state = load();
+rememberCatalogFromDives();
 let view = { name: "home", diveId: null, draft: null, query: "", pending: [], computerHint: "" };
 
 function nextNumber() {
@@ -1153,6 +1156,10 @@ function geoMapHtml(lat, lng, name) {
   return satMapHtml({ lat, lng, site: name });
 }
 
+function rememberCatalogFromDives() {
+  (state.dives || []).forEach((d) => window.SeaDiveSites?.ensureSiteFromDive?.(d));
+}
+
 function applyPlaceToDive(d) {
   const hit = window.SeaDiveSites?.matchCatalog?.(d);
   if (hit) {
@@ -1514,14 +1521,24 @@ function bindDiveSiteMap(form, d) {
   form._placePin = (lat, lng, opts = {}) => {
     if (opts.zoom && opts.zoom >= 14) pad = 0.018;
     else if (opts.zoom && opts.zoom >= 10) pad = 0.08;
+    const keepOnMap = () => {
+      const typed = String(form.querySelector("[name=site]")?.value || d.site || "").trim();
+      const loc = String(form.querySelector("[name=location]")?.value || d.location || "").trim();
+      const name = typed || loc;
+      if (!name) return;
+      if (typed) d.site = typed;
+      d.location = loc;
+      window.SeaDiveSites?.ensureSiteFromDive?.({ ...d, site: name, location: loc });
+    };
     if (diveSiteMap && window.L) {
       writeDiveCoords(form, d, lat, lng);
+      keepOnMap();
       const ll = [Number(lat), Number(lng)];
       if (!diveSiteMarker) {
         diveSiteMarker = L.marker(ll, { draggable: true }).addTo(diveSiteMap);
         diveSiteMarker.on("dragend", () => {
           const p = diveSiteMarker.getLatLng();
-          form._placePin(p.lat, p.lng, { hint: "Pin spostato. Salva l’immersione per tenerlo." });
+          form._placePin(p.lat, p.lng, { hint: "Pin spostato e salvato sulla mappa." });
         });
       } else diveSiteMarker.setLatLng(ll);
       diveSiteMap.setView(ll, opts.zoom || Math.max(diveSiteMap.getZoom(), 13));
@@ -1530,6 +1547,7 @@ function bindDiveSiteMap(form, d) {
       return;
     }
     paintStatic(lat, lng, opts);
+    keepOnMap();
   };
   paintStatic(start.lat, start.lng, {
     skipGeo: true,
@@ -2950,7 +2968,12 @@ function renderEdit() {
         hint.textContent = "Nessun punto trovato. Scorri la mappa e tocca a mano.";
         return;
       }
-      if (form._placePin) form._placePin(found.lat, found.lng, { zoom: 15, hint: "Sito trovato. Trascina il pin sul punto esatto." });
+      if (form._placePin) {
+        form._placePin(found.lat, found.lng, {
+          zoom: 15,
+          hint: "Sito trovato e salvato sulla mappa. La prossima volta basta il nome.",
+        });
+      }
     } catch {
       hint.textContent = "Ricerca non disponibile. Tocca la mappa sul sito.";
     }
