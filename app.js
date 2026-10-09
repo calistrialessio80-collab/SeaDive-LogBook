@@ -1090,6 +1090,7 @@ function setPageSkin() {
   document.body.classList.toggle("page-auth", !loadSession());
   document.body.classList.toggle("page-app", Boolean(loadSession()));
   document.body.classList.toggle("page-home", Boolean(loadSession()) && view.name === "home");
+  document.body.classList.toggle("page-map", Boolean(loadSession()) && view.name === "map");
 }
 
 async function finishAuth(user) {
@@ -1111,6 +1112,7 @@ function render() {
   }
   const app = document.getElementById("app");
   app.replaceChildren();
+  document.querySelectorAll(".nav, .nav-dock").forEach((el) => el.remove());
   setPageSkin();
   if (!loadSession()) {
     app.append(renderAuth());
@@ -1125,7 +1127,7 @@ function render() {
   if (view.name === "bio") app.append(renderBiology());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
-  app.append(renderNav());
+  document.body.append(renderNav());
   if (view.name === "log") {
     const fab = document.createElement("button");
     fab.className = "fab";
@@ -1229,6 +1231,10 @@ function topbar(subtitle, mode) {
 }
 
 function renderNav() {
+  const wrap = document.createDocumentFragment();
+  const dock = document.createElement("div");
+  dock.className = "nav-dock";
+  dock.setAttribute("aria-hidden", "true");
   const nav = document.createElement("nav");
   nav.className = "nav";
   const items = [
@@ -1258,7 +1264,8 @@ function renderNav() {
     };
     nav.append(b);
   });
-  return nav;
+  wrap.append(dock, nav);
+  return wrap;
 }
 
 let leafletMap = null;

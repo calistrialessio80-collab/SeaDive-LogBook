@@ -423,8 +423,19 @@ body.page-home .section-head h3 { color: #1c2430; }
   background: linear-gradient(90deg, var(--teal), #0b4d5e);
 }
 
+.nav-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--nav-h) + var(--safe-bottom) + 12px);
+  background: #f3f5f8;
+  z-index: 9998;
+  pointer-events: none;
+}
 .nav {
-  position: fixed; left: 50%; bottom: calc(8px + var(--safe-bottom)); transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(8px + var(--safe-bottom));
+  transform: translate3d(-50%, 0, 0);
   width: min(400px, calc(100% - 16px));
   display: grid; grid-template-columns: repeat(6, 1fr);
   background: #fff;
@@ -542,17 +553,22 @@ canvas.thermo-detail {
 }
 .brand-card.featured { border-color: rgba(42, 212, 201, 0.45); background: rgba(42, 212, 201, 0.1); }
 .brand-card h4 { margin: 0 0 4px; }
+body.page-map #app {
+  padding-bottom: calc(var(--nav-h) + 28px + var(--safe-bottom));
+}
 .world-map {
   width: 100%;
-  height: min(48dvh, calc(100dvh - var(--nav-h) - var(--safe-bottom) - 200px));
-  min-height: 220px;
-  max-height: calc(100dvh - var(--nav-h) - var(--safe-bottom) - 160px);
+  height: 260px;
+  min-height: 200px;
+  max-height: 280px;
   border-radius: 14px;
   background: #041018;
   position: relative;
   z-index: 0;
   overflow: hidden;
   isolation: isolate;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
 }
 .site-map { width: 100%; height: min(42vh, 340px); min-height: 240px; border-radius: 14px; background: #041018; margin: 6px 0 4px; }
 .dive-edit .site-map {
@@ -671,12 +687,24 @@ canvas.thermo-detail {
   position: relative;
   z-index: 0;
   isolation: isolate;
+  margin-bottom: 12px;
 }
 .world-map .leaflet-container {
   width: 100%;
   height: 100%;
-  z-index: 0;
+  z-index: 0 !important;
 }
+.world-map .leaflet-pane,
+.world-map .leaflet-map-pane,
+.world-map .leaflet-tile-pane,
+.world-map .leaflet-overlay-pane,
+.world-map .leaflet-shadow-pane,
+.world-map .leaflet-marker-pane,
+.world-map .leaflet-tooltip-pane,
+.world-map .leaflet-popup-pane {
+  z-index: 1 !important;
+}
+.world-map .leaflet-control-container { z-index: 2; }
 .map-head .map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 13px; }
 .map-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .map-legend .dot.done { background: #2ad4c9; }
