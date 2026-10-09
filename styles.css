@@ -381,6 +381,19 @@ body.page-home .section-head h3 { color: #1c2430; }
   z-index: 0;
 }
 .log-card > * { position: relative; z-index: 1; }
+.log-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.log-head > div { min-width: 0; flex: 1; }
+.log-del {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 13px;
+  z-index: 2;
+}
 .log-head h3 {
   margin: 0; font-size: clamp(20px, 6.4vw, 26px); letter-spacing: -0.04em; font-weight: 800; line-height: 1.15;
   overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;

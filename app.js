@@ -115,6 +115,7 @@ function brandPhoto() {
 }
 
 const seed = () => ({
+  deletedDiveIds: [],
   profile: {
     ...emptyProfile(),
     certLevel: "Open Water Diver",
@@ -248,7 +249,10 @@ const seed = () => ({
 function normalizeState(data) {
   const profile = { ...emptyProfile(), ...(data?.profile || {}) };
   if (!Array.isArray(profile.certs)) profile.certs = [];
-  return { profile, dives: Array.isArray(data?.dives) ? data.dives : [] };
+  const deletedDiveIds = Array.isArray(data?.deletedDiveIds)
+    ? data.deletedDiveIds.map(String).filter(Boolean)
+    : [];
+  return { profile, dives: Array.isArray(data?.dives) ? data.dives : [], deletedDiveIds };
 }
 
 function load() {
@@ -280,16 +284,48 @@ function diveScore(d) {
   return n;
 }
 
-function mergeDiveLists(a, b) {
+function diveTombstoneKeys(d) {
+  const keys = [];
+  if (d?.id) keys.push(String(d.id));
+  const key = window.SeaDiveComputers?.diveKey?.(d) || `${d?.date || ""}|${d?.timeIn || ""}|${Number(d?.maxDepth) || 0}|${Number(d?.bottomTime) || 0}`;
+  if (key && key !== "|||0|0" && key !== "||0|0") keys.push("k:" + key);
+  return keys;
+}
+
+function diveIsDeleted(d, tombs) {
+  if (!d) return false;
+  const set = new Set(tombs || []);
+  return diveTombstoneKeys(d).some((k) => set.has(k));
+}
+
+function rememberDeletedDive(d) {
+  const next = new Set(state.deletedDiveIds || []);
+  diveTombstoneKeys(d).forEach((k) => next.add(k));
+  state.deletedDiveIds = [...next].slice(-800);
+}
+
+function forgetDeletedDive(d) {
+  const drop = new Set(diveTombstoneKeys(d));
+  state.deletedDiveIds = (state.deletedDiveIds || []).filter((k) => !drop.has(k));
+}
+
+function removeDive(d) {
+  if (!d) return;
+  rememberDeletedDive(d);
+  state.dives = (state.dives || []).filter((x) => x.id !== d.id && !diveIsDeleted(x, state.deletedDiveIds));
+  save(state);
+}
+
+function mergeDiveLists(a, b, tombs) {
   const api = window.SeaDiveComputers;
-  const candidates = [...(a || []), ...(b || [])].filter((d) => d && !isSeedDive(d));
+  const candidates = [...(a || []), ...(b || [])].filter((d) => d && !isSeedDive(d) && !diveIsDeleted(d, tombs));
   if (!candidates.length) {
     return (a || []).some(isSeedDive) ? a : b || [];
   }
   const groups = [];
   candidates.forEach((d) => {
     const key = api?.diveKey?.(d) || `${d.date}|${d.timeIn}|${d.maxDepth}`;
-    const blank = key === "||0|0";
+    const blank = key === "||0|0" || key === "|||0|0";
     const i = groups.findIndex(
       (x) => (d.id && x.id === d.id) || (!blank && (api?.diveKey?.(x) || "") === key)
     );
@@ -320,12 +356,14 @@ function mergeProfiles(a, b) {
 function mergeVaults(local, cloud) {
   const L = normalizeState(local);
   const C = normalizeState(cloud);
+  const deletedDiveIds = [...new Set([...(L.deletedDiveIds || []), ...(C.deletedDiveIds || [])])].slice(-800);
   const localReal = realDiveCount(L.dives);
   const cloudReal = realDiveCount(C.dives);
   let dives;
   if (!localReal && !cloudReal) dives = L.dives.length ? L.dives : C.dives;
-  else dives = mergeDiveLists(L.dives, C.dives);
-  return { profile: mergeProfiles(L.profile, C.profile), dives };
+  else dives = mergeDiveLists(L.dives, C.dives, deletedDiveIds);
+  dives = (dives || []).filter((d) => !diveIsDeleted(d, deletedDiveIds));
+  return { profile: mergeProfiles(L.profile, C.profile), dives, deletedDiveIds };
 }
 
 function openVault() {
@@ -378,6 +416,7 @@ function persistLocal(data) {
     try {
       const slim = {
         profile: data.profile,
+        deletedDiveIds: data.deletedDiveIds || [],
         dives: (data.dives || []).map((d) => {
           const copy = { ...d };
           if (copy.photo && String(copy.photo).length > 8000) copy.photo = "";
@@ -490,7 +529,7 @@ async function syncWithDrive({ interactive = false } = {}) {
       rememberCatalogFromDives();
     }
     cloudHydrated = true;
-    if (realDiveCount(state.dives)) await maybeBackupDrive();
+    if (realDiveCount(state.dives) || (state.deletedDiveIds || []).length) await maybeBackupDrive();
     return { ok: true, dives: state.dives.length };
   } catch (err) {
     return { ok: false, reason: err.message || String(err) };
@@ -534,6 +573,7 @@ function backupPayload() {
     exportedAt: new Date().toISOString(),
     profile: state.profile,
     dives: state.dives,
+    deletedDiveIds: state.deletedDiveIds || [],
     sites: window.SeaDiveSites?.loadCustomSites?.() || [],
     brand,
   };
@@ -1874,8 +1914,11 @@ function diveCard(d) {
   art.className = "log-card";
   art.innerHTML = `
     <header class="log-head">
-      <h3>${escapeHtml(d.site || "Sito da nominare")}</h3>
-      <p>#${escapeHtml(d.number)} · ${escapeHtml(fmtItDateLong(d.date))}${d.timeIn ? " · " + escapeHtml(d.timeIn) : ""} · ${escapeHtml(d.location || "—")}</p>
+      <div>
+        <h3>${escapeHtml(d.site || "Sito da nominare")}</h3>
+        <p>#${escapeHtml(d.number)} · ${escapeHtml(fmtItDateLong(d.date))}${d.timeIn ? " · " + escapeHtml(d.timeIn) : ""} · ${escapeHtml(d.location || "—")}</p>
+      </div>
+      <button class="btn danger log-del" type="button" data-deldive>Elimina</button>
     </header>
     <div class="log-kpis">
       <div><small>Profondità max</small><b>${fmtDepth(d.maxDepth)} m</b></div>
@@ -1899,6 +1942,13 @@ function diveCard(d) {
     </div>
     ${effortHtml(d, true)}
   `;
+  art.querySelector("[data-deldive]").onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Eliminare questa immersione dal diario?")) return;
+    removeDive(d);
+    render();
+  };
   art.onclick = () => {
     view = { name: "detail", diveId: d.id, draft: null, query: view.query };
     render();
@@ -2373,6 +2423,7 @@ async function mergeImported(dives) {
     await reverseImportedPlace(d);
     const key = api.diveKey(d);
     if (existing.has(key)) continue;
+    forgetDeletedDive(d);
     d.number = n++;
     state.dives.push(d);
     existing.add(key);
@@ -2696,9 +2747,8 @@ function renderDetail() {
     render();
   };
   card.querySelector("[data-act=del]").onclick = () => {
-    if (!confirm("Eliminare questa immersione dal logbook?")) return;
-    state.dives = state.dives.filter((x) => x.id !== d.id);
-    save(state);
+    if (!confirm("Eliminare questa immersione dal diario?")) return;
+    removeDive(d);
     view = { name: "log", query: view.query };
     render();
   };
@@ -2886,6 +2936,7 @@ function renderEdit() {
     <div class="actions">
       <button class="btn primary" type="submit">Salva immersione</button>
       <button class="btn ghost" type="button" data-cancel>Annulla</button>
+      ${state.dives.some((x) => x.id === d.id) ? `<button class="btn danger" type="button" data-deldive>Elimina</button>` : ""}
     </div>
   `;
   const certInput = form.querySelector("[name=certOnDive]");
@@ -3123,6 +3174,7 @@ function renderEdit() {
         ? legalMeta("Centro di immersione", next.centerLead || next.centerName, "", now, hash)
         : null,
     };
+    forgetDeletedDive(next);
     const i = state.dives.findIndex((x) => x.id === next.id);
     if (i >= 0) state.dives[i] = next;
     else state.dives.push(next);
@@ -3134,6 +3186,12 @@ function renderEdit() {
     view = { name: "log", query: view.query };
     render();
   };
+  form.querySelector("[data-deldive]")?.addEventListener("click", () => {
+    if (!confirm("Eliminare questa immersione dal diario?")) return;
+    removeDive(d);
+    view = { name: "log", query: view.query };
+    render();
+  });
   frag.append(form);
   return frag;
 }
