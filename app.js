@@ -1454,6 +1454,32 @@ function bindDiveSiteMap(form, d) {
     });
 }
 
+function haversineMapKm(a, b) {
+  const r = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * r * Math.asin(Math.sqrt(x));
+}
+
+function diveFlagSvg(kind) {
+  const fill = kind === "done" ? "#e23b2e" : "#8d939c";
+  const stripe = "#fff";
+  return `<svg viewBox="0 0 28 36" width="22" height="30" aria-hidden="true"><path d="M4 1.5h20v18L14 34.5 4 19.5z" fill="${fill}" stroke="#1c2430" stroke-width="1.2"/><path d="M6.2 17.8 L21.8 3.8" stroke="${stripe}" stroke-width="5.2" stroke-linecap="square"/><circle cx="14" cy="34" r="1.4" fill="#1c2430"/></svg>`;
+}
+
+function diveFlagIcon(kind) {
+  return L.divIcon({
+    className: "dive-flag-pin",
+    html: `<span class="dive-flag ${kind === "done" ? "done" : "todo"}">${diveFlagSvg(kind)}</span>`,
+    iconSize: [22, 30],
+    iconAnchor: [11, 30],
+    popupAnchor: [0, -28],
+  });
+}
+
 function renderWorldMap() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("siti del mondo"));
@@ -1464,11 +1490,10 @@ function renderWorldMap() {
   hero.className = "card hero map-head";
   hero.innerHTML = `
     <h2>Mappa satellitare</h2>
-    <p class="tagline">I punti <strong>verde acqua</strong> sono i siti che hai già fatto (dal diario o dalle coordinate). I punti sabbia sono catalogo da scoprire. Tocca la mappa per aggiungere un sito che manca.</p>
+    <p class="tagline">Bandierine da immersione su siti e diving di tutto il mondo. <strong>Colorate</strong> = già fatti. <strong>Grigio e bianco</strong> = da scoprire. Avvicina la mappa per caricare i diving vicini. Tocca per aggiungere un sito.</p>
     <div class="map-legend">
-      <span><i class="dot done"></i> Fatti ${doneN}</span>
-      <span><i class="dot todo"></i> Catalogo ${pack.sites.length - doneN}</span>
-      <span><i class="dot add"></i> Tuoi aggiunti</span>
+      <span><i class="flag-ico done"></i> Fatti ${doneN}</span>
+      <span><i class="flag-ico todo"></i> Catalogo e diving</span>
     </div>
   `;
   const stack = document.createElement("div");
@@ -1523,28 +1548,54 @@ function renderWorldMap() {
         }
         leafletMap = L.map(el, { worldCopyJump: true, scrollWheelZoom: true }).setView([20, 15], 2);
         addSatTiles(leafletMap);
-        pack.sites.forEach((site) => {
-          const color = site.done ? "#2ad4c9" : site.custom ? "#ef7a5a" : "#edd9a3";
-          const m = L.circleMarker([site.lat, site.lng], {
-            radius: site.done ? 9 : 6,
-            color: "#021018",
-            weight: 1,
-            fillColor: color,
-            fillOpacity: 0.92,
-          }).addTo(leafletMap);
+        const catalogLayer = L.layerGroup().addTo(leafletMap);
+        const osmLayer = L.layerGroup().addTo(leafletMap);
+        const putFlag = (layer, site) => {
+          const m = L.marker([site.lat, site.lng], {
+            icon: diveFlagIcon(site.done ? "done" : "todo"),
+            keyboard: false,
+          }).addTo(layer);
+          const kind = site.kind === "diving" ? "Diving" : site.fromDive ? "Dal diario" : "Sito";
           m.bindPopup(
-            `<strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(site.country || "")}<br>${
-              site.done ? "Già immerso" : "Da fare"
+            `<strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(site.country || "")}<br>${kind} · ${
+              site.done ? "già immerso" : "da fare"
             }${site.dives ? " · " + site.dives + " nel diario" : ""}`
           );
-        });
+        };
+        pack.sites.forEach((site) => putFlag(catalogLayer, site));
+        let osmTimer = 0;
+        const loadOsm = () => {
+          if (!api.fetchOsmDivePlaces || leafletMap.getZoom() < 6) {
+            osmLayer.clearLayers();
+            return;
+          }
+          clearTimeout(osmTimer);
+          osmTimer = setTimeout(() => {
+            api
+              .fetchOsmDivePlaces(leafletMap.getBounds())
+              .then((rows) => {
+                osmLayer.clearLayers();
+                const marked = api.markDoneAgainstDives?.(rows, state.dives) || rows;
+                marked.forEach((site) => {
+                  const near = pack.sites.some((s) => haversineMapKm(s, site) < 1.2);
+                  if (near) return;
+                  putFlag(osmLayer, site);
+                });
+              })
+              .catch(() => {});
+          }, 450);
+        };
+        leafletMap.on("moveend", loadOsm);
         leafletMap.on("click", (ev) => {
           mapPick = { lat: ev.latlng.lat.toFixed(5), lng: ev.latlng.lng.toFixed(5), name: "", country: "" };
           form.querySelector("[name=lat]").value = mapPick.lat;
           form.querySelector("[name=lng]").value = mapPick.lng;
           form.querySelector("[data-maphint]").textContent = "Punto preso. Dai un nome e salva.";
         });
-        setTimeout(() => leafletMap.invalidateSize(), 120);
+        setTimeout(() => {
+          leafletMap.invalidateSize();
+          loadOsm();
+        }, 120);
       })
       .catch((err) => {
         mapWrap.querySelector("[data-worldmap]").textContent = err.message || "Mappa non disponibile.";
