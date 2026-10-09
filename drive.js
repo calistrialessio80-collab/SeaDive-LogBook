@@ -71,7 +71,7 @@ function requestGoogleToken({ silent = false, hint = "" } = {}) {
         const client = google.accounts.oauth2.initTokenClient({
           client_id: clientId,
           scope: oauthCfg().google.scope,
-          prompt: silent ? "" : "select_account",
+          prompt: silent ? "none" : "select_account",
           hint: hint || undefined,
           callback: (resp) => {
             if (resp.error) return reject(new Error(resp.error_description || resp.error));
@@ -80,7 +80,7 @@ function requestGoogleToken({ silent = false, hint = "" } = {}) {
           },
           error_callback: (err) => reject(new Error(err?.message || String(err))),
         });
-        client.requestAccessToken();
+        client.requestAccessToken(silent ? { prompt: "none" } : {});
       })
   );
 }

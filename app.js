@@ -396,6 +396,9 @@ function persistLocal(data) {
 let cloudHydrated = false;
 let backupTimer = 0;
 let backupBusy = false;
+let syncLock = false;
+let pushAgain = false;
+const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
 
 function save(next) {
   persistLocal(next);
@@ -403,9 +406,39 @@ function save(next) {
 }
 
 function scheduleDriveBackup() {
-  if (!cloudHydrated) return;
+  if (!loadSession()) return;
   clearTimeout(backupTimer);
-  backupTimer = setTimeout(() => maybeBackupDrive(), 600);
+  backupTimer = setTimeout(() => silentDrivePush(), 400);
+}
+
+function dueFifteenDaySync() {
+  const t = loadMeta().lastBackup;
+  if (!t) return true;
+  const when = new Date(t).getTime();
+  if (!Number.isFinite(when)) return true;
+  return Date.now() - when >= FIFTEEN_DAYS_MS;
+}
+
+async function silentDrivePush() {
+  if (!loadSession()) return { ok: false, reason: "auth" };
+  if (syncLock) {
+    pushAgain = true;
+    return { ok: false, reason: "busy" };
+  }
+  syncLock = true;
+  let res = { ok: false };
+  try {
+    do {
+      pushAgain = false;
+      res = await syncWithDrive({ interactive: false });
+      const meta = loadMeta();
+      meta.pendingBackup = !res?.ok;
+      saveMeta(meta);
+    } while (pushAgain);
+  } finally {
+    syncLock = false;
+  }
+  return res;
 }
 
 async function maybeBackupDrive() {
@@ -421,9 +454,12 @@ async function maybeBackupDrive() {
     meta.lastBackup = new Date().toISOString();
     meta.drive = true;
     meta.diveCount = state.dives.length;
+    meta.pendingBackup = false;
     saveMeta(meta);
   } catch {
-    /* resta IndexedDB + localStorage */
+    const meta = loadMeta();
+    meta.pendingBackup = true;
+    saveMeta(meta);
   } finally {
     backupBusy = false;
   }
@@ -2232,7 +2268,7 @@ function renderProfile() {
     <section class="profile-block vault-box">
       <h3>Copia di sicurezza</h3>
       <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
-      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. Esci non cancella le immersioni.</p>
+      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. Esci non cancella le immersioni. La copia su Drive si aggiorna da sola a ogni immersione e ogni 15 giorni, senza finestre né richieste.</p>
       <div class="vault-actions">
         <button class="btn primary" type="button" data-syncdrive>Sincronizza con Google</button>
         <button class="btn ghost" type="button" data-sharebak>Copia sul telefono</button>
@@ -3144,7 +3180,7 @@ function vaultStatusLine() {
       bindVaultLife();
       return;
     }
-    if (loadSession()) await syncWithDrive({ interactive: false });
+    if (loadSession()) await silentDrivePush();
     render();
     bindVaultLife();
   } catch (err) {
@@ -3155,13 +3191,14 @@ function vaultStatusLine() {
 })();
 
 function bindVaultLife() {
+  const tick = () => {
+    if (!loadSession()) return;
+    if (loadMeta().pendingBackup || dueFifteenDaySync()) silentDrivePush();
+  };
+  tick();
+  setInterval(tick, 60 * 60 * 1000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
-    if (!loadSession()) return;
-    syncWithDrive({ interactive: false });
+    if (document.visibilityState === "visible") tick();
   });
-  window.addEventListener("online", () => {
-    if (!loadSession()) return;
-    syncWithDrive({ interactive: false });
-  });
+  window.addEventListener("online", tick);
 }
