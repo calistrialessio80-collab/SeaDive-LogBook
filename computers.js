@@ -1377,7 +1377,9 @@ function fitReadRecord(bytes, i, def, desc) {
     const base = guessDevBase(f.size, meta?.base != null ? meta.base : f.base);
     let val = fitDevScalar(bytes, o, f.size, base, def.le);
     const scale = Number(meta?.scale);
-    if ([10, 100, 1000].includes(scale) && typeof val === "number" && Number.isFinite(val)) val = val / scale;
+    const fname = normFitName(meta?.name || "");
+    const skipScale = /gf_low|gf_high|gflow|gfhigh|ndl/.test(fname) && Number(val) >= 1 && Number(val) <= 400;
+    if (!skipScale && [10, 100, 1000].includes(scale) && typeof val === "number" && Number.isFinite(val)) val = val / scale;
     rec.dev[`${f.devIdx}:${f.num}`] = val;
     o += f.size;
   });
@@ -1401,11 +1403,20 @@ function fitDepthM(v) {
   return 0;
 }
 
-function fitFieldName(desc, k) {
-  return String(desc.get(k)?.name || "")
+function normFitName(raw) {
+  return String(raw || "")
+    .replace(/\0/g, "")
+    .trim()
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
     .toLowerCase()
     .replace(/%/g, "pct")
-    .replace(/[\s.]+/g, "_");
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+function fitFieldName(desc, k) {
+  return normFitName(desc.get(k)?.name || "");
 }
 
 function pickSampleDepth(dev, desc) {
@@ -1527,7 +1538,7 @@ function fitNdlMin(v) {
 
 function fitGfPct(v) {
   if (v == null || v === "") return "";
-  const n = Number(v);
+  const n = Number(String(v).replace(/%/g, "").trim());
   if (!Number.isFinite(n) || n < 0 || n === 0xffffffff || n === 0xff) return "";
   let p = n;
   if (p > 0 && p <= 1.0001) p *= 100;
@@ -1738,7 +1749,7 @@ function harvestDev(rec, desc, bag) {
     const name = fitFieldName(desc, k);
     if (!name) return;
     const prev = bag.devLast[name];
-    if (Number(v) === 0 && Number(prev) > 0 && /surface_time|surface_interval|surfacetime/.test(name)) return;
+    if (Number(v) === 0 && Number(prev) > 0 && /surface_time|surface_interval|surfacetime|gf_low|gf_high|gflow|gfhigh|ndl/.test(name)) return;
     bag.devLast[name] = v;
   });
 }
@@ -1747,9 +1758,9 @@ function ingestDevEntry(cat, k, v, desc) {
   if (v == null || v === "") return;
   if (typeof v === "number" && !Number.isFinite(v)) return;
   const meta = desc.get(k) || {};
-  let name = String(meta.name || "").replace(/\0/g, "").trim();
-  if (!name) name = String(k);
-  const key = name.toLowerCase().replace(/[\s.]+/g, "_");
+  let name = normFitName(meta.name || "");
+  if (!name) name = normFitName(k);
+  const key = name;
   if (!key || key === "undefined") return;
   const n = Number(v);
   const put = (slot) => {
@@ -1904,7 +1915,7 @@ function isSacName(name) {
 }
 
 function isNdlName(name) {
-  return /(^|[._-])ndl([._-]|$)|no_deco_time|nodectime|no_stop_time|ndl_time|ndl_remaining/.test(name);
+  return /(^|[._-])ndl([._-]|$)|no_deco_time|nodectime|no_stop_time|ndl_time|ndl_remaining|no_dec_time/.test(name) && !/ceiling|stop_depth|deco_stop/.test(name);
 }
 
 function isSiName(name) {
@@ -2003,6 +2014,98 @@ function pickDev(dev, desc, names) {
     if (hit) return hit.v;
   }
   return "";
+}
+
+function pickDevByNative(dev, desc, native) {
+  if (native == null) return "";
+  for (const [k, v] of Object.entries(dev || {})) {
+    if (v == null || v === "") continue;
+    if (Number(desc.get(k)?.nativeField) === Number(native)) return v;
+  }
+  return "";
+}
+
+function parseGfPair(v) {
+  const s = String(v || "").trim();
+  const m = s.match(/(\d+(?:\.\d+)?)\s*[/|:]\s*(\d+(?:\.\d+)?)/);
+  return m ? formatGf(m[1], m[2]) : "";
+}
+
+function catalogGf(cat, bag, session) {
+  const loNames = ["gf_low", "gflow", "low_gf", "gradient_factor_low", "gf_lo", "lowgf", "gradientfactorlow"];
+  const hiNames = ["gf_high", "gfhigh", "high_gf", "gradient_factor_high", "gf_hi", "highgf", "gradientfactorhigh"];
+  const paired =
+    parseGfPair(catPick(cat, ["gf", "gradient_factor", "gradientfactors", "gf_pair"], "first")) ||
+    parseGfPair(session?.gf) ||
+    parseGfPair(bag?.gf);
+  if (paired) return paired;
+  const lo =
+    catPick(cat, loNames, "first") ||
+    pickBagDev(bag, isGfLowName) ||
+    session?.gfLow ||
+    bag?.gfLow;
+  const hi =
+    catPick(cat, hiNames, "first") ||
+    pickBagDev(bag, isGfHighName) ||
+    session?.gfHigh ||
+    bag?.gfHigh;
+  return formatGf(lo, hi);
+}
+
+const NDL_NAMES = ["ndl", "ndl_time", "no_deco_time", "nodectime", "no_stop_time", "ndl_remaining", "no_dec_time"];
+
+function readSampleNdl(x, desc) {
+  if (!x) return "";
+  const named = pickDev(x.dev, desc, NDL_NAMES);
+  if (named !== "" && named != null) return named;
+  const mapped = pickDevByNative(x.dev, desc, 102);
+  if (mapped !== "" && mapped != null) return mapped;
+  const n102 = x.fields?.[102];
+  if (n102 != null && n102 !== "" && Number(n102) !== 0) return n102;
+  return "";
+}
+
+function pickNdlMinutes(samples, bag, session, desc) {
+  const src = (samples || []).filter((x) => Number(x.depth) > 1);
+  const list = src.length >= 3 ? src : samples || [];
+  let lastPos = "";
+  let lastAny = "";
+  list.forEach((x) => {
+    const m = fitNdlMin(readSampleNdl(x, desc));
+    if (m === "") return;
+    lastAny = m;
+    if (m !== "0") lastPos = m;
+  });
+  if (lastPos) return lastPos;
+  const fromSess = fitNdlMin(session?.ndl || pickDev(session?.dev, desc, NDL_NAMES));
+  if (fromSess !== "") return fromSess;
+  const fromCat = fitNdlMin(
+    catPick(bag.catalog, NDL_NAMES, "max") || pickBagDev(bag, isNdlName)
+  );
+  if (fromCat !== "" && fromCat !== "0") return fromCat;
+  if (lastAny === "0") return "0";
+
+  const keys = new Set();
+  (samples || []).forEach((s) => Object.keys(s.dev || {}).forEach((k) => keys.add(k)));
+  let best = "";
+  keys.forEach((k) => {
+    const name = fitFieldName(desc, k);
+    if (/depth|temp|cns|otu|press|sac|gf|ascent|ceiling/.test(name)) return;
+    if (!(isNdlName(name) || Number(desc.get(k)?.nativeField) === 102)) {
+      const vals = list.map((s) => Number(s.dev?.[k])).filter((n) => Number.isFinite(n) && n >= 0 && n <= 99);
+      if (vals.length < Math.max(6, list.length * 0.4)) return;
+      const max = Math.max(...vals);
+      const min = Math.min(...vals);
+      if (!(max >= 8 && max <= 99 && max - min >= 4)) return;
+    }
+    const last = [...list].reverse().find((s) => {
+      const n = Number(s.dev?.[k]);
+      return Number.isFinite(n) && n >= 0 && n !== 0xffffffff;
+    });
+    const m = fitNdlMin(last?.dev?.[k]);
+    if (m !== "") best = m;
+  });
+  return best || fromCat;
 }
 
 function fitPressureBar(v) {
@@ -2205,10 +2308,10 @@ function parseFitBlock(bytes, origin) {
       row.surfaceTime = pickDev(row.dev, desc, ["surface_interval", "surfaceinterval", "surface_time", "surfacetime", "si_before"]);
     }
     if (row.ndl == null || row.ndl === "") {
-      row.ndl = pickDev(row.dev, desc, ["ndl", "ndl_time", "no_deco_time", "nodectime", "no_stop_time"]);
+      row.ndl = pickDev(row.dev, desc, NDL_NAMES) || pickDevByNative(row.dev, desc, 102);
     }
-    if (row.gfLow == null || row.gfLow === "") row.gfLow = pickDev(row.dev, desc, ["gf_low", "gflow", "low_gf", "gradient_factor_low"]);
-    if (row.gfHigh == null || row.gfHigh === "") row.gfHigh = pickDev(row.dev, desc, ["gf_high", "gfhigh", "high_gf", "gradient_factor_high"]);
+    if (row.gfLow == null || row.gfLow === "") row.gfLow = pickDev(row.dev, desc, ["gf_low", "gflow", "low_gf", "gradient_factor_low", "gradientfactorlow"]);
+    if (row.gfHigh == null || row.gfHigh === "") row.gfHigh = pickDev(row.dev, desc, ["gf_high", "gfhigh", "high_gf", "gradient_factor_high", "gradientfactorhigh"]);
     if (row.diveMode == null || row.diveMode === "") row.diveMode = pickDev(row.dev, desc, ["dive_mode", "divemode"]);
     if (!row.feeling) row.feeling = Number(pickDev(row.dev, desc, ["feeling"])) || 0;
     if (!row.description) row.description = pickDev(row.dev, desc, ["description"]);
@@ -2316,16 +2419,6 @@ function parseFitBlock(bytes, origin) {
     const date = when.date || created.date;
     const timeIn = when.time || created.time;
     const suunto = bag.mfg === 23 || /suunto/i.test(brand);
-    const gfLo =
-      catPick(bag.catalog, ["gf_low", "gflow", "low_gf", "gradient_factor_low", "gf_lo", "lowgf"]) ||
-      pickBagDev(bag, isGfLowName) ||
-      s.gfLow ||
-      bag.gfLow;
-    const gfHi =
-      catPick(bag.catalog, ["gf_high", "gfhigh", "high_gf", "gradient_factor_high", "gf_hi", "highgf"]) ||
-      pickBagDev(bag, isGfHighName) ||
-      s.gfHigh ||
-      bag.gfHigh;
     const fromCat = catalogSurfaceRaw(bag.catalog);
     const fromSess = pickDev(s.dev, desc, ["surface_time", "surface_interval", "surfaceinterval", "surfacetime", "surf_time"]);
     const surfaceMin =
@@ -2380,7 +2473,7 @@ function parseFitBlock(bytes, origin) {
       ndl: "",
       tts: last.fields?.[101] ?? last.fields?.[77] ?? "",
       mode,
-      gf: formatGf(gfLo, gfHi),
+      gf: catalogGf(bag.catalog, bag, s),
       surfaceInterval: surfaceMin,
       diveNumber: s.diveNumber || pickDev(s.dev, desc, ["dive_number_in_series", "dive_number"]) || "",
       samples: use.filter((x) => x.depth > 0).length,
@@ -2445,16 +2538,7 @@ function parseFitBlock(bytes, origin) {
     const hrMax = bag.hr.length ? String(Math.max(...bag.hr)) : fitScore(s.hrMax, 250);
     extras.hrAvg = hrAvg || "";
     extras.hrMax = hrMax || "";
-    extras.ndl = firstGood(
-      [
-        lastWetVal(use, desc, ["ndl", "ndl_time", "no_deco_time", "nodectime", "no_stop_time", "ndl_remaining"], 102),
-        catPick(bag.catalog, ["ndl", "ndl_time", "no_deco_time", "nodectime", "no_stop_time"]),
-        pickBagDev(bag, isNdlName),
-        pickDev(s.dev, desc, ["ndl", "ndl_time", "no_deco_time", "nodectime"]),
-        s.ndl,
-      ],
-      (v) => (v === 0 || v === "0" ? "0" : fitNdlMin(v))
-    );
+    extras.ndl = pickNdlMinutes(use, bag, s, desc);
     extras.tts =
       last.fields?.[101] ?? last.fields?.[77] ?? catPick(bag.catalog, ["tts", "time_to_surface"]);
     const ndlRaw = use
@@ -2569,7 +2653,7 @@ function collectFit(global, rec, bag, desc) {
   if (global === 206) {
     const key = `${rec[0]}:${rec[1]}`;
     const name = String(rec[3] || rec[4] || "").replace(/\0/g, "").trim();
-    if (name) desc.set(key, { name, base: rec[2], units: rec[8], scale: rec[6], nativeField: rec[14] });
+    if (name) desc.set(key, { name, base: rec[2], units: rec[8], scale: rec[6], nativeMesg: rec[12], nativeField: rec[13] ?? rec[14] });
     return;
   }
   harvestDev(rec, desc, bag);
@@ -2587,10 +2671,30 @@ function collectFit(global, rec, bag, desc) {
   if (global === 258) {
     if (rec[4] != null && Number(rec[4]) <= 3) bag.waterType = rec[4];
     else if (rec[5] != null && Number(rec[5]) <= 3) bag.waterType = rec[5];
-    const lo = fitGfPct(rec[2]) || fitGfPct(pickDev(rec.dev, desc, ["gf_low", "gflow", "low_gf", "gradient_factor_low"]));
-    const hi = fitGfPct(rec[3]) || fitGfPct(pickDev(rec.dev, desc, ["gf_high", "gfhigh", "high_gf", "gradient_factor_high"]));
+    const lo =
+      fitGfPct(rec[2]) ||
+      fitGfPct(rec[0]) ||
+      fitGfPct(pickDev(rec.dev, desc, ["gf_low", "gflow", "low_gf", "gradient_factor_low", "gradientfactorlow"]));
+    const hi =
+      fitGfPct(rec[3]) ||
+      fitGfPct(rec[1]) ||
+      fitGfPct(pickDev(rec.dev, desc, ["gf_high", "gfhigh", "high_gf", "gradient_factor_high", "gradientfactorhigh"]));
     if (lo) bag.gfLow = lo;
     if (hi) bag.gfHigh = hi;
+    if (!bag.gfLow || !bag.gfHigh) {
+      const nums = Object.keys(rec)
+        .filter((k) => k !== "dev" && k !== "253")
+        .map((k) => Number(rec[k]))
+        .filter((n) => Number.isFinite(n) && n >= 5 && n <= 100);
+      if (nums.length >= 2) {
+        const a = Math.min(nums[0], nums[1]);
+        const b = Math.max(nums[0], nums[1]);
+        if (a <= 50 && b >= 40) {
+          if (!bag.gfLow) bag.gfLow = String(Math.round(a));
+          if (!bag.gfHigh) bag.gfHigh = String(Math.round(b));
+        }
+      }
+    }
   }
 
   const isRecord = global === 20;
