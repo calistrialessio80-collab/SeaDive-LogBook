@@ -838,6 +838,10 @@ function fillAvgCnsOtu(d) {
   if (!String(d.surfaceInterval || "").trim()) {
     const si = d.computerLog?.surfaceInterval;
     if (si !== "" && si != null) d.surfaceInterval = String(si);
+    else if (api?.surfaceFromPrevDives) {
+      const fromPrev = api.surfaceFromPrevDives(d, typeof state !== "undefined" ? state.dives || [] : []);
+      if (fromPrev) d.surfaceInterval = fromPrev;
+    }
   }
   if (d.ndl === "" || d.ndl == null) {
     const ndl = d.computerLog?.ndl;
@@ -2310,7 +2314,16 @@ async function mergeImported(dives) {
   let n = nextNumber();
   let added = 0;
   let last = null;
-  for (const raw of dives) {
+  const ordered = [...dives].sort((a, b) => `${a.date || ""}T${a.timeIn || ""}`.localeCompare(`${b.date || ""}T${b.timeIn || ""}`));
+  if (api.fillSurfaceFromFitTimes) api.fillSurfaceFromFitTimes(ordered);
+  for (const raw of ordered) {
+    if (!(Number(raw.surfaceInterval) > 0) && api.surfaceFromPrevDives) {
+      const si = api.surfaceFromPrevDives(raw, [...state.dives, ...ordered]);
+      if (si) {
+        raw.surfaceInterval = si;
+        if (raw.computerLog) raw.computerLog.surfaceInterval = si;
+      }
+    }
     const d = enrichImported(raw);
     await reverseImportedPlace(d);
     const key = api.diveKey(d);

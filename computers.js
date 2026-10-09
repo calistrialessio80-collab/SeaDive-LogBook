@@ -1115,8 +1115,8 @@ function parseSuuntoDeviceLog(root) {
   const mix = o2Percent(o2) || "21";
   const ndl = pickDeep({ samples: samples.slice(-5), header }, ["nodectime", "ndl", "ndltime", "nodecotime"]) || "";
   const surfaceInterval =
-    fitMinutes(pickDeep(header, ["surfaceinterval", "surfacetime", "surface_time", "surfaceintervalbeforedive"])) ||
-    fitMinutes(diving.SurfaceTime || header.SurfaceTime || "");
+    fitSurfaceMin(pickDeep(header, ["surfaceinterval", "surfacetime", "surface_time", "surfaceintervalbeforedive"]), "s") ||
+    fitSurfaceMin(diving.SurfaceTime || header.SurfaceTime || "", "s");
   const extras = {
     format: "Suunto JSON",
     avgDepth: meanD ? String(Math.round(meanD * 10) / 10) : "",
@@ -1549,17 +1549,100 @@ function lastWetVal(list, desc, names, field) {
   return lastDevVal(wet.length ? wet : list, desc, names, field);
 }
 
-function surfaceBetween(prev, cur) {
-  if (!prev || !cur) return "";
-  const prevEnd = Number(prev.ts) || 0;
-  const prevStart = Number(prev.start) || 0;
-  const curStart = Number(cur.start || cur.ts) || 0;
-  const end = prevEnd > prevStart ? prevEnd : 0;
-  if (end > 1000 && curStart > end) {
-    const sec = curStart - end;
-    if (sec >= 60 && sec <= 36 * 3600) return fitMinutes(sec);
+function fitSurfaceMin(v, units) {
+  if (v == null || v === "") return "";
+  if (typeof v === "string" && /^\d+:\d{2}/.test(v.trim())) {
+    const m = durationToMin(v);
+    return m !== "" && Number(m) > 0 ? String(Math.round(Number(m))) : "";
   }
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0 || n === 0xffffffff) return "";
+  const u = String(units || "").toLowerCase().replace(/\0/g, "");
+  if (/min/.test(u)) return String(Math.max(1, Math.round(n)));
+  if (n > 100000) return String(Math.max(1, Math.round(n / 60000)));
+  if (/^(s|sec|secs|second|seconds)$/.test(u) || n >= 60) return String(Math.max(1, Math.round(n / 60)));
+  return String(Math.max(1, Math.round(n)));
+}
+
+function sessionDurationSec(row, samples) {
+  const start = Number(row?.start || row?.ts) || 0;
+  const ts = Number(row?.ts) || 0;
+  if (ts > start + 20) return ts - start;
+  const elapsed = Number(row?.elapsed ?? row?.timer ?? 0);
+  if (elapsed > 100000) return elapsed / 1000;
+  if (elapsed > 0) return elapsed;
+  const pts = samples || [];
+  if (pts.length >= 2) {
+    const a = Number(pts[0].ts) || 0;
+    const b = Number(pts[pts.length - 1].ts) || 0;
+    if (b > a) return b - a;
+  }
+  return 0;
+}
+
+function surfaceBetween(prev, cur, prevSamples) {
+  if (!prev || !cur) return "";
+  const prevStart = Number(prev.start || prev.ts) || 0;
+  const curStart = Number(cur.start || cur.ts) || 0;
+  if (!(prevStart > 1000 && curStart > prevStart)) return "";
+  const dur = sessionDurationSec(prev, prevSamples);
+  const prevEnd = Number(prev.ts) > prevStart + 20 ? Number(prev.ts) : prevStart + dur;
+  const sec = curStart - (prevEnd || prevStart);
+  if (sec >= 45 && sec <= 48 * 3600) return fitSurfaceMin(sec, "s");
   return "";
+}
+
+function diveInstantMs(d, end) {
+  if (!d?.date || !d?.timeIn) return 0;
+  const t = Date.parse(`${d.date}T${String(d.timeIn).length === 5 ? d.timeIn + ":00" : d.timeIn}`);
+  if (!Number.isFinite(t)) return 0;
+  if (!end) return t;
+  const min = Number(d.totalTime || d.bottomTime) || 0;
+  return t + Math.max(0, min) * 60000;
+}
+
+function surfaceFromPrevDives(d, others) {
+  const start = diveInstantMs(d, false);
+  if (!start) return "";
+  let prevEnd = 0;
+  (others || []).forEach((o) => {
+    if (!o || o === d || (d.id && o.id && o.id === d.id)) return;
+    const e = diveInstantMs(o, true);
+    if (e > prevEnd && e <= start + 30000) prevEnd = e;
+  });
+  if (!prevEnd) return "";
+  const min = Math.round((start - prevEnd) / 60000);
+  if (min >= 1 && min <= 48 * 60) return String(min);
+  return "";
+}
+
+function fillSurfaceFromFitTimes(dives) {
+  const list = dives || [];
+  const ordered = [...list].sort((a, b) => diveInstantMs(a, false) - diveInstantMs(b, false));
+  ordered.forEach((d, i) => {
+    if (Number(d.surfaceInterval) > 0) return;
+    const si = i > 0 ? surfaceFromPrevDives(d, [ordered[i - 1]]) : "";
+    if (!si) return;
+    d.surfaceInterval = si;
+    if (d.computerLog) d.computerLog.surfaceInterval = si;
+  });
+  return list;
+}
+
+function catalogSurfaceRaw(cat) {
+  let best = "";
+  let bestN = 0;
+  let units = "";
+  Object.entries(cat || {}).forEach(([k, row]) => {
+    if (!isSiName(k)) return;
+    const v = Number(row.max) > 0 ? row.max : Number(row.first) > 0 ? row.first : row.last;
+    const n = Number(v);
+    if (!(n > bestN) || n === 0xffffffff) return;
+    bestN = n;
+    best = v;
+    units = row.units || "s";
+  });
+  return { v: best, units };
 }
 
 function fitSemicircle(v) {
@@ -1653,7 +1736,10 @@ function harvestDev(rec, desc, bag) {
     if (v == null || v === "") return;
     if (typeof v === "number" && !Number.isFinite(v)) return;
     const name = fitFieldName(desc, k);
-    if (name) bag.devLast[name] = v;
+    if (!name) return;
+    const prev = bag.devLast[name];
+    if (Number(v) === 0 && Number(prev) > 0 && /surface_time|surface_interval|surfacetime/.test(name)) return;
+    bag.devLast[name] = v;
   });
 }
 
@@ -1822,8 +1908,8 @@ function isNdlName(name) {
 }
 
 function isSiName(name) {
-  if (/air|sac|consumption/.test(name)) return false;
-  return /surface_interval|surfaceinterval|surface_time|surfacetime|si_before|interval_before|time_at_surface/.test(name);
+  if (/air|sac|consumption|ascent|tts|to_surface/.test(name)) return false;
+  return /surface_interval|surfaceinterval|surface_time|surfacetime|surf_time|si_before|interval_before|time_at_surface/.test(name);
 }
 
 function isGfLowName(name) {
@@ -2005,6 +2091,7 @@ function parseFit(bytes) {
     offset = Math.max(offset + 1, block.next);
   }
   if (!dives.length) throw new Error("File FIT senza immersioni (sessioni, campioni o dive summary).");
+  fillSurfaceFromFitTimes(dives);
   return dives;
 }
 
@@ -2239,11 +2326,14 @@ function parseFitBlock(bytes, origin) {
       pickBagDev(bag, isGfHighName) ||
       s.gfHigh ||
       bag.gfHigh;
+    const fromCat = catalogSurfaceRaw(bag.catalog);
+    const fromSess = pickDev(s.dev, desc, ["surface_time", "surface_interval", "surfaceinterval", "surfacetime", "surf_time"]);
     const surfaceMin =
-      fitMinutes(s.surface) ||
-      fitMinutes(s.surfaceTime) ||
-      fitMinutes(catPick(bag.catalog, ["surface_interval", "surfaceinterval", "surface_time", "surfacetime"])) ||
-      fitMinutes(pickBagDev(bag, isSiName)) ||
+      fitSurfaceMin(fromSess, "s") ||
+      fitSurfaceMin(s.surfaceTime, "s") ||
+      fitSurfaceMin(s.surface, "s") ||
+      fitSurfaceMin(fromCat.v, fromCat.units || "s") ||
+      fitSurfaceMin(pickBagDev(bag, isSiName), "s") ||
       surfaceBetween(sources[idx - 1], s) ||
       "";
     const extras = {
@@ -2655,4 +2745,6 @@ window.SeaDiveComputers = {
   computeCnsFromProfile,
   estimateOtu,
   meanProfileDepthM,
+  fillSurfaceFromFitTimes,
+  surfaceFromPrevDives,
 };
