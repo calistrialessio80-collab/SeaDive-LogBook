@@ -431,7 +431,7 @@ body.page-home .section-head h3 { color: #1c2430; }
   border: 0;
   border-radius: 28px;
   padding: 6px 4px 8px;
-  z-index: 5;
+  z-index: 10000;
   box-shadow: 0 12px 40px rgba(28, 36, 48, 0.14);
 }
 .nav button {
@@ -542,7 +542,18 @@ canvas.thermo-detail {
 }
 .brand-card.featured { border-color: rgba(42, 212, 201, 0.45); background: rgba(42, 212, 201, 0.1); }
 .brand-card h4 { margin: 0 0 4px; }
-.world-map { width: 100%; height: min(62vh, 520px); min-height: 320px; border-radius: 14px; background: #041018; }
+.world-map {
+  width: 100%;
+  height: min(48dvh, calc(100dvh - var(--nav-h) - var(--safe-bottom) - 200px));
+  min-height: 220px;
+  max-height: calc(100dvh - var(--nav-h) - var(--safe-bottom) - 160px);
+  border-radius: 14px;
+  background: #041018;
+  position: relative;
+  z-index: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
 .site-map { width: 100%; height: min(42vh, 340px); min-height: 240px; border-radius: 14px; background: #041018; margin: 6px 0 4px; }
 .dive-edit .site-map {
   height: 240px;
@@ -654,7 +665,18 @@ canvas.thermo-detail {
 .ascent-ok { color: #1a8a4a; }
 .ascent-warn { color: #c47a12; }
 .ascent-bad { color: #c0392b; }
-.map-shell { padding: 8px; overflow: hidden; }
+.map-shell {
+  padding: 8px;
+  overflow: hidden;
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+}
+.world-map .leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
 .map-head .map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 13px; }
 .map-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .map-legend .dot.done { background: #2ad4c9; }
