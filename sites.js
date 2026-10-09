@@ -223,12 +223,38 @@ function ensureSiteFromDive(d) {
   }
 }
 
+function mergeCustomSites(incoming) {
+  if (!Array.isArray(incoming) || !incoming.length) return loadCustomSites();
+  const cur = loadCustomSites();
+  const keyOf = (s) =>
+    `${normName(s.name)}|${Number(s.lat).toFixed(4)}|${Number(s.lng).toFixed(4)}`;
+  const seen = new Set(cur.map(keyOf));
+  const next = [...cur];
+  incoming.forEach((s) => {
+    if (!s || !Number.isFinite(Number(s.lat)) || !Number.isFinite(Number(s.lng))) return;
+    const k = keyOf(s);
+    if (seen.has(k)) return;
+    seen.add(k);
+    next.push({
+      id: s.id || "custom-" + Date.now() + "-" + next.length,
+      name: String(s.name || "Sito").trim(),
+      country: String(s.country || "").trim(),
+      lat: Number(s.lat),
+      lng: Number(s.lng),
+      custom: true,
+    });
+  });
+  saveCustomSites(next);
+  return next;
+}
+
 window.SeaDiveSites = {
   WORLD_SITES,
   allCatalogSites,
   annotateSites,
   addCustomSite,
   loadCustomSites,
+  mergeCustomSites,
   matchCatalog,
   ensureSiteFromDive,
   divePoint,

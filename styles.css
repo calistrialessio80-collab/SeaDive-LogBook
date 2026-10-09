@@ -714,6 +714,16 @@ canvas.thermo-detail {
 .profile-actions .btn.primary,
 .profile-actions a { grid-column: 1 / -1; }
 .profile-account { overflow-wrap: anywhere; }
+.vault-home {
+  margin: 4px 4px 12px;
+  padding: 0 4px;
+}
+.vault-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.vault-box .hint { margin-bottom: 6px; }
 .btn-block { width: 100%; margin-top: 8px; }
 
 .certs-box { margin-top: 8px; min-width: 0; }

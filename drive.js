@@ -1,7 +1,8 @@
-/** Login Google (pagina ufficiale) + backup Drive. */
+/** Login Google (pagina ufficiale) + backup Drive nascosto, valido negli anni. */
 const DRIVE_NAME = "seadive-logbook.json";
 const CLIENT_KEY = "seadive-google-client-id";
 const TOKEN_KEY = "seadive-google-token";
+const WANTED_KEY = "seadive-drive-wanted";
 
 function oauthCfg() {
   return window.SEADIVE_OAUTH || {};
@@ -17,6 +18,15 @@ function driveClientId() {
 
 function setDriveClientId(id) {
   localStorage.setItem(CLIENT_KEY, id.trim());
+}
+
+function driveWanted() {
+  return localStorage.getItem(WANTED_KEY) === "1";
+}
+
+function setDriveWanted(on) {
+  if (on) localStorage.setItem(WANTED_KEY, "1");
+  else localStorage.removeItem(WANTED_KEY);
 }
 
 function driveToken() {
@@ -35,6 +45,7 @@ function saveDriveToken(token, expiresIn) {
     TOKEN_KEY,
     JSON.stringify({ access_token: token, exp: Date.now() + Math.max(60, (expiresIn || 3600) - 60) * 1000 })
   );
+  setDriveWanted(true);
 }
 
 function loadGsi() {
@@ -49,7 +60,7 @@ function loadGsi() {
   });
 }
 
-function requestGoogleToken() {
+function requestGoogleToken({ silent = false, hint = "" } = {}) {
   const clientId = driveClientId();
   if (!clientId) {
     return Promise.reject(new Error("Manca SEADIVE_GOOGLE_CLIENT_ID in config.js."));
@@ -60,7 +71,8 @@ function requestGoogleToken() {
         const client = google.accounts.oauth2.initTokenClient({
           client_id: clientId,
           scope: oauthCfg().google.scope,
-          prompt: "select_account",
+          prompt: silent ? "" : "select_account",
+          hint: hint || undefined,
           callback: (resp) => {
             if (resp.error) return reject(new Error(resp.error_description || resp.error));
             saveDriveToken(resp.access_token, resp.expires_in);
@@ -71,6 +83,18 @@ function requestGoogleToken() {
         client.requestAccessToken();
       })
   );
+}
+
+async function ensureToken({ interactive = false, hint = "" } = {}) {
+  const existing = driveToken();
+  if (existing) return existing;
+  if (!interactive && !driveWanted()) return null;
+  try {
+    return await requestGoogleToken({ silent: !interactive, hint });
+  } catch (err) {
+    if (!interactive) return null;
+    throw err;
+  }
 }
 
 async function userFromGoogleToken(token) {
@@ -92,14 +116,12 @@ async function consumeOAuthRedirect() {
 }
 
 async function connectDrive() {
-  const existing = driveToken();
-  if (existing) return existing;
-  return requestGoogleToken();
+  return ensureToken({ interactive: true });
 }
 
-async function authHeader() {
-  let token = driveToken();
-  if (!token) token = await connectDrive();
+async function authHeader({ interactive = false } = {}) {
+  const token = await ensureToken({ interactive });
+  if (!token) throw new Error("Sessione Google assente.");
   return { Authorization: `Bearer ${token}` };
 }
 
@@ -115,11 +137,13 @@ async function findDriveFile(headers) {
   }
   if (!res.ok) throw new Error("Drive non ha risposto.");
   const data = await res.json();
-  return data.files?.[0] || null;
+  const files = data.files || [];
+  files.sort((a, b) => String(b.modifiedTime || "").localeCompare(String(a.modifiedTime || "")));
+  return files[0] || null;
 }
 
 async function uploadDriveBackup(payload) {
-  const headers = await authHeader();
+  const headers = await authHeader({ interactive: false });
   const meta = { name: DRIVE_NAME, parents: ["appDataFolder"] };
   const existing = await findDriveFile(headers);
   const body = new Blob(
@@ -135,9 +159,9 @@ async function uploadDriveBackup(payload) {
 }
 
 async function downloadDriveBackup() {
-  const headers = await authHeader();
+  const headers = await authHeader({ interactive: false });
   const file = await findDriveFile(headers);
-  if (!file) throw new Error("Nessun backup SeaDive in Drive.");
+  if (!file) return null;
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, { headers });
   if (!res.ok) throw new Error("Download da Drive fallito.");
   return await res.json();
@@ -148,7 +172,8 @@ function driveConnected() {
 }
 
 async function signInGoogle() {
-  const token = await requestGoogleToken();
+  const token = await requestGoogleToken({ silent: false });
+  setDriveWanted(true);
   return userFromGoogleToken(token);
 }
 
@@ -160,9 +185,12 @@ window.SeaDiveDrive = {
   driveClientId,
   setDriveClientId,
   connectDrive,
+  ensureToken,
   uploadDriveBackup,
   downloadDriveBackup,
   driveConnected,
+  driveWanted,
+  setDriveWanted,
   signInGoogle,
   signOutGoogle,
   consumeOAuthRedirect,

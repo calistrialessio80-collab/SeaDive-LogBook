@@ -245,34 +245,228 @@ const seed = () => ({
   ],
 });
 
+function normalizeState(data) {
+  const profile = { ...emptyProfile(), ...(data?.profile || {}) };
+  if (!Array.isArray(profile.certs)) profile.certs = [];
+  return { profile, dives: Array.isArray(data?.dives) ? data.dives : [] };
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return seed();
-    const data = JSON.parse(raw);
-    const profile = { ...emptyProfile(), ...data.profile };
-    if (!Array.isArray(profile.certs)) profile.certs = [];
-    return { profile, dives: data.dives || [] };
+    return normalizeState(JSON.parse(raw));
   } catch {
     return seed();
   }
 }
 
-function save(state) {
-  localStorage.setItem(KEY, JSON.stringify(state));
-  queueMicrotask(() => maybeBackupDrive());
+function isSeedDive(d) {
+  return String(d?.id || "").startsWith("seed-");
+}
+
+function realDiveCount(dives) {
+  return (dives || []).filter((d) => !isSeedDive(d)).length;
+}
+
+function diveScore(d) {
+  if (!d) return 0;
+  let n = Object.keys(d).filter((k) => d[k] !== "" && d[k] != null && d[k] !== false).length;
+  if (d.profilePoints?.length) n += d.profilePoints.length * 8;
+  if (d.photo) n += 40;
+  if (d.buddySign || d.guideSign || d.centerSign) n += 60;
+  if (d.computerLog) n += 30;
+  if (d.notes) n += Math.min(80, String(d.notes).length);
+  return n;
+}
+
+function mergeDiveLists(a, b) {
+  const api = window.SeaDiveComputers;
+  const candidates = [...(a || []), ...(b || [])].filter((d) => d && !isSeedDive(d));
+  if (!candidates.length) {
+    return (a || []).some(isSeedDive) ? a : b || [];
+  }
+  const groups = [];
+  candidates.forEach((d) => {
+    const key = api?.diveKey?.(d) || `${d.date}|${d.timeIn}|${d.maxDepth}`;
+    const blank = key === "||0|0";
+    const i = groups.findIndex(
+      (x) => (d.id && x.id === d.id) || (!blank && (api?.diveKey?.(x) || "") === key)
+    );
+    if (i < 0) groups.push(d);
+    else if (diveScore(d) >= diveScore(groups[i])) groups[i] = d;
+  });
+  return groups;
+}
+
+function mergeProfiles(a, b) {
+  const left = a || {};
+  const right = b || {};
+  const out = { ...emptyProfile(), ...right, ...left };
+  Object.keys(emptyProfile()).forEach((k) => {
+    if (k === "certs") return;
+    if (out[k] === "" || out[k] == null) out[k] = left[k] || right[k] || "";
+  });
+  const seen = new Set();
+  out.certs = [...(left.certs || []), ...(right.certs || [])].filter((c) => {
+    const k = `${String(c?.name || "").toLowerCase()}|${c?.number || ""}`;
+    if ((!c?.name && !c?.number) || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return out;
+}
+
+function mergeVaults(local, cloud) {
+  const L = normalizeState(local);
+  const C = normalizeState(cloud);
+  const localReal = realDiveCount(L.dives);
+  const cloudReal = realDiveCount(C.dives);
+  let dives;
+  if (!localReal && !cloudReal) dives = L.dives.length ? L.dives : C.dives;
+  else dives = mergeDiveLists(L.dives, C.dives);
+  return { profile: mergeProfiles(L.profile, C.profile), dives };
+}
+
+function openVault() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("seadive-vault", 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function vaultGet() {
+  try {
+    const db = await openVault();
+    const val = await new Promise((resolve, reject) => {
+      const tx = db.transaction("kv", "readonly");
+      const r = tx.objectStore("kv").get("state");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+    db.close();
+    return val;
+  } catch {
+    return null;
+  }
+}
+
+async function vaultPut(data) {
+  try {
+    const db = await openVault();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("kv", "readwrite");
+      tx.objectStore("kv").put(data, "state");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    /* IndexedDB non disponibile: resta localStorage */
+  }
+}
+
+function persistLocal(data) {
+  const json = JSON.stringify(data);
+  try {
+    localStorage.setItem(KEY, json);
+  } catch {
+    try {
+      const slim = {
+        profile: data.profile,
+        dives: (data.dives || []).map((d) => {
+          const copy = { ...d };
+          if (copy.photo && String(copy.photo).length > 8000) copy.photo = "";
+          if (copy.computerLog) copy.computerLog = { truncated: true };
+          return copy;
+        }),
+      };
+      localStorage.setItem(KEY, JSON.stringify(slim));
+    } catch {
+      /* la copia completa resta in IndexedDB e su Drive */
+    }
+  }
+  vaultPut(data);
+}
+
+let cloudHydrated = false;
+let backupTimer = 0;
+let backupBusy = false;
+
+function save(next) {
+  persistLocal(next);
+  scheduleDriveBackup();
+}
+
+function scheduleDriveBackup() {
+  if (!cloudHydrated) return;
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => maybeBackupDrive(), 600);
 }
 
 async function maybeBackupDrive() {
-  if (!window.SeaDiveDrive?.driveConnected()) return;
+  if (!cloudHydrated || backupBusy) return;
+  if (!window.SeaDiveDrive) return;
+  const hint = loadSession()?.email || "";
+  const token = await window.SeaDiveDrive.ensureToken({ interactive: false, hint });
+  if (!token) return;
+  backupBusy = true;
   try {
     await window.SeaDiveDrive.uploadDriveBackup(backupPayload());
     const meta = loadMeta();
     meta.lastBackup = new Date().toISOString();
     meta.drive = true;
+    meta.diveCount = state.dives.length;
     saveMeta(meta);
   } catch {
-    /* resta il backup locale */
+    /* resta IndexedDB + localStorage */
+  } finally {
+    backupBusy = false;
+  }
+}
+
+async function hydrateFromIdb() {
+  const stored = await vaultGet();
+  if (!stored?.dives && !stored?.profile) {
+    await vaultPut(state);
+    return;
+  }
+  state = mergeVaults(state, stored);
+  persistLocal(state);
+}
+
+async function syncWithDrive({ interactive = false } = {}) {
+  if (!window.SeaDiveDrive) return { ok: false, reason: "no-drive" };
+  const hint = loadSession()?.email || "";
+  const token = await window.SeaDiveDrive.ensureToken({ interactive, hint });
+  if (!token) return { ok: false, reason: "auth" };
+  try {
+    const cloud = await window.SeaDiveDrive.downloadDriveBackup();
+    if (cloud && typeof cloud === "object") {
+      applyBackupExtras(cloud);
+      state = mergeVaults(state, parseBackup(cloud));
+      persistLocal(state);
+    }
+    cloudHydrated = true;
+    if (realDiveCount(state.dives)) await maybeBackupDrive();
+    return { ok: true, dives: state.dives.length };
+  } catch (err) {
+    return { ok: false, reason: err.message || String(err) };
+  }
+}
+
+function applyBackupExtras(data) {
+  if (Array.isArray(data?.sites)) window.SeaDiveSites?.mergeCustomSites?.(data.sites);
+  if (data?.brand && String(data.brand).startsWith("data:")) {
+    try {
+      localStorage.setItem(BRAND_KEY, data.brand);
+    } catch {
+      /* foto marchio troppo grande */
+    }
   }
 }
 
@@ -289,21 +483,27 @@ function saveMeta(meta) {
 }
 
 function backupPayload() {
+  let brand = "";
+  try {
+    brand = localStorage.getItem(BRAND_KEY) || "";
+    if (brand && !brand.startsWith("data:")) brand = "";
+  } catch {
+    brand = "";
+  }
   return {
     app: "seadive-logbook",
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     profile: state.profile,
     dives: state.dives,
+    sites: window.SeaDiveSites?.loadCustomSites?.() || [],
+    brand,
   };
 }
 
 function parseBackup(data) {
   if (!data || typeof data !== "object") throw new Error("invalid");
-  const profile = { ...emptyProfile(), ...(data.profile || {}) };
-  if (!Array.isArray(profile.certs)) profile.certs = [];
-  const dives = Array.isArray(data.dives) ? data.dives : [];
-  return { profile, dives };
+  return normalizeState(data);
 }
 
 function backupFilename() {
@@ -858,24 +1058,11 @@ function setPageSkin() {
 
 async function finishAuth(user) {
   saveSession(user);
+  window.SeaDiveDrive?.setDriveWanted?.(true);
   if (!state.profile.name && user.name) state.profile.name = user.name;
   if (user.email) state.profile.recoverEmail = state.profile.recoverEmail || user.email;
-  save(state);
-  try {
-    const cloud = await window.SeaDiveDrive.downloadDriveBackup();
-    if (cloud?.dives?.length) {
-      state = parseBackup(cloud);
-      save(state);
-    } else {
-      await window.SeaDiveDrive.uploadDriveBackup(backupPayload());
-    }
-  } catch {
-    try {
-      await window.SeaDiveDrive.uploadDriveBackup(backupPayload());
-    } catch {
-      /* backup al prossimo salvataggio */
-    }
-  }
+  persistLocal(state);
+  await syncWithDrive({ interactive: true });
   view = { name: "home", diveId: null, draft: null, query: "", pending: [], computerHint: "" };
   render();
 }
@@ -921,14 +1108,14 @@ function renderAuth() {
       <img class="gate-shot" alt="SeaDive LogBook" src="./brand.jpg?v=10" />
       <p class="eyebrow">SeaDive LogBook</p>
       <h1>Registrati</h1>
-      <p class="meta">Crea l’account con Google. Il diario resta tuo.</p>
+      <p class="meta">Crea l’account con Google. Le immersioni restano tue e si copiano sul Drive, così non si perdono.</p>
       <details class="privacy-fold">
         <summary>Informativa privacy</summary>
         <div class="privacy-body">
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono e sul tuo Google Drive nascosto.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -1376,6 +1563,10 @@ function renderHome() {
     };
   });
   frag.append(dash);
+  const vault = document.createElement("p");
+  vault.className = "hint vault-home";
+  vault.textContent = vaultStatusLine();
+  frag.append(vault);
 
   const listWrap = document.createElement("section");
   listWrap.className = "section feed";
@@ -2038,6 +2229,16 @@ function renderProfile() {
         </div>
       </div>
     </section>
+    <section class="profile-block vault-box">
+      <h3>Copia di sicurezza</h3>
+      <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
+      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. Esci non cancella le immersioni.</p>
+      <div class="vault-actions">
+        <button class="btn primary" type="button" data-syncdrive>Sincronizza con Google</button>
+        <button class="btn ghost" type="button" data-sharebak>Copia sul telefono</button>
+        <button class="btn ghost" type="button" data-dlbak>Scarica JSON</button>
+      </div>
+    </section>
     <section class="profile-block certs-box">
       <h3>Altri brevetti</h3>
       <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
@@ -2049,8 +2250,23 @@ function renderProfile() {
       <button class="btn ghost" type="button" data-out>Esci</button>
       <a class="btn ghost" href="./logbook_immersioni.pdf" target="_blank" rel="noopener">PDF cartaceo originale</a>
     </div>
-    <p class="hint profile-account">Account: ${escapeHtml(loadSession()?.email || "—")}. Backup sul tuo Google.</p>
+    <p class="hint profile-account">Account: ${escapeHtml(loadSession()?.email || "—")}.</p>
   `;
+  form.querySelector("[data-syncdrive]").onclick = async () => {
+    const line = form.querySelector("[data-vaultline]");
+    if (line) line.textContent = "Sincronizzo con Google…";
+    const res = await syncWithDrive({ interactive: true });
+    if (line) {
+      line.textContent = res.ok
+        ? vaultStatusLine()
+        : res.reason === "auth"
+          ? "Google non ha rinnovato l’accesso. Riprova e scegli lo stesso account."
+          : vaultStatusLine();
+    }
+    render();
+  };
+  form.querySelector("[data-sharebak]").onclick = () => shareBackup();
+  form.querySelector("[data-dlbak]").onclick = () => downloadBackup();
   const certsBox = form.querySelector("[data-certs]");
   const bindDel = (row) => {
     row.querySelector("[data-delcert]").onclick = () => {
@@ -2906,17 +3122,52 @@ function drawProfile(canvas, points, editable, onChange) {
   };
 }
 
+function vaultStatusLine() {
+  const n = realDiveCount(state.dives);
+  const meta = loadMeta();
+  const online = window.SeaDiveDrive?.driveConnected?.();
+  if (meta.lastBackup) {
+    const when = new Date(meta.lastBackup);
+    const ok = Number.isFinite(when.getTime()) ? when.toLocaleString("it-IT") : meta.lastBackup;
+    return online
+      ? `Diario al sicuro: ${n} immersioni copiate su Google (${ok}).`
+      : `Ultima copia su Google ${ok} · ${n} immersioni. All’apertura l’app rinnova da sola l’accesso.`;
+  }
+  if (window.SeaDiveDrive?.driveWanted?.() || online) {
+    return n
+      ? `${n} immersioni sul telefono. La copia su Google parte appena c’è connessione.`
+      : "Account Google collegato. Le immersioni si copiano su Drive a ogni salvataggio.";
+  }
+  return "Entra con Google: è la copia che ti restituisce il diario se perdi il telefono.";
+}
+
 (async function boot() {
   try {
+    await hydrateFromIdb();
     const returned = await window.SeaDiveDrive.consumeOAuthRedirect();
     if (returned) {
       await finishAuth(returned);
+      bindVaultLife();
       return;
     }
+    if (loadSession()) await syncWithDrive({ interactive: false });
     render();
+    bindVaultLife();
   } catch (err) {
     const el = document.getElementById("app");
     if (el) el.innerHTML = `<p class="boot">Errore: ${escapeHtml(err && err.message ? err.message : String(err))}</p>`;
     else render();
   }
 })();
+
+function bindVaultLife() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (!loadSession()) return;
+    syncWithDrive({ interactive: false });
+  });
+  window.addEventListener("online", () => {
+    if (!loadSession()) return;
+    syncWithDrive({ interactive: false });
+  });
+}
