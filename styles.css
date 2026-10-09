@@ -687,7 +687,13 @@ canvas.thermo-detail {
   padding: 10px 0; border-top: 1px solid var(--line);
 }
 
-.profile-form { overflow: visible; padding: 14px 12px 20px; }
+.profile-form {
+  overflow: hidden;
+  padding: 14px 12px 20px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 .profile-title { margin: 0 0 4px; font-size: 22px; }
 .profile-block {
   margin-top: 14px;
@@ -712,10 +718,40 @@ canvas.thermo-detail {
   font-size: 12px;
   font-weight: 600;
 }
-.profile-form .field input[type="date"] {
+.profile-form .date-box {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-sizing: border-box;
+}
+.profile-form .date-box input[type="date"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 46px;
+  margin: 0;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
   box-sizing: border-box;
   color-scheme: light;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.profile-form .date-box input[type="date"]::-webkit-datetime-edit {
+  min-width: 0;
+  padding: 0;
+}
+.profile-form .date-box input[type="date"]::-webkit-calendar-picker-indicator {
+  margin-left: 0;
+  flex-shrink: 0;
 }
 .profile-form .profile-actions {
   display: grid;

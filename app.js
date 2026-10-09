@@ -2343,6 +2343,9 @@ function field(name, label, value, full = false, type = "text") {
   if (type === "textarea") {
     return `<label class="${cls}">${escapeHtml(label)}<textarea name="${name}">${escapeHtml(value)}</textarea></label>`;
   }
+  if (type === "date") {
+    return `<label class="${cls}">${escapeHtml(label)}<span class="date-box"><input name="${name}" type="date" value="${escapeHtml(value)}" /></span></label>`;
+  }
   return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="${type}" value="${escapeHtml(value)}" /></label>`;
 }
 
