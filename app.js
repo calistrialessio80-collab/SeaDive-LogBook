@@ -922,6 +922,7 @@ function effortModel(d) {
       ? `Indicatore sul SAC del computer: ${fmtDepth(sac)} L/min.`
       : `Indicatore sul SAC calcolato: ${fmtDepth(sac)} L/min.`;
     if (tankForSac(d).assumed) hint += " Bombola 12 L presunta.";
+    if (d.computerLog?.pressureAssumed && Number(d.pressureStart) === 200) hint += " Inizio 200 bar precompilato.";
   }
   return { sac, pct, label, hint, imported };
 }
@@ -2686,6 +2687,13 @@ function startNew() {
   const draft = emptyDive();
   draft.number = nextNumber();
   draft.certOnDive = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
+  const prev = [...(state.dives || [])].sort((a, b) => {
+    const da = `${a.date || ""}T${a.timeIn || "00:00"}`;
+    const db = `${b.date || ""}T${b.timeIn || "00:00"}`;
+    return da.localeCompare(db);
+  }).pop();
+  if (prev && Number(prev.tank) > 0) draft.tank = String(prev.tank);
+  draft.pressureStart = Number(prev?.pressureStart) >= 150 ? String(prev.pressureStart) : "200";
   view = { name: "edit", diveId: draft.id, draft, query: view.query };
   render();
 }
@@ -2741,6 +2749,9 @@ function renderEdit() {
       ${field("mix", "Miscela Nitrox %", d.mix)}
       ${field("pressureStart", "Press. inizio (bar)", d.pressureStart)}
       ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
+    </div>
+    <p class="hint">Inizio precompilato a 200 bar e bombola 12 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
+    <div class="form-grid">
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
       ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "number")}

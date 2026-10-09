@@ -339,9 +339,7 @@ function splitDateTime(raw) {
 
 function baseImported(partial) {
   const d = typeof emptyDive === "function" ? emptyDive() : {};
-  d.tank = "";
   d.mix = "";
-  d.pressureStart = "";
   d.safetyStop = "";
   const merged = {
     ...d,
@@ -365,9 +363,10 @@ function normalizeImported(d) {
   d.sac = strField(d.sac);
   d.gf = strField(d.gf) || strField(d.computerLog?.gf);
   if (d.tank !== "" && d.tank != null) d.tank = volumeLiters(d.tank) || strField(d.tank);
+  if (!d.tank) d.tank = "12";
   const mix = o2Percent(d.mix);
   d.mix = mix || "21";
-  d.pressureStart = pressureBar(d.pressureStart);
+  d.pressureStart = pressureBar(d.pressureStart) || "200";
   d.pressureEnd = pressureBar(d.pressureEnd);
   d.maxDepth = d.maxDepth === "" || d.maxDepth == null ? "" : String(Math.round(Number(d.maxDepth) * 10) / 10);
   const avgN = Number(d.avgDepth);
@@ -2600,12 +2599,20 @@ function parseFitBlock(bytes, origin) {
       (sampleBars.length ? String(sampleBars[sampleBars.length - 1]) : "") ||
       fitPressureBar(catPick(bag.catalog, ["tank_pressure", "cylinder_pressure"], "last")) ||
       (bag.tanks.length ? fitPressureBar(bag.tanks[bag.tanks.length - 1]) : "");
+    const tankFromFile = Boolean(
+      volumeLiters(bag.tankVol[0]) ||
+        volumeLiters(s.tankVol) ||
+        volumeLiters(catPick(bag.catalog, ["tank_volume", "tank_size", "cylinder_size", "cylinder_volume"])) ||
+        volumeLiters(pickBagDev(bag, isTankVolName))
+    );
     const tankL =
       volumeLiters(bag.tankVol[0]) ||
       volumeLiters(s.tankVol) ||
       volumeLiters(catPick(bag.catalog, ["tank_volume", "tank_size", "cylinder_size", "cylinder_volume"])) ||
       volumeLiters(pickBagDev(bag, isTankVolName)) ||
-      (pStart && pEnd ? "12" : "");
+      "12";
+    extras.pressureAssumed = !pStart;
+    extras.tankAssumed = !tankFromFile;
     extras.sacFit = firstGood(
       [
         catPick(bag.catalog, ["sac", "rmv", "air_consumption", "gas_consumption", "volume_sac", "avg_volume_sac", "ventilation"]),
