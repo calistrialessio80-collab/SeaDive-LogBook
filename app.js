@@ -1319,12 +1319,12 @@ function renderNav() {
   const nav = document.createElement("nav");
   nav.className = "nav";
   const items = [
-    ["home", "⌂", "SeaDive"],
-    ["log", "☰", "Diario"],
-    ["map", "⌖", "Mappa"],
+    ["home", "🌊", "SeaDive"],
+    ["log", "📒", "Diario"],
+    ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Bio"],
     ["computer", "⌚", "Computer"],
-    ["profile", "✦", "Profilo"],
+    ["profile", "👤", "Profilo"],
   ];
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");

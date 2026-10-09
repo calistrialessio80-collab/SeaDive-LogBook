@@ -464,9 +464,15 @@ body.page-home .section-head h3 { color: #1c2430; }
 .nav button.active { color: #2f8fff; }
 .nav button.active span {
   width: 36px; height: 36px; margin: 0 auto 2px; border-radius: 50%;
-  background: #2f8fff; color: #fff; display: grid; place-items: center;
+  background: #e8f3ff; color: unset; display: grid; place-items: center;
 }
-.nav button span { display: block; font-size: 16px; }
+.nav button span {
+  display: block;
+  font-size: 18px;
+  line-height: 1.1;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-style: normal;
+}
 .nav button small {
   display: block; font-size: 9px; font-weight: 600; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; padding: 0 1px;
