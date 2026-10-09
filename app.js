@@ -309,6 +309,45 @@ function forgetDeletedDive(d) {
   state.deletedDiveIds = (state.deletedDiveIds || []).filter((k) => !drop.has(k));
 }
 
+function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel = "Annulla" } = {}) {
+  return new Promise((resolve) => {
+    document.querySelector(".confirm-veil")?.remove();
+    const veil = document.createElement("div");
+    veil.className = "confirm-veil";
+    veil.innerHTML = `
+      <div class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <h3 id="confirm-title">${escapeHtml(title)}</h3>
+        <p>${escapeHtml(message)}</p>
+        <div class="confirm-actions">
+          <button type="button" class="btn ghost" data-no>${escapeHtml(cancel)}</button>
+          <button type="button" class="btn danger" data-yes>${escapeHtml(ok)}</button>
+        </div>
+      </div>
+    `;
+    const done = (v) => {
+      veil.remove();
+      resolve(v);
+    };
+    veil.addEventListener("click", (e) => {
+      if (e.target === veil) done(false);
+    });
+    veil.querySelector("[data-no]").onclick = () => done(false);
+    veil.querySelector("[data-yes]").onclick = () => done(true);
+    document.body.append(veil);
+  });
+}
+
+function askDeleteDive(d) {
+  const where = d?.site || "questa immersione";
+  const n = d?.number ? ` n° ${d.number}` : "";
+  return askConfirm({
+    title: "Conferma eliminazione",
+    message: `Vuoi davvero eliminare ${where}${n} dal diario? Non si può annullare.`,
+    ok: "Elimina",
+    cancel: "Annulla",
+  });
+}
+
 function removeDive(d) {
   if (!d) return;
   rememberDeletedDive(d);
@@ -1942,10 +1981,10 @@ function diveCard(d) {
     </div>
     ${effortHtml(d, true)}
   `;
-  art.querySelector("[data-deldive]").onclick = (e) => {
+  art.querySelector("[data-deldive]").onclick = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm("Eliminare questa immersione dal diario?")) return;
+    if (!(await askDeleteDive(d))) return;
     removeDive(d);
     render();
   };
@@ -2746,8 +2785,8 @@ function renderDetail() {
     view = { name: "log", query: view.query };
     render();
   };
-  card.querySelector("[data-act=del]").onclick = () => {
-    if (!confirm("Eliminare questa immersione dal diario?")) return;
+  card.querySelector("[data-act=del]").onclick = async () => {
+    if (!(await askDeleteDive(d))) return;
     removeDive(d);
     view = { name: "log", query: view.query };
     render();
@@ -3186,8 +3225,8 @@ function renderEdit() {
     view = { name: "log", query: view.query };
     render();
   };
-  form.querySelector("[data-deldive]")?.addEventListener("click", () => {
-    if (!confirm("Eliminare questa immersione dal diario?")) return;
+  form.querySelector("[data-deldive]")?.addEventListener("click", async () => {
+    if (!(await askDeleteDive(d))) return;
     removeDive(d);
     view = { name: "log", query: view.query };
     render();

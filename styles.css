@@ -497,6 +497,39 @@ body.page-home .section-head h3 { color: #1c2430; }
 .btn.primary { background: #2f8fff; color: #fff; }
 .btn.ghost { background: #fff; color: var(--foam); border: 1px solid var(--line); }
 .btn.danger { background: rgba(255, 107, 87, 0.14); color: #c44532; }
+.confirm-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 30000;
+  background: rgba(16, 24, 32, 0.48);
+  display: grid;
+  place-items: center;
+  padding: 24px 16px calc(24px + var(--safe-bottom));
+}
+.confirm-card {
+  width: min(360px, 100%);
+  background: #fff;
+  border-radius: 22px;
+  padding: 20px 18px 16px;
+  box-shadow: 0 18px 48px rgba(16, 24, 32, 0.28);
+}
+.confirm-card h3 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+.confirm-card p {
+  margin: 0 0 16px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #4a5562;
+}
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.confirm-actions .btn { width: 100%; }
 .fab {
   position: fixed; right: 18px; bottom: calc(var(--nav-h) + 18px);
   width: 58px; height: 58px; border-radius: 50%; border: 0;
