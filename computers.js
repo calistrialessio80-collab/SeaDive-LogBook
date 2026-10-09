@@ -2115,6 +2115,97 @@ function pickNdlMinutes(samples, bag, session, desc) {
   return "";
 }
 
+/** ZH-L16C azoto. NDL residuo dal profilo + mix + GF quando il FIT non lo scrive. */
+const ZHL16C_N2 = [
+  { ht: 5.0, a: 1.1696, b: 0.5578 },
+  { ht: 8.0, a: 1.0, b: 0.6514 },
+  { ht: 12.5, a: 0.8618, b: 0.7222 },
+  { ht: 18.5, a: 0.7562, b: 0.7825 },
+  { ht: 27.0, a: 0.62, b: 0.8126 },
+  { ht: 38.3, a: 0.5043, b: 0.8434 },
+  { ht: 54.3, a: 0.441, b: 0.8693 },
+  { ht: 77.0, a: 0.4, b: 0.891 },
+  { ht: 109.0, a: 0.375, b: 0.9092 },
+  { ht: 146.0, a: 0.35, b: 0.9222 },
+  { ht: 187.0, a: 0.3295, b: 0.9319 },
+  { ht: 239.0, a: 0.3065, b: 0.9403 },
+  { ht: 305.0, a: 0.2835, b: 0.9477 },
+  { ht: 390.0, a: 0.261, b: 0.9544 },
+  { ht: 498.0, a: 0.248, b: 0.9602 },
+  { ht: 635.0, a: 0.2327, b: 0.9653 },
+];
+
+function palvN2(depthM, fo2, fhe) {
+  const pamb = 1 + Math.max(0, Number(depthM) || 0) / 10;
+  const fn2 = Math.max(0, 1 - (Number(fo2) || 0.21) - (Number(fhe) || 0));
+  return fn2 * Math.max(0.05, pamb - 0.0627);
+}
+
+function loadTissues(tissues, depthM, minutes, fo2, fhe) {
+  const palv = palvN2(depthM, fo2, fhe);
+  const dt = Math.max(0, Number(minutes) || 0);
+  return tissues.map((p, i) => {
+    const k = Math.LN2 / ZHL16C_N2[i].ht;
+    return p + (palv - p) * (1 - Math.exp(-k * dt));
+  });
+}
+
+function ceilingM(tissues, gf) {
+  let maxC = 0;
+  tissues.forEach((p, i) => {
+    const { a, b } = ZHL16C_N2[i];
+    const g = Math.max(0.05, Math.min(1, Number(gf) || 0.8));
+    const denom = 1 - g + g / b;
+    if (denom <= 0) return;
+    const pamb = (p - g * a) / denom;
+    const m = (pamb - 1) * 10;
+    if (m > maxC) maxC = m;
+  });
+  return maxC;
+}
+
+function remainingNdlMin(tissues, depthM, fo2, fhe, gfLow) {
+  const stopOk = (t) => ceilingM(t, gfLow) <= 2.8;
+  if (!stopOk(tissues)) return 0;
+  if (stopOk(loadTissues(tissues, depthM, 99, fo2, fhe))) return 99;
+  let lo = 0;
+  let hi = 99;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (stopOk(loadTissues(tissues, depthM, mid, fo2, fhe))) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+function ndlFromProfile(pts, mix, gf, helium) {
+  const s = [...(pts || [])]
+    .filter((p) => Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.d)))
+    .sort((a, b) => Number(a.t) - Number(b.t));
+  if (s.length < 8) return { ndl: "", deco: false };
+  const fo2 = Math.max(0.1, Math.min(1, (Number(mix) || 21) / 100));
+  const fhe = Math.max(0, Math.min(0.8, (Number(helium) || 0) / (Number(helium) > 1.5 ? 100 : 1)));
+  const pair = String(gf || "").match(/(\d+(?:\.\d+)?)\s*[/|:]\s*(\d+(?:\.\d+)?)/);
+  const gfHigh = pair ? Number(pair[2]) / 100 : 0.8;
+  const surf = palvN2(0, fo2, fhe);
+  let tissues = ZHL16C_N2.map(() => surf);
+  let minNdl = 99;
+  let deco = false;
+  for (let i = 1; i < s.length; i++) {
+    const dt = Number(s[i].t) - Number(s[i - 1].t);
+    const d = Number(s[i].d);
+    if (!(dt > 0) || dt > 8) continue;
+    tissues = loadTissues(tissues, d, dt, fo2, fhe);
+    if (d < 5) continue;
+    const ndl = remainingNdlMin(tissues, d, fo2, fhe, gfHigh);
+    if (ndl < minNdl) minNdl = ndl;
+    if (ndl === 0) deco = true;
+  }
+  if (ceilingM(tissues, gfHigh) > 2.8) deco = true;
+  if (minNdl >= 99 && !deco) return { ndl: "99", deco: false };
+  return { ndl: String(minNdl), deco };
+}
+
 function fitPressureBar(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return "";
@@ -2549,7 +2640,16 @@ function parseFitBlock(bytes, origin) {
     const hrMax = bag.hr.length ? String(Math.max(...bag.hr)) : fitScore(s.hrMax, 250);
     extras.hrAvg = hrAvg || "";
     extras.hrMax = hrMax || "";
+    extras.helium = bag.he[0] != null ? o2Percent(bag.he[0]) : catPick(bag.catalog, ["helium", "he"]);
     extras.ndl = pickNdlMinutes(use, bag, s, desc);
+    extras.ndlFromFile = extras.ndl !== "" && extras.ndl != null;
+    let ndlDeco = false;
+    if (!extras.ndlFromFile) {
+      const calc = ndlFromProfile(profilePoints, o2, extras.gf, extras.helium);
+      extras.ndl = calc.ndl;
+      extras.ndlCalc = Boolean(calc.ndl !== "");
+      ndlDeco = Boolean(calc.deco);
+    }
     extras.tts =
       last.fields?.[101] ?? last.fields?.[77] ?? catPick(bag.catalog, ["tts", "time_to_surface"]);
     const ndlRaw = use
@@ -2559,12 +2659,12 @@ function parseFitBlock(bytes, origin) {
     const ceiling = Number(catPick(bag.catalog, ["ceiling", "deco_ceiling", "next_stop_depth"]));
     const decoTime = Number(catPick(bag.catalog, ["deco_time"]));
     extras.deco =
+      ndlDeco ||
       (ndlRaw.length > 0 && ndlRaw.some((n) => n === 0)) ||
       extras.ndl === "0" ||
       (ceiling > 0.3 && ceiling < 120) ||
       (decoTime > 0 && decoTime < 400) ||
       Number(hang) > 5;
-    extras.helium = bag.he[0] != null ? o2Percent(bag.he[0]) : catPick(bag.catalog, ["helium", "he"]);
     extras.all = catalogDump(bag.catalog, {
       Computer: brand,
       "Prof. max": maxM ? maxM + " m" : "",
@@ -2645,6 +2745,11 @@ function parseFitBlock(bytes, origin) {
           extras.sacFit ? `SAC ${extras.sacFit} L/min` : "",
           ascentRate ? `risalita ${ascentRate} m/min` : "",
           extras.gf ? `GF ${extras.gf}` : "",
+          extras.ndl !== "" && extras.ndl != null
+            ? extras.ndlFromFile
+              ? `NDL ${extras.ndl} min`
+              : `NDL ${extras.ndl} min (Bühlmann 16 GF)`
+            : "",
           extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
           hang ? `sosta ${hang} min` : "",
           extras.samples ? `${extras.samples} campioni profilo` : "",
@@ -2851,4 +2956,5 @@ window.SeaDiveComputers = {
   meanProfileDepthM,
   fillSurfaceFromFitTimes,
   surfaceFromPrevDives,
+  ndlFromProfile,
 };
