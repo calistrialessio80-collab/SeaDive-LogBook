@@ -795,7 +795,6 @@ function downsampleProfile(pts) {
       const c = sampleTemp(p);
       const row = { t: Number(p.t), d: Number(p.d) };
       if (c != null) row.c = c;
-      if (Number(p.z) > 0) row.z = Math.round(Number(p.z) * 10) / 10;
       return row;
     })
     .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.d) && p.d >= 0 && p.t >= 0)
@@ -2182,7 +2181,7 @@ function decoTrackFromProfile(pts, mix, gf, helium) {
   const s = [...(pts || [])]
     .filter((p) => Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.d)))
     .sort((a, b) => Number(a.t) - Number(b.t));
-  const empty = { points: s, ndl: "", deco: false, ceiling: "", decoTime: "", decoStop: "" };
+  const empty = { points: s, ndl: "", deco: false };
   if (s.length < 8) return empty;
   const fo2 = Math.max(0.1, Math.min(1, (Number(mix) || 21) / 100));
   const fhe = Math.max(0, Math.min(0.8, (Number(helium) || 0) / (Number(helium) > 1.5 ? 100 : 1)));
@@ -2193,26 +2192,19 @@ function decoTrackFromProfile(pts, mix, gf, helium) {
   let tissues = ZHL16C_N2.map(() => surf);
   let minNdl = 99;
   let maxCeil = 0;
-  let decoMin = 0;
-  if (s[0]) s[0].z = 0;
   for (let i = 1; i < s.length; i++) {
     const dt = Number(s[i].t) - Number(s[i - 1].t);
     const d = Number(s[i].d);
     if (dt > 0 && dt <= 8) tissues = loadTissues(tissues, d, dt, fo2, fhe);
     const z = Math.max(0, ceilingM(tissues, gfLow));
-    s[i].z = Math.round(z * 10) / 10;
     if (z > maxCeil) maxCeil = z;
-    if (z >= 2.8 && dt > 0 && dt < 8) decoMin += dt;
     if (d < 5) continue;
     const ndl = remainingNdlMin(tissues, d, fo2, fhe, gfHigh);
     if (ndl < minNdl) minNdl = ndl;
   }
   const deco = maxCeil >= 2.8;
-  const decoStop = deco ? String(Math.max(3, Math.round(maxCeil / 3) * 3)) : "";
-  const ceiling = maxCeil > 0.3 ? String(Math.round(maxCeil * 10) / 10) : "";
-  const decoTime = decoMin >= 0.2 ? String(Math.round(decoMin * 10) / 10) : "";
   const ndl = minNdl >= 99 && !deco ? "99" : String(minNdl);
-  return { points: s, ndl, deco, ceiling, decoTime, decoStop };
+  return { points: s, ndl, deco };
 }
 
 function ndlFromProfile(pts, mix, gf, helium) {
@@ -2666,9 +2658,6 @@ function parseFitBlock(bytes, origin) {
     extras.ndl = pickNdlMinutes(use, bag, s, desc);
     extras.ndlFromFile = extras.ndl !== "" && extras.ndl != null;
     const calc = decoTrackFromProfile(profilePoints, o2, extras.gf, extras.helium);
-    extras.decoCeiling = calc.ceiling;
-    extras.decoTime = calc.decoTime;
-    extras.decoStop = calc.decoStop;
     let ndlDeco = Boolean(calc.deco);
     if (!extras.ndlFromFile) {
       extras.ndl = calc.ndl;
@@ -2710,10 +2699,7 @@ function parseFitBlock(bytes, origin) {
       "FC max": hrMax ? hrMax + " bpm" : "",
       NDL: extras.ndl !== "" && extras.ndl != null ? extras.ndl + " min" : "",
       "Int. superficie": extras.surfaceInterval ? extras.surfaceInterval + " min" : "",
-      Deco: extras.deco ? "Deco" : "No deco",
-      "Tetto deco": extras.decoCeiling ? extras.decoCeiling + " m" : "",
-      "Sosta deco": extras.decoStop ? extras.decoStop + " m" : "",
-      "Tempo deco": extras.decoTime ? extras.decoTime + " min" : "",
+      "Fuori curva": extras.deco ? "Sì" : "No",
       Circuito: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
       GF: extras.gf,
       TTS: extras.tts,
@@ -2746,9 +2732,6 @@ function parseFitBlock(bytes, origin) {
         ndl: extras.ndl || "",
         deco: Boolean(extras.deco),
         noDeco: !extras.deco,
-        decoCeiling: extras.decoCeiling || "",
-        decoStop: extras.decoStop || "",
-        decoTime: extras.decoTime || "",
         circuitClosed: /ccr/i.test(mode),
         circuitOpen: !/ccr/i.test(mode),
         regulator: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
@@ -2780,8 +2763,7 @@ function parseFitBlock(bytes, origin) {
               ? `NDL ${extras.ndl} min`
               : `NDL ${extras.ndl} min (Bühlmann 16 GF)`
             : "",
-          extras.decoStop ? `sosta deco ${extras.decoStop} m` : "",
-          extras.decoCeiling ? `tetto ${extras.decoCeiling} m` : "",
+          extras.deco ? "fuori curva" : "in curva",
           extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
           hang ? `sosta ${hang} min` : "",
           extras.samples ? `${extras.samples} campioni profilo` : "",
