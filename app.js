@@ -2756,8 +2756,10 @@ function renderEdit() {
     </div>
     <p class="hint" data-geohint>Tocca o trascina il pin. Non serve scrivere latitudine e longitudine.</p>
     <div class="form-grid">
-      ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
-      ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
+      <div class="form-pair">
+        ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
+        ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
+      </div>
       ${field("maxDepth", "Prof. max (m)", d.maxDepth, false, "number")}
       ${field("avgDepth", "Prof. media (m)", d.avgDepth || d.computerLog?.avgDepth || "", false, "number")}
       ${field("plannedDepth", "Prof. programmata (m)", d.plannedDepth, false, "number")}
