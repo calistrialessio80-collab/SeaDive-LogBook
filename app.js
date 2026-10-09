@@ -1804,10 +1804,10 @@ function renderHome() {
       <strong>${avgSac()}</strong>
       ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
     </button>
-    <button class="kpi" type="button" data-go="stats">
-      <p>Bilancio stress <span>◈</span></p>
-      <strong>${trainingLoad().tsb || "—"}</strong>
-      <em>TSB</em>
+    <button class="kpi" type="button" data-go="log">
+      <p>Profondità max <span>▼</span></p>
+      <strong>${t.max > 0 ? fmtDepth(t.max) : "—"}</strong>
+      ${t.max > 0 ? "<em>metri</em>" : ""}
     </button>
     <button class="kpi kpi-chart" type="button" data-go="stats">
       <p>Immersioni per anno <span>▣</span></p>
