@@ -680,10 +680,22 @@ function fmtItDateLong(iso) {
   return d.toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function fmtDepth(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || v === "" || v == null) return "—";
+function parseDecimal(v) {
+  if (v == null || v === "") return NaN;
+  const n = parseFloat(String(v).trim().replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function formatDecimal(v) {
+  const n = parseDecimal(v);
+  if (!Number.isFinite(n)) return "";
   return String(Math.round(n * 10) / 10).replace(".", ",");
+}
+
+function fmtDepth(v) {
+  const n = parseDecimal(v);
+  if (!Number.isFinite(n) || v === "" || v == null) return "—";
+  return formatDecimal(n);
 }
 
 function diveDuration(d) {
@@ -769,7 +781,7 @@ function computeTss(d) {
     return { value: String(Math.round(tss * 10) / 10), kind: "hr", label: "TSS(hr) · frequenza vs soglia zona 4/5" };
   }
   if (hours > 0) {
-    const sac = diveSac(d) || Number(d.sac) || 0;
+    const sac = diveSac(d) || parseDecimal(d.sac) || 0;
     const depth = meanDepthM(d);
     const climb = Number(d.ascentMax || d.ascentRate) || 0;
     let met = 4;
@@ -866,15 +878,15 @@ function applyDiveMetrics(d) {
   d.ascentMax = ascent.max || "";
   const calc = diveSac(d);
   const imported = Number(d.computerLog?.sacFit);
-  const already = Number(d.sac);
+  const already = parseDecimal(d.sac);
   if (d.sacManual) {
-    /* SAC digitato a mano */
+    /* SAC digitato a mano, anche con virgola */
   } else if (imported > 0.5 && imported < 80) {
-    d.sac = String(Math.round(imported * 10) / 10);
+    d.sac = formatDecimal(imported);
   } else if (already > 0.5 && already < 80) {
-    d.sac = String(Math.round(already * 10) / 10);
+    d.sac = formatDecimal(already);
   } else if (calc > 0) {
-    d.sac = String(Math.round(calc * 10) / 10);
+    d.sac = formatDecimal(calc);
   } else {
     d.sac = d.sac || "";
   }
@@ -895,7 +907,7 @@ function applyDiveMetrics(d) {
 
 function effortSac(d) {
   const imported = Number(d.computerLog?.sacFit);
-  const stored = Number(d.sac);
+  const stored = parseDecimal(d.sac);
   const calc = diveSac(d);
   if (imported > 0.5 && imported < 80) return imported;
   if (stored > 0.5 && stored < 80) return stored;
@@ -2545,6 +2557,9 @@ function field(name, label, value, full = false, type = "text") {
   if (type === "date") {
     return `<label class="${cls}">${escapeHtml(label)}<span class="date-box"><input name="${name}" type="date" value="${escapeHtml(value)}" /></span></label>`;
   }
+  if (type === "decimal") {
+    return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="text" inputmode="decimal" lang="it" enterkeyhint="done" value="${escapeHtml(value)}" /></label>`;
+  }
   return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="${type}" value="${escapeHtml(value)}" /></label>`;
 }
 
@@ -2754,7 +2769,7 @@ function renderEdit() {
     <div class="form-grid">
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
-      ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "number")}
+      ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "decimal")}
       ${field("gf", "GF (low/high)", d.gf || d.computerLog?.gf || "", false, "text")}
       ${field("ndl", "NDL residuo (min)", d.ndl !== "" && d.ndl != null ? d.ndl : d.computerLog?.ndl || "", false, "number")}
       ${field("instruments", "Strumentazione", d.instruments)}
