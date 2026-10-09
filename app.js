@@ -835,10 +835,25 @@ function fillAvgCnsOtu(d) {
     if (log > 0) d.otu = String(Math.round(log * 10) / 10);
     else if (computed !== "" && computed != null) d.otu = String(computed);
   }
+  if (!String(d.surfaceInterval || "").trim()) {
+    const si = d.computerLog?.surfaceInterval;
+    if (si !== "" && si != null) d.surfaceInterval = String(si);
+  }
+  if (d.ndl === "" || d.ndl == null) {
+    const ndl = d.computerLog?.ndl;
+    if (ndl !== "" && ndl != null) d.ndl = String(ndl);
+  }
+  if (!String(d.gf || "").trim()) {
+    const gf = d.computerLog?.gf;
+    if (gf) d.gf = String(gf);
+  }
   if (d.computerLog) {
     if (!(Number(d.computerLog.avgDepth) > 0.3) && Number(d.avgDepth) > 0.3) d.computerLog.avgDepth = d.avgDepth;
     if (!(Number(d.computerLog.cns) > 0) && d.cns !== "" && d.cns != null) d.computerLog.cns = d.cns;
     if (!(Number(d.computerLog.otu) > 0) && d.otu !== "" && d.otu != null) d.computerLog.otu = d.otu;
+    if (!d.computerLog.surfaceInterval && d.surfaceInterval) d.computerLog.surfaceInterval = d.surfaceInterval;
+    if ((d.computerLog.ndl === "" || d.computerLog.ndl == null) && d.ndl !== "" && d.ndl != null) d.computerLog.ndl = d.ndl;
+    if (!d.computerLog.gf && d.gf) d.computerLog.gf = d.gf;
   }
   return d;
 }
@@ -2565,7 +2580,7 @@ function renderDetail() {
       <div><b>Risalita max</b><span class="${ascentClass(d.ascentMax)}">${escapeHtml(d.ascentMax || "—")} m/min</span></div>
       <div><b>SAC superficie</b>${escapeHtml(d.sac || "—")} L/min</div>
       <div><b>Sosta sicurezza</b>${escapeHtml(d.safetyStop || "—")} min</div>
-      <div><b>Intervallo superficie</b>${escapeHtml(d.surfaceInterval || "—")}</div>
+      <div><b>Intervallo superficie</b>${escapeHtml(d.surfaceInterval || d.computerLog?.surfaceInterval || "—")}${d.surfaceInterval || d.computerLog?.surfaceInterval ? " min" : ""}</div>
       <div><b>Visibilità</b>${escapeHtml(d.visibility || "—")} m</div>
       <div><b>Temp. acqua / aria</b>${escapeHtml(d.waterTemp || "—")}° / ${escapeHtml(d.airTemp || "—")}°</div>
       <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp || "—")} °C</div>
@@ -2695,7 +2710,7 @@ function renderEdit() {
       ${field("bottomTime", "Tempo di fondo (min)", d.bottomTime, false, "number")}
       ${field("totalTime", "Durata totale (min)", d.totalTime, false, "number")}
       ${field("safetyStop", "Sosta sicurezza (min)", d.safetyStop, false, "number")}
-      ${field("surfaceInterval", "Intervallo superficie", d.surfaceInterval)}
+      ${field("surfaceInterval", "Intervallo superficie (min)", d.surfaceInterval || d.computerLog?.surfaceInterval || "")}
       ${field("visibility", "Visibilità (m)", d.visibility, false, "number")}
       ${field("waterTemp", "Temp. acqua (°C)", d.waterTemp, false, "number")}
       ${field("bottomTemp", "Temp. fondo (°C)", d.bottomTemp, false, "number")}
@@ -2715,7 +2730,7 @@ function renderEdit() {
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
       ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "number")}
       ${field("gf", "GF (low/high)", d.gf || d.computerLog?.gf || "", false, "text")}
-      ${field("ndl", "NDL residuo (min)", d.ndl, false, "number")}
+      ${field("ndl", "NDL residuo (min)", d.ndl !== "" && d.ndl != null ? d.ndl : d.computerLog?.ndl || "", false, "number")}
       ${field("instruments", "Strumentazione", d.instruments)}
     </div>
     <p class="hint">Autorespiratore — spunta circuito aperto, chiuso o entrambi</p>
