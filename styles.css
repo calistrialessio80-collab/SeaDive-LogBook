@@ -761,14 +761,51 @@ canvas.thermo-detail {
 .bio-search .search { margin-bottom: 0; }
 .bio-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .bio-card {
+  display: grid;
+  grid-template-columns: 1fr 76px;
+  grid-template-areas:
+    "body pic"
+    "actions pic";
+  gap: 8px 12px;
+  align-items: center;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(8, 56, 72, 0.12);
   border-radius: 16px;
   padding: 12px 14px;
 }
+.bio-body { grid-area: body; min-width: 0; }
+.bio-pic {
+  grid-area: pic;
+  position: relative;
+  width: 76px;
+  height: 76px;
+  justify-self: end;
+}
+.bio-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #d4eef8, #8ebfd4);
+}
+.bio-shot {
+  position: absolute;
+  inset: 0;
+  width: 76px;
+  height: 76px;
+  object-fit: cover;
+  border-radius: 14px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background: #c5dde8;
+}
+.bio-shot.on { opacity: 1; }
+.bio-pic.has-photo .bio-mark { opacity: 0; }
 .bio-card h3 { margin: 2px 0 0; font-size: 18px; }
 .bio-la { margin: 2px 0 0; font-style: italic; font-size: 13px; opacity: 0.72; }
-.bio-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.bio-actions { grid-area: actions; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0; }
 .bio-actions .btn { padding: 8px 12px; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; }
 @media (max-width: 360px) {
   .kpi { padding: 10px 10px 8px; min-height: 76px; }

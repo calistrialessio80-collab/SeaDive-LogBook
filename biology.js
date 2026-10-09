@@ -166,9 +166,66 @@ function filterMarineLife(query, filter) {
   });
 }
 
+function lifeEmoji(x) {
+  if (x.kind === "flora") return "🌿";
+  const g = x.group;
+  if (g === "Pesce") return "🐟";
+  if (g === "Mollusco") return "🦑";
+  if (g === "Crostaceo") return "🦀";
+  if (g === "Cnidario") return "🪸";
+  if (g === "Spugna") return "🧽";
+  if (g === "Echinoderma") return "⭐";
+  if (g === "Anellide") return "🌀";
+  if (g === "Rettile") return "🐢";
+  if (g === "Mammifero") return "🐋";
+  return "🌊";
+}
+
+const lifeThumbCache = {};
+
+async function lifeThumb(la, it) {
+  const key = String(la || it || "");
+  if (Object.prototype.hasOwnProperty.call(lifeThumbCache, key)) return lifeThumbCache[key];
+  const titles = [la, it].filter(Boolean);
+  for (const wiki of ["it", "en"]) {
+    for (const title of titles) {
+      try {
+        const res = await fetch(
+          `https://${wiki}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(String(title).replace(/ /g, "_"))}`
+        );
+        if (!res.ok) continue;
+        const data = await res.json();
+        const src = data.thumbnail?.source;
+        if (src && data.type !== "disambiguation") {
+          lifeThumbCache[key] = src;
+          return src;
+        }
+      } catch {
+        /* prova la fonte successiva */
+      }
+    }
+  }
+  try {
+    const res = await fetch(`https://api.inaturalist.org/v1/taxa?q=${encodeURIComponent(la)}&rank=species`);
+    const data = await res.json();
+    const photo = data.results?.[0]?.default_photo;
+    const src = photo?.medium_url || photo?.square_url || photo?.url || "";
+    if (src) {
+      lifeThumbCache[key] = src;
+      return src;
+    }
+  } catch {
+    /* niente foto */
+  }
+  lifeThumbCache[key] = "";
+  return "";
+}
+
 window.SeaDiveBiology = {
   MARINE_LIFE,
   filterMarineLife,
   lifeWeb,
   lifeWorms,
+  lifeEmoji,
+  lifeThumb,
 };

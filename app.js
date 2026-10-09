@@ -1576,6 +1576,29 @@ function drawTempDepth(canvas, points) {
   ctx.fill();
 }
 
+let bioThumbGen = 0;
+
+function bindBioThumbs(root) {
+  const api = window.SeaDiveBiology;
+  if (!api?.lifeThumb || !root) return;
+  const gen = ++bioThumbGen;
+  root.querySelectorAll("[data-bioimg]").forEach((img) => {
+    const io = new IntersectionObserver(async (entries, obs) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      obs.disconnect();
+      if (gen !== bioThumbGen) return;
+      const src = await api.lifeThumb(img.dataset.la, img.dataset.it);
+      if (gen !== bioThumbGen || !src) return;
+      img.src = src;
+      img.onload = () => {
+        img.classList.add("on");
+        img.closest(".bio-pic")?.classList.add("has-photo");
+      };
+    }, { rootMargin: "120px" });
+    io.observe(img);
+  });
+}
+
 function openLifePage(q) {
   const url = window.SeaDiveBiology?.lifeWeb?.(q || "biologia marina mediterraneo");
   if (url) window.open(url, "_blank", "noopener,noreferrer");
@@ -1618,10 +1641,14 @@ function renderBiology() {
     list.innerHTML = rows
       .map(
         (x) => `<article class="bio-card">
-        <div>
+        <div class="bio-body">
           <p class="meta">${escapeHtml(x.kind === "flora" ? "Flora" : "Fauna")} · ${escapeHtml(x.where)} · ${escapeHtml(x.group)}</p>
           <h3>${escapeHtml(x.it)}</h3>
           <p class="bio-la">${escapeHtml(x.la)}</p>
+        </div>
+        <div class="bio-pic">
+          <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+          <img class="bio-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         </div>
         <div class="bio-actions">
           <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Descrizione</a>
@@ -1633,6 +1660,7 @@ function renderBiology() {
     if (!rows.length) {
       list.innerHTML = `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
     }
+    bindBioThumbs(list);
   };
   filters.forEach(([id, label]) => {
     const b = document.createElement("button");
