@@ -561,7 +561,7 @@ function ratioFinalStopMin(pts) {
     const p = tail[i - 1];
     const n = tail[i];
     if (Number(p.d) > 8) break;
-    if (Number(p.d) >= 2.5 && Number(p.d) <= 6.5 && Number(n.d) <= 8) acc += Number(n.t) - Number(p.t);
+    if (Number(p.d) >= 4.5 && Number(p.d) <= 5.5 && Number(n.d) <= 8) acc += Number(n.t) - Number(p.t);
   }
   if (acc < 0.6 || acc > 12) return "";
   return String(Math.round(acc));
@@ -588,6 +588,7 @@ function parseRatioXml(xml, fileName) {
       let ndlLast = "";
       let stopDm = 0;
       let stopSec = 0;
+      const stopCounts = new Map();
       let he = "";
       let o2 = "";
       let ppo2 = "";
@@ -630,10 +631,14 @@ function parseRatioXml(xml, fileName) {
           ndlMin = ndlMin === "" ? Number(ndlSec) : Math.min(ndlMin, Number(ndlSec));
         }
         const stop = num(txt(s, ["firststopdepth"]));
-        if (stop !== "" && Number(stop) > stopDm) {
-          stopDm = Number(stop);
-          const st = num(txt(s, ["firststoptime"]));
-          if (st !== "") stopSec = Number(st);
+        if (stop !== "" && Number(stop) > 0) {
+          const dmStop = Number(stop);
+          stopCounts.set(dmStop, (stopCounts.get(dmStop) || 0) + 1);
+          if (dmStop > stopDm) {
+            stopDm = dmStop;
+            const st = num(txt(s, ["firststoptime"]));
+            if (st !== "") stopSec = Number(st);
+          }
         }
         const heNow = txt(s, ["activemixhepercent"]);
         const o2Now = txt(s, ["activemixo2percent"]);
@@ -683,16 +688,28 @@ function parseRatioXml(xml, fileName) {
       const waterN = txt(header, ["water"]);
       const waterName = waterN === "1" ? "Acqua dolce" : waterN === "0" ? "Acqua salata" : "";
       const model = /ix3m/i.test(fileName || "") ? (/pro/i.test(fileName || "") ? "Ratio iX3M Pro" : "Ratio iX3M") : "Ratio";
+      const hadTank = sampleNodes.some((s) => Number(num(txt(s, ["tankpressure"]))) > 0);
+      let usualStop = 0;
+      let usualN = 0;
+      stopCounts.forEach((n, dm) => {
+        if (n > usualN) {
+          usualN = n;
+          usualStop = dm;
+        }
+      });
       const volts = (raw) => {
         const n = num(raw);
         return n === "" ? "" : `${Math.round(Number(n)) / 100} V`;
       };
       const m1 = (n) => (n === "" || !Number(n) ? "" : String(Math.round(Number(n) * 10) / 10));
+      const stopLabel = usualStop
+        ? `${m1(usualStop / 10)} m${stopDm > usualStop ? " · massima " + m1(stopDm / 10) + " m" : ""}`
+        : "";
       const all = {
         Computer: model,
         "Prof. max": maxM ? `${m1(maxM)} m` : "",
         "Prof. media": avgM !== "" ? `${m1(avgM)} m` : "",
-        Durata: mins ? `${mins} min` : "",
+        "Durata totale": mins ? `${mins} min` : "",
         CNS: cns !== "" ? `${cns}%` : "",
         OTU: otu !== "" ? String(otu) : "",
         GF: gf,
@@ -700,9 +717,12 @@ function parseRatioXml(xml, fileName) {
         "NDL minimo": ratioClock(ndlMin),
         "NDL residuo": ratioClock(ndlLast),
         "Fuori curva": deco ? "Sì" : "No",
-        "Sosta sicurezza": safetySet ? `${safetyDepthDm !== "" ? m1(Number(safetyDepthDm) / 10) + " m · " : ""}${safetySet} min` : "",
-        "Sosta eseguita": safetyDone ? `${safetyDone} min` : "",
-        "Sosta indicata": stopDm > 0 ? `${m1(stopDm / 10)} m${stopSec ? " · " + ratioClock(stopSec) : ""}` : "",
+        "Sosta sicurezza": safetySet
+          ? `${safetyDepthDm !== "" ? m1(Number(safetyDepthDm) / 10) + " m · " : ""}${safetyDone || safetySet} min`
+          : safetyDone
+            ? `${safetyDone} min`
+            : "",
+        "Sosta indicata": stopLabel,
         Risalita: ascent.avg ? `${ascent.avg} m/min` : "",
         "Risalita max": ascent.max ? `${ascent.max} m/min` : "",
         "Temp. acqua": tempN ? `${m1(tempSum / tempN)} °C` : "",
@@ -737,13 +757,13 @@ function parseRatioXml(xml, fileName) {
         samples: profilePoints.length,
         all,
       };
-      return baseImported({
+      const dive = baseImported({
         date: when.date,
         timeIn: when.time,
         timeOut: when.time && mins ? addMinutes(when.time, mins) : "",
         maxDepth: maxM ? m1(maxM) : "",
         avgDepth: extras.avgDepth,
-        bottomTime: mins,
+        bottomTime: "",
         totalTime: mins,
         safetyStop: safetyDone || safetySet,
         surfaceInterval: extras.surfaceInterval,
@@ -768,6 +788,14 @@ function parseRatioXml(xml, fileName) {
         computerLog: extras,
         site: "",
       });
+      dive.plannedDepth = "";
+      dive.bottomTime = "";
+      if (!hadTank) {
+        if (String(dive.tank) === "15") dive.tank = "";
+        if (String(dive.pressureStart) === "200") dive.pressureStart = "";
+        dive.pressureEnd = "";
+      }
+      return dive;
     })
     .filter((d) => d.date || d.maxDepth || (d.profilePoints || []).length >= 3);
 }
