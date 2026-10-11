@@ -817,7 +817,7 @@ async function shareOneDive(d) {
       await navigator.share({
         files: [file],
         title: d.site || "Immersione SeaDive",
-        text: "Immersione condivisa da SeaDive. In Gente premi Ricevi immersione.",
+        text: "Immersione condivisa da SeaDive. In Community premi Ricevi immersione.",
       });
       return;
     }
@@ -1608,7 +1608,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 85</p>
+        <p class="hint">Versione 86</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -1648,7 +1648,7 @@ function renderNav() {
   const items = [
     ["home", "🌊", "SeaDive"],
     ["log", "📒", "Diario"],
-    ["people", "👥", "Gente"],
+    ["people", "👥", "Community"],
     ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Bio"],
     ["computer", "⌚", "Computer"],
@@ -3110,7 +3110,7 @@ function renderStats() {
 
 function renderPeople() {
   const frag = document.createDocumentFragment();
-  frag.append(topbar("community"));
+  frag.append(topbar("Community"));
   const card = document.createElement("section");
   card.className = "card";
   const role = view.peopleRole || "all";
@@ -3123,7 +3123,7 @@ function renderPeople() {
     })
     .sort((a, b) => roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it"));
   card.innerHTML = `
-    <h2 class="serif" style="margin:0 0 6px">Gente</h2>
+    <h2 class="serif" style="margin:0 0 6px">Community</h2>
     <p class="hint">Buddy, istruttori e diving con nome e numero di brevetto. Chi scrivi in una scheda entra qui. Per passare un'immersione: apri la scheda e premi Condividi. Chi la riceve la apre da qui.</p>
     <div class="chips" data-roles></div>
     <input class="search" data-find placeholder="Cerca nome o brevetto…" value="${escapeHtml(view.peopleQuery || "")}" />
@@ -3244,7 +3244,7 @@ function renderPerson() {
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
     <div class="actions">
       <button class="btn primary" type="submit">Salva</button>
-      <button class="btn ghost" type="button" data-back>Torna a Gente</button>
+      <button class="btn ghost" type="button" data-back>Torna a Community</button>
       ${creating ? "" : `<button class="btn danger" type="button" data-del>Togli dalla community</button>`}
     </div>
   `;
@@ -3807,7 +3807,7 @@ function renderEdit() {
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
       ${peoplePicksHtml()}
-      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Gente.</p>
+      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Community.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
