@@ -246,16 +246,39 @@ const seed = () => ({
   ],
 });
 
+function personNames(p) {
+  const role = p?.role;
+  let first = String(p?.firstName || "").trim();
+  let last = String(p?.lastName || "").trim();
+  let name = String(p?.name || "").trim().replace(/\s+/g, " ");
+  if (role === "center") return { firstName: "", lastName: "", name };
+  if (!first && !last && name) {
+    const parts = name.split(" ").filter(Boolean);
+    if (parts.length === 1) first = parts[0];
+    else {
+      last = parts.pop();
+      first = parts.join(" ");
+    }
+  }
+  if (!name) name = [first, last].filter(Boolean).join(" ");
+  return { firstName: first, lastName: last, name };
+}
+
 function cleanPerson(p) {
-  if (!p || !String(p.name || "").trim()) return null;
+  if (!p) return null;
   const role = p.role === "guide" || p.role === "center" ? p.role : "buddy";
+  const names = personNames({ ...p, role });
+  if (!names.name) return null;
   return {
     id: String(p.id || uid()),
     role,
-    name: String(p.name).trim().replace(/\s+/g, " "),
+    name: names.name,
+    firstName: names.firstName,
+    lastName: names.lastName,
     cert: String(p.cert || "").trim(),
     lead: String(p.lead || "").trim(),
     note: String(p.note || "").trim(),
+    following: Boolean(p.following),
   };
 }
 
@@ -485,6 +508,9 @@ function mergePeople(a, b) {
     if (!prev.cert && p.cert) prev.cert = p.cert;
     if (!prev.lead && p.lead) prev.lead = p.lead;
     if (!prev.note && p.note) prev.note = p.note;
+    if (!prev.firstName && p.firstName) prev.firstName = p.firstName;
+    if (!prev.lastName && p.lastName) prev.lastName = p.lastName;
+    if (p.following) prev.following = true;
   });
   return out;
 }
@@ -736,9 +762,15 @@ function upsertPerson(partial) {
   const twin = state.people.find((p) => p !== found && personKey(p.role, p.name) === key);
   found.role = role;
   found.name = name;
+  const names = personNames({ ...found, ...partial, role, name });
+  found.firstName = names.firstName;
+  found.lastName = names.lastName;
+  found.name = names.name || name;
   if (String(partial.cert || "").trim()) found.cert = String(partial.cert).trim();
   if (String(partial.lead || "").trim()) found.lead = String(partial.lead).trim();
   if (partial.note != null) found.note = String(partial.note).trim();
+  if (partial.following === true) found.following = true;
+  if (partial.following === false) found.following = false;
   if (twin) {
     if (!found.cert && twin.cert) found.cert = twin.cert;
     if (!found.lead && twin.lead) found.lead = twin.lead;
@@ -863,6 +895,11 @@ function parseSharedPayload(text) {
   const clean = String(text || "").replace(/^\uFEFF/, "").trim();
   const tryParse = (raw) => {
     const data = JSON.parse(raw);
+    if (data?.kind === "person-follow") {
+      const err = new Error("Questo file è un contatto: contiene solo nome, cognome e brevetto. Aprilo con Ricevi contatto.");
+      err.code = "person-follow";
+      throw err;
+    }
     if (data?.kind === "dive-share" && data.dive && typeof data.dive === "object") return data;
     if (data?.dive && typeof data.dive === "object" && (data.app === "seadive-logbook" || data.site || data.dive.site)) return data;
     return null;
@@ -870,7 +907,8 @@ function parseSharedPayload(text) {
   try {
     const direct = tryParse(clean);
     if (direct) return direct;
-  } catch {
+  } catch (err) {
+    if (err?.code === "person-follow") throw err;
     /* il telefono a volte aggiunge testo intorno al file */
   }
   const start = clean.indexOf("{");
@@ -879,7 +917,8 @@ function parseSharedPayload(text) {
     try {
       const wrapped = tryParse(clean.slice(start, end + 1));
       if (wrapped) return wrapped;
-    } catch {
+    } catch (err) {
+      if (err?.code === "person-follow") throw err;
       /* testo intorno al file, ma il JSON interno non è una scheda */
     }
   }
@@ -923,6 +962,119 @@ async function importSharedFile(file) {
   state.dives.push(dive);
   save(state);
   return dive;
+}
+
+function myFollowCard() {
+  const names = personNames({ name: state.profile.name || "" });
+  return {
+    app: "seadive-logbook",
+    kind: "person-follow",
+    version: 1,
+    sharedAt: new Date().toISOString(),
+    person: {
+      firstName: names.firstName,
+      lastName: names.lastName,
+      cert: String(state.profile.certNumber || "").trim(),
+    },
+  };
+}
+
+async function shareFollowCard() {
+  const card = myFollowCard();
+  if (!card.person.firstName && !card.person.lastName) {
+    alert("Scrivi nome e cognome nel profilo, poi segui. Nel file vanno solo quelli e il numero di brevetto.");
+    return false;
+  }
+  const blob = new Blob([JSON.stringify(card, null, 2)], { type: "text/plain" });
+  const who = (card.person.lastName || card.person.firstName || "contatto")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 24) || "contatto";
+  const file = new File([blob], `seadive-contatto-${who}.json`, { type: "text/plain" });
+  try {
+    if (navigator.share) {
+      await navigator.share({ files: [file] });
+      return true;
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return false;
+  }
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = file.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return true;
+}
+
+function parseFollowPayload(text) {
+  const clean = String(text || "").replace(/^\uFEFF/, "").trim();
+  const read = (raw) => {
+    const data = JSON.parse(raw);
+    if (data?.kind === "dive-share" || data?.dive) {
+      const err = new Error("Questo file è un'immersione. Si riceve solo con Ricevi immersione. Qui passano nome, cognome e brevetto.");
+      err.code = "dive-share";
+      throw err;
+    }
+    if (data?.kind !== "person-follow" || !data.person || typeof data.person !== "object") return null;
+    return {
+      firstName: String(data.person.firstName || "").trim(),
+      lastName: String(data.person.lastName || "").trim(),
+      cert: String(data.person.cert || "").trim(),
+    };
+  };
+  const tryRaw = (raw) => {
+    try {
+      return read(raw);
+    } catch (err) {
+      if (err?.code === "dive-share") throw err;
+      return null;
+    }
+  };
+  let card = tryRaw(clean);
+  if (!card) {
+    const start = clean.indexOf("{");
+    const end = clean.lastIndexOf("}");
+    if (start >= 0 && end > start) card = tryRaw(clean.slice(start, end + 1));
+  }
+  if (!card || (!card.firstName && !card.lastName)) {
+    throw new Error("Questo file non è un contatto SeaDive. Servono nome, cognome e numero di brevetto.");
+  }
+  return card;
+}
+
+function findFollowMatch(card) {
+  const full = [card.firstName, card.lastName].filter(Boolean).join(" ").toLowerCase();
+  return (state.people || []).find((p) => {
+    if (p.role === "center") return false;
+    if (card.cert && p.cert && p.cert.toLowerCase() === card.cert.toLowerCase()) return true;
+    return full && personNames(p).name.toLowerCase() === full;
+  }) || null;
+}
+
+async function importFollowFile(file) {
+  const card = parseFollowPayload(await readSharedText(file));
+  const name = [card.firstName, card.lastName].filter(Boolean).join(" ");
+  const existing = findFollowMatch(card);
+  if (existing) {
+    const before = { ...existing };
+    const person = upsertPerson({
+      id: existing.id,
+      role: existing.role,
+      name,
+      firstName: card.firstName,
+      lastName: card.lastName,
+      cert: card.cert,
+      following: true,
+    });
+    if (person) applyPersonOntoDives(before, person);
+    save(state);
+    return { person, created: false };
+  }
+  return { card, created: true, name };
 }
 
 function backupFilename() {
@@ -1680,7 +1832,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 89</p>
+        <p class="hint">Versione 90</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3190,20 +3342,22 @@ function renderPeople() {
     .filter((p) => role === "all" || p.role === role)
     .filter((p) => {
       if (!q) return true;
-      return [p.name, p.cert, p.lead, p.note, roleLabel(p.role)].join(" ").toLowerCase().includes(q);
+      return [p.name, p.firstName, p.lastName, p.cert, p.lead, p.note, roleLabel(p.role)].join(" ").toLowerCase().includes(q);
     })
     .sort((a, b) => roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it"));
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Buddy, istruttori e diving con nome e numero di brevetto. Chi scrivi in una scheda entra qui. Per passare un'immersione: apri la scheda e premi Condividi. Chi la riceve la apre da qui.</p>
+    <p class="hint">Buddy e istruttori che segui si scambiano solo nome, cognome e numero di brevetto. L'immersione si passa soltanto con Condividi sulla scheda.</p>
     <div class="chips" data-roles></div>
     <input class="search" data-find placeholder="Cerca nome o brevetto…" value="${escapeHtml(view.peopleQuery || "")}" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <div class="people-list" data-list></div>
     <div class="actions">
       <button class="btn primary" type="button" data-addperson>Aggiungi persona</button>
+      <button class="btn ghost" type="button" data-receivecontact>Ricevi contatto</button>
       <button class="btn ghost" type="button" data-receive>Ricevi immersione</button>
       <input type="file" data-receivefile />
+      <input type="file" data-receivecontactfile />
     </div>
   `;
   const roles = card.querySelector("[data-roles]");
@@ -3237,7 +3391,7 @@ function renderPeople() {
       btn.innerHTML = `
         <span>
           <strong>${escapeHtml(p.name)}</strong>
-          <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}</small>
+          <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}${p.following ? " · seguito" : ""}</small>
         </span>
         <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
       `;
@@ -3264,7 +3418,7 @@ function renderPeople() {
   };
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
-    view.personDraft = { id: uid(), role: "buddy", name: "", cert: "", lead: "", note: "" };
+    view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: false };
     view.peopleHint = "";
     render();
   };
@@ -3277,6 +3431,38 @@ function renderPeople() {
     try {
       const dive = await importSharedFile(files[0]);
       view = { name: "detail", diveId: dive.id, query: view.query || "", peopleRole: view.peopleRole || "all" };
+      render();
+    } catch (err) {
+      view.peopleHint = err.message || String(err);
+      render();
+    }
+  };
+  const contactInput = card.querySelector("[data-receivecontactfile]");
+  card.querySelector("[data-receivecontact]").onclick = () => contactInput.click();
+  contactInput.onchange = async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    if (!files.length) return;
+    try {
+      const res = await importFollowFile(files[0]);
+      if (res.created) {
+        view.personId = "new";
+        view.personDraft = {
+          id: uid(),
+          role: "buddy",
+          name: res.name,
+          firstName: res.card.firstName,
+          lastName: res.card.lastName,
+          cert: res.card.cert,
+          lead: "",
+          note: "",
+          following: true,
+        };
+        view.peopleHint = "";
+      } else {
+        view.personId = null;
+        view.peopleHint = `Segui ${res.person.name}. Aggiornati solo nome, cognome e brevetto.`;
+      }
       render();
     } catch (err) {
       view.peopleHint = err.message || String(err);
@@ -3299,22 +3485,28 @@ function renderPerson() {
   const form = document.createElement("form");
   form.className = "card";
   const dives = creating ? [] : divesForPerson(current);
+  const names = personNames(current);
   form.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
-    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Nome e brevetto restano pronti quando compili una scheda." : "Il nome e il brevetto si aggiornano anche sulle schede in cui compare già."}</p>
+    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Nome, cognome e brevetto restano pronti sulla scheda." : "Nome, cognome e brevetto si aggiornano anche sulle schede in cui compare già."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
     <div class="chips" data-roles></div>
     <input type="hidden" name="role" value="${escapeHtml(current.role || "buddy")}" />
     <div class="form-grid" style="margin-top:12px">
-      ${field("name", "Nome e cognome / denominazione", current.name, true)}
+      ${field("firstName", "Nome", names.firstName, true)}
+      ${field("lastName", "Cognome", names.lastName, true)}
       ${field("cert", "N° brevetto", current.cert, true)}
+      ${field("name", "Denominazione diving", current.role === "center" ? current.name : "", true)}
       ${field("lead", "Responsabile del diving", current.lead, true)}
       ${field("note", "Note", current.note, true)}
     </div>
-    <p class="hint">Il responsabile serve per il diving center. Per buddy e istruttore basta nome e brevetto.</p>
+    <p class="hint">Per buddy e istruttore bastano nome, cognome e brevetto. La denominazione serve al diving. Seguirsi scambia solo quei tre dati, non l'immersione.</p>
+    ${current.following ? `<p class="hint">Seguito. I dati che arrivano da questa persona aggiornano solo nome, cognome e brevetto.</p>` : ""}
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
     <div class="actions">
       <button class="btn primary" type="submit">Salva</button>
+      ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-follow>${current.following ? "Invia i miei dati" : "Segui"}</button>`}
+      ${!creating && current.following && current.role !== "center" ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
       <button class="btn ghost" type="button" data-back>Torna a Community</button>
       ${creating ? "" : `<button class="btn danger" type="button" data-del>Togli dalla community</button>`}
     </div>
@@ -3356,19 +3548,26 @@ function renderPerson() {
   form.onsubmit = (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    const name = String(fd.get("name") || "").trim();
+    const firstName = String(fd.get("firstName") || "").trim();
+    const lastName = String(fd.get("lastName") || "").trim();
+    const denom = String(fd.get("name") || "").trim();
+    const role = fd.get("role") || current.role;
+    const name = role === "center" ? denom : [firstName, lastName].filter(Boolean).join(" ");
     if (!name) {
-      alert("Scrivi il nome.");
+      alert(role === "center" ? "Scrivi la denominazione del diving." : "Scrivi nome e cognome.");
       return;
     }
     const before = creating ? null : { ...current };
     const person = upsertPerson({
       id: current.id,
-      role: fd.get("role") || current.role,
+      role,
       name,
+      firstName: role === "center" ? "" : firstName,
+      lastName: role === "center" ? "" : lastName,
       cert: fd.get("cert") || "",
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
+      following: role === "center" ? false : current.following === true,
     });
     if (before && person) applyPersonOntoDives(before, person);
     state.peopleSeeded = true;
@@ -3383,6 +3582,43 @@ function renderPerson() {
     view.personDraft = null;
     render();
   };
+  form.querySelector("[data-follow]")?.addEventListener("click", async () => {
+    const card = myFollowCard();
+    if (!card.person.firstName && !card.person.lastName) {
+      alert("Scrivi nome e cognome nel profilo. Al seguito si inviano solo nome, cognome e numero di brevetto.");
+      return;
+    }
+    if (!creating && current.id) {
+      upsertPerson({
+        id: current.id,
+        role: current.role,
+        name: current.name,
+        firstName: current.firstName,
+        lastName: current.lastName,
+        cert: current.cert,
+        following: true,
+      });
+      current.following = true;
+      save(state);
+    }
+    await shareFollowCard();
+    view.peopleHint = "Inviato solo nome, cognome e brevetto. L'immersione resta sul tasto Condividi.";
+    render();
+  });
+  form.querySelector("[data-unfollow]")?.addEventListener("click", () => {
+    upsertPerson({
+      id: current.id,
+      role: current.role,
+      name: current.name,
+      firstName: current.firstName,
+      lastName: current.lastName,
+      cert: current.cert,
+      following: false,
+    });
+    save(state);
+    view.personId = current.id;
+    render();
+  });
   form.querySelector("[data-del]")?.addEventListener("click", async () => {
     const ok = await askConfirm({
       title: "Togli dalla community",
