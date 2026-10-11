@@ -31,6 +31,7 @@ const emptyProfile = () => ({
   recoverEmail: "",
   hrThreshold: "",
   certs: [],
+  sign: "",
 });
 
 const emptyDive = () => ({
@@ -1864,7 +1865,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 91</p>
+        <p class="hint">Versione 92</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3709,6 +3710,7 @@ function bindPeoplePicks(form, d) {
           if (extraInput) extraInput.value = d[extraKey];
           chips.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
           b.classList.add("on");
+          form._applyOwnerSign?.();
         };
         chips.append(b);
       });
@@ -3730,6 +3732,11 @@ function renderProfile() {
       <div class="form-grid">
         ${field("name", "Nome e cognome", p.name, true)}
       </div>
+    </section>
+    <section class="profile-block">
+      <h3>La tua firma</h3>
+      <p class="hint">Firma qui una volta. In una nuova immersione, se inserisci questo nome come buddy o guida, la firma si carica da sola.</p>
+      ${signPad("ownerSign", "Firma del subacqueo", "Possessore di questa app", false)}
     </section>
     <section class="profile-block">
       <h3>Brevetto principale</h3>
@@ -3825,6 +3832,12 @@ function renderProfile() {
     certsBox.insertAdjacentHTML("beforeend", certRowHtml());
     bindDel(certsBox.querySelector("[data-certrow]:last-child"));
   };
+  let ownerSign = profileSignImage();
+  queueMicrotask(() => {
+    bindSign(form.querySelector('[data-sign="ownerSign"]'), ownerSign, (v) => {
+      ownerSign = v;
+    });
+  });
   form.onsubmit = (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -3837,7 +3850,12 @@ function renderProfile() {
         number: row.querySelector("[name=certNo]").value.trim(),
       }))
       .filter((c) => c.name || c.number);
-    state.profile = { ...state.profile, ...Object.fromEntries(fd.entries()), certs };
+    state.profile = {
+      ...state.profile,
+      ...Object.fromEntries(fd.entries()),
+      certs,
+      sign: typeof ownerSign === "string" && ownerSign.startsWith("data:image") ? ownerSign : "",
+    };
     save(state);
     render();
   };
@@ -4150,7 +4168,7 @@ function renderEdit() {
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
       ${peoplePicksHtml()}
-      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Community.</p>
+      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Community. Se il nome è quello del profilo, la firma registrata si inserisce da sola.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
@@ -4331,9 +4349,40 @@ function renderEdit() {
     applyPlaceToDive(d);
     bindDiveSiteMap(form, d);
     refreshProfile();
-    bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => (d.buddySign = v));
-    bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => (d.guideSign = v));
+    const ownerAuto = { buddy: false, guide: false };
+    const buddyPad = bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => {
+      d.buddySign = v;
+      if (v !== profileSignImage()) ownerAuto.buddy = false;
+    });
+    const guidePad = bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => {
+      d.guideSign = v;
+      if (v !== profileSignImage()) ownerAuto.guide = false;
+    });
     bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    form._applyOwnerSign = () => {
+      const sign = profileSignImage();
+      [
+        ["buddyName", "buddySign", buddyPad, "buddy"],
+        ["guideName", "guideSign", guidePad, "guide"],
+      ].forEach(([nameKey, signKey, pad, role]) => {
+        const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
+        const matches = Boolean(sign) && personNameKey(typed) === personNameKey(state.profile.name);
+        const current = d[signKey] || "";
+        if (matches && (!current || ownerAuto[role])) {
+          if (current !== sign) {
+            ownerAuto[role] = true;
+            pad?.set(sign);
+          }
+        } else if (!matches && ownerAuto[role]) {
+          ownerAuto[role] = false;
+          pad?.clear();
+        }
+      });
+    };
+    form._applyOwnerSign();
+    ["buddyName", "guideName"].forEach((name) => {
+      form.querySelector(`[name=${name}]`)?.addEventListener("input", () => form._applyOwnerSign());
+    });
     if (view.focusSign) {
       form.querySelector(`[data-sign="${view.focusSign}"]`)?.closest(".sign-pad")?.scrollIntoView({ behavior: "smooth", block: "center" });
       view.focusSign = "";
@@ -4455,7 +4504,19 @@ function legalMeta(role, name, cert, at, hash) {
   };
 }
 
-function signPad(key, title, note) {
+function personNameKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function profileSignImage() {
+  const sign = state.profile?.sign;
+  return typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+}
+
+function signPad(key, title, note, withConfirm = true) {
   return `
     <div class="sign-pad" data-pad="${key}">
       <div class="sign-pad-top">
@@ -4469,7 +4530,11 @@ function signPad(key, title, note) {
         <p class="sign-ghost">Firma qui con il dito o il pennino</p>
         <button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>
       </div>
-      <label class="sign-ok"><input type="checkbox" name="${key}Ok" /> Confermo di firmare questa scheda del libretto immersioni, in questa qualità, ai sensi della L. 70/2026 art. 12 c. 8. Restano allegate data, ora e impronta della scheda.</label>
+      ${
+        withConfirm
+          ? `<label class="sign-ok"><input type="checkbox" name="${key}Ok" /> Confermo di firmare questa scheda del libretto immersioni, in questa qualità, ai sensi della L. 70/2026 art. 12 c. 8. Restano allegate data, ora e impronta della scheda.</label>`
+          : ""
+      }
     </div>`;
 }
 
@@ -4573,14 +4638,20 @@ function bindSign(canvas, existing, onChange) {
     }
     showGhost();
   };
-  const clear = () => {
-    current = "";
+  const paint = (value, notify) => {
+    current = value || "";
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     stylePen();
-    if (ok) ok.checked = false;
+    if (current) {
+      const im = new Image();
+      im.onload = () => ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+      im.src = current;
+    }
+    if (ok) ok.checked = Boolean(current);
     showGhost();
-    onChange("");
+    if (notify) onChange(current);
   };
+  const clear = () => paint("", true);
   fit();
   let drawing = false;
   const pos = (ev) => {
@@ -4628,6 +4699,12 @@ function bindSign(canvas, existing, onChange) {
     };
   }
   showGhost();
+  return {
+    set(value) {
+      paint(value || "", true);
+    },
+    clear,
+  };
 }
 
 function drawProfile(canvas, points, editable, onChange, deco) {
