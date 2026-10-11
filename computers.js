@@ -532,6 +532,41 @@ function ratioWhen(unixSec) {
   };
 }
 
+function ratioNdlMin(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n < 0 || n >= 1000) return "";
+  const m = Math.round((n / 60) * 10) / 10;
+  return String(m);
+}
+
+function ratioClock(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n < 90) return `${Math.round(n)} s`;
+  const m = Math.floor(n / 60);
+  const s = Math.round(n % 60);
+  return s ? `${m} min ${s} s` : `${m} min`;
+}
+
+function ratioFinalStopMin(pts) {
+  const sorted = [...(pts || [])].filter((p) => Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.d))).sort((a, b) => a.t - b.t);
+  if (sorted.length < 4) return "";
+  let iDeep = 0;
+  sorted.forEach((p, i) => {
+    if (Number(p.d) >= Number(sorted[iDeep].d)) iDeep = i;
+  });
+  const tail = sorted.slice(iDeep);
+  let acc = 0;
+  for (let i = tail.length - 1; i > 0; i--) {
+    const p = tail[i - 1];
+    const n = tail[i];
+    if (Number(p.d) > 8) break;
+    if (Number(p.d) >= 2.5 && Number(p.d) <= 6.5 && Number(n.d) <= 8) acc += Number(n.t) - Number(p.t);
+  }
+  if (acc < 0.6 || acc > 12) return "";
+  return String(Math.round(acc));
+}
+
 function parseRatioXml(xml, fileName) {
   const segments = findAll(xml, "divesegment");
   return segments
@@ -545,28 +580,85 @@ function parseRatioXml(xml, fileName) {
       const profilePoints = [];
       let tempSum = 0;
       let tempN = 0;
+      let tempMin = "";
+      let tempMax = "";
       let bottomTemp = "";
       let last = null;
+      let ndlMin = "";
+      let ndlLast = "";
+      let stopDm = 0;
+      let stopSec = 0;
+      let he = "";
+      let o2 = "";
+      let ppo2 = "";
+      let gfLo = "";
+      let gfHi = "";
+      let algorithm = "";
+      let circuit = "";
+      let cns = "";
+      let otu = "";
+      let tissue = "";
+      let battStart = "";
+      let battEnd = "";
       sampleNodes.forEach((s) => {
         const dm = num(txt(s, ["depthdm"]));
         const sec = num(txt(s, ["runtimes"]));
         const dc = num(txt(s, ["temperaturedc"]));
         if (dm === "" || sec === "") return;
+        const depthM = Number(dm) / 10;
         maxDm = Math.max(maxDm, Number(dm));
-        const depth = Number(dm) / 10;
-        const pt = { t: Math.round((Number(sec) / 60) * 100) / 100, d: Math.round(depth * 10) / 10 };
+        const pt = { t: Math.round((Number(sec) / 60) * 100) / 100, d: Math.round(depthM * 10) / 10 };
         if (dc !== "") {
-          const c = Number(dc) / 10;
+          const c = Math.round((Number(dc) / 10) * 10) / 10;
           if (c > -2 && c < 45) {
-            pt.c = Math.round(c * 10) / 10;
-            tempSum += c;
-            tempN += 1;
+            pt.c = c;
+            if (depthM > 1) {
+              tempSum += c;
+              tempN += 1;
+              tempMin = tempMin === "" ? c : Math.min(tempMin, c);
+              tempMax = tempMax === "" ? c : Math.max(tempMax, c);
+            }
           }
         }
         profilePoints.push(pt);
         last = s;
+        if (!battStart) battStart = txt(s, ["vbatcv"]);
+        battEnd = txt(s, ["vbatcv"]) || battEnd;
+        const ndlSec = num(txt(s, ["ndlortts"]));
+        if (ndlSec !== "" && Number(ndlSec) < 1000) {
+          ndlLast = Number(ndlSec);
+          ndlMin = ndlMin === "" ? Number(ndlSec) : Math.min(ndlMin, Number(ndlSec));
+        }
+        const stop = num(txt(s, ["firststopdepth"]));
+        if (stop !== "" && Number(stop) > stopDm) {
+          stopDm = Number(stop);
+          const st = num(txt(s, ["firststoptime"]));
+          if (st !== "") stopSec = Number(st);
+        }
+        const heNow = txt(s, ["activemixhepercent"]);
+        const o2Now = txt(s, ["activemixo2percent"]);
+        if (o2Now !== "") o2 = o2Now;
+        if (heNow !== "") he = heNow;
+        const po2 = num(txt(s, ["maxppo2orsetpoint"]));
+        if (po2 !== "" && (ppo2 === "" || Number(po2) > Number(ppo2))) ppo2 = Number(po2);
+        gfLo = txt(s, ["buhlgflow"]) || gfLo;
+        gfHi = txt(s, ["buhlgfhigh"]) || gfHi;
+        algorithm = txt(s, ["activealgorithm"]) || algorithm;
+        circuit = txt(s, ["modeocscrccrgauge"]) || circuit;
+        const cnsNow = num(txt(s, ["cns"]));
+        const otuNow = num(txt(s, ["otu"]));
+        if (cnsNow !== "") cns = cnsNow;
+        if (otuNow !== "") otu = otuNow;
       });
-      if (bottomTemp === "" && profilePoints.length) {
+      if (last) {
+        let peak = 0;
+        for (let i = 1; i <= 16; i++) {
+          const g = num(txt(last, [`tissuegroup${i}percent`]));
+          if (g !== "" && Number(g) > peak) peak = Number(g);
+        }
+        if (peak > 0) tissue = String(peak);
+      }
+      if (profilePoints.length) {
         const deepest = profilePoints.reduce((a, b) => (b.d > a.d ? b : a));
         if (deepest.c != null) bottomTemp = String(deepest.c);
       }
@@ -574,37 +666,106 @@ function parseRatioXml(xml, fileName) {
       const avgM = avgCm !== "" ? Number(avgCm) / 100 : "";
       const runtime = last ? num(txt(last, ["runtimes"])) : "";
       const mins = runtime === "" ? "" : String(Math.round(Number(runtime) / 60));
-      const ndl = last ? num(txt(last, ["ndlortts"])) : "";
-      const cns = last ? num(txt(last, ["cns"])) : "";
-      const otu = last ? num(txt(last, ["otu"])) : "";
-      const gfLo = last ? txt(last, ["buhlgflow"]) : "";
-      const gfHi = last ? txt(last, ["buhlgfhigh"]) : "";
-      const o2 = last ? txt(last, ["activemixo2percent"]) : "";
+      const ascent = ascentFromPoints(profilePoints);
+      const safetyDone = ratioFinalStopMin(profilePoints);
+      const safetySet = txt(header, ["safetystopmin"]);
+      const safetyDepthDm = num(txt(header, ["safetystopdepthdm"]));
       const surfaceS = num(txt(header, ["lastsurfacetimes"]));
-      const model = /ix3m/i.test(fileName || "") ? "Ratio iX3M" : "Ratio";
+      const desatS = num(txt(header, ["desaturationtimes"]));
+      const surfaceMbar = num(txt(header, ["surfacepressurembar"]));
+      const gf = gfLo && gfHi ? `${gfLo}/${gfHi}` : "";
+      const deco = ndlMin === 0;
+      const circuitN = Number(circuit);
+      const closed = circuitN === 2;
+      const open = circuitN === 0 || circuitN === 1;
+      const circuitName = ["Circuito aperto", "Semichiuso", "Circuito chiuso", "Gauge"][circuitN] || "Circuito aperto";
+      const algName = algorithm === "1" ? "VPM-B" : algorithm === "0" ? "Bühlmann" : "";
+      const waterN = txt(header, ["water"]);
+      const waterName = waterN === "1" ? "Acqua dolce" : waterN === "0" ? "Acqua salata" : "";
+      const model = /ix3m/i.test(fileName || "") ? (/pro/i.test(fileName || "") ? "Ratio iX3M Pro" : "Ratio iX3M") : "Ratio";
+      const volts = (raw) => {
+        const n = num(raw);
+        return n === "" ? "" : `${Math.round(Number(n)) / 100} V`;
+      };
+      const m1 = (n) => (n === "" || !Number(n) ? "" : String(Math.round(Number(n) * 10) / 10));
+      const all = {
+        Computer: model,
+        "Prof. max": maxM ? `${m1(maxM)} m` : "",
+        "Prof. media": avgM !== "" ? `${m1(avgM)} m` : "",
+        Durata: mins ? `${mins} min` : "",
+        CNS: cns !== "" ? `${cns}%` : "",
+        OTU: otu !== "" ? String(otu) : "",
+        GF: gf,
+        Algoritmo: algName,
+        "NDL minimo": ratioClock(ndlMin),
+        "NDL residuo": ratioClock(ndlLast),
+        "Fuori curva": deco ? "Sì" : "No",
+        "Sosta sicurezza": safetySet ? `${safetyDepthDm !== "" ? m1(Number(safetyDepthDm) / 10) + " m · " : ""}${safetySet} min` : "",
+        "Sosta eseguita": safetyDone ? `${safetyDone} min` : "",
+        "Sosta indicata": stopDm > 0 ? `${m1(stopDm / 10)} m${stopSec ? " · " + ratioClock(stopSec) : ""}` : "",
+        Risalita: ascent.avg ? `${ascent.avg} m/min` : "",
+        "Risalita max": ascent.max ? `${ascent.max} m/min` : "",
+        "Temp. acqua": tempN ? `${m1(tempSum / tempN)} °C` : "",
+        "Temp. fondo": bottomTemp ? `${bottomTemp} °C` : "",
+        "Temp. min": tempMin !== "" ? `${tempMin} °C` : "",
+        "Temp. max": tempMax !== "" ? `${tempMax} °C` : "",
+        Miscela: o2 ? `EAN ${o2}${he && Number(he) > 0 ? " / He " + he + "%" : ""}` : "",
+        "PpO2 impostata": ppo2 !== "" ? `${m1(Number(ppo2) / 1000)} bar` : "",
+        Circuito: circuitName,
+        Acqua: waterName,
+        "Press. superficie": surfaceMbar !== "" ? `${Math.round(Number(surfaceMbar) / 10)} mbar` : "",
+        "Int. superficie": surfaceS > 60 ? `${Math.round(surfaceS / 60)} min` : "",
+        Desaturazione: desatS > 60 ? `${Math.round(desatS / 60)} min` : "",
+        Batteria: volts(battEnd) ? `${volts(battStart)} → ${volts(battEnd)}` : "",
+        "Tessuto più carico": tissue ? `${tissue}%` : "",
+        Avvisi: Number(txt(header, ["alertflag"])) > 0 ? `Codice ${txt(header, ["alertflag"])}` : "",
+        Software: txt(header, ["softwareversion"]),
+        Campioni: String(profilePoints.length || txt(header, ["divesamples"]) || ""),
+      };
+      Object.keys(all).forEach((k) => {
+        if (all[k] == null || all[k] === "") delete all[k];
+      });
+      const extras = {
+        format: "Ratio XML",
+        avgDepth: avgM !== "" ? m1(avgM) : "",
+        cns: cns === "" ? "" : String(cns),
+        otu: otu === "" ? "" : String(otu),
+        gf,
+        ndl: ratioNdlMin(ndlLast),
+        surfaceInterval: surfaceS > 60 ? String(Math.round(surfaceS / 60)) : "",
+        mode: [algName, circuitName].filter(Boolean).join(" · "),
+        samples: profilePoints.length,
+        all,
+      };
       return baseImported({
         date: when.date,
         timeIn: when.time,
-        maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
-        avgDepth: avgM !== "" ? String(Math.round(Number(avgM) * 10) / 10) : "",
+        timeOut: when.time && mins ? addMinutes(when.time, mins) : "",
+        maxDepth: maxM ? m1(maxM) : "",
+        avgDepth: extras.avgDepth,
         bottomTime: mins,
         totalTime: mins,
-        safetyStop: txt(header, ["safetystopmin"]),
-        surfaceInterval: surfaceS > 60 ? String(Math.round(surfaceS / 60)) : "",
-        waterTemp: tempN ? String(Math.round((tempSum / tempN) * 10) / 10) : "",
+        safetyStop: safetyDone || safetySet,
+        surfaceInterval: extras.surfaceInterval,
+        waterTemp: tempN ? m1(tempSum / tempN) : "",
         bottomTemp,
         mix: o2,
-        cns: cns === "" ? "" : String(cns),
-        otu: otu === "" ? "" : String(otu),
-        gf: gfLo && gfHi ? `${gfLo}/${gfHi}` : "",
-        ndl: ndl !== "" && Number(ndl) < 1000 ? String(ndl) : "",
-        deco: false,
-        noDeco: true,
-        circuitOpen: true,
-        circuitClosed: false,
+        cns: extras.cns,
+        otu: extras.otu,
+        gf,
+        ndl: extras.ndl,
+        ascentRate: ascent.avg || "",
+        ascentMax: ascent.max || "",
+        deco,
+        noDeco: !deco,
+        circuitOpen: open,
+        circuitClosed: closed,
+        regulator: circuitName,
+        seaConditions: waterName,
         instruments: model,
         sourceComputer: "ratio-ix3m",
         profilePoints,
+        computerLog: extras,
         site: "",
       });
     })
