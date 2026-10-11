@@ -2332,7 +2332,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 104</p>
+        <p class="hint">Versione 105</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2657,6 +2657,21 @@ function diveFlagIconUrl(kind) {
   return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(diveFlagSvg(kind));
 }
 
+function flagPixelSize(zoom) {
+  const z = Math.max(2, Math.min(18, Number(zoom) || 2));
+  const w = Math.round(8 + ((z - 2) / 16) * 16);
+  return { w, h: Math.round((w * 46) / 36) };
+}
+
+function flagIcon(kind, zoom) {
+  const { w, h } = flagPixelSize(zoom);
+  return {
+    url: diveFlagIconUrl(kind),
+    scaledSize: new google.maps.Size(w, h),
+    anchor: new google.maps.Point(Math.round(w / 2), h),
+  };
+}
+
 function renderWorldMap() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("siti del mondo"));
@@ -2733,24 +2748,16 @@ function renderWorldMap() {
         googleWorldMap = gmap;
         const info = new google.maps.InfoWindow();
         const osmMarkers = [];
-        const iconDone = {
-          url: diveFlagIconUrl("done"),
-          scaledSize: new google.maps.Size(32, 42),
-          anchor: new google.maps.Point(17, 42),
-        };
-        const iconTodo = {
-          url: diveFlagIconUrl("todo"),
-          scaledSize: new google.maps.Size(32, 42),
-          anchor: new google.maps.Point(17, 42),
-        };
         const putFlag = (site, bucket) => {
+          const kind = site.done ? "done" : "todo";
           const m = new google.maps.Marker({
             position: { lat: Number(site.lat), lng: Number(site.lng) },
             map: gmap,
-            icon: site.done ? iconDone : iconTodo,
+            icon: flagIcon(kind, gmap.getZoom()),
             title: site.name,
             optimized: true,
           });
+          m.set("flagKind", kind);
           m.addListener("click", () => {
             const kind = site.kind === "diving" ? "Diving" : site.fromDive ? "Dal diario" : "Sito";
             info.setContent(
@@ -2800,6 +2807,18 @@ function renderWorldMap() {
           }, 400);
         };
         gmap.addListener("idle", loadOsm);
+        let flagFrame = 0;
+        gmap.addListener("zoom_changed", () => {
+          if (flagFrame) return;
+          flagFrame = requestAnimationFrame(() => {
+            flagFrame = 0;
+            const zoom = gmap.getZoom();
+            googleWorldMarkers.forEach((m) => {
+              if (!m.getMap()) return;
+              m.setIcon(flagIcon(m.get("flagKind") || "todo", zoom));
+            });
+          });
+        });
         gmap.addListener("click", (ev) => {
           if (!ev.latLng) return;
           mapPick = {
