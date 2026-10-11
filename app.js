@@ -277,6 +277,7 @@ function cleanPerson(p) {
     firstName: names.firstName,
     lastName: names.lastName,
     cert: String(p.cert || "").trim(),
+    level: String(p.level || "").trim(),
     lead: String(p.lead || "").trim(),
     note: String(p.note || "").trim(),
     following: Boolean(p.following),
@@ -524,6 +525,7 @@ function mergePeople(a, b) {
       return;
     }
     if (!prev.cert && p.cert) prev.cert = p.cert;
+    if (!prev.level && p.level) prev.level = p.level;
     if (!prev.lead && p.lead) prev.lead = p.lead;
     if (!prev.note && p.note) prev.note = p.note;
     if (!prev.sign && p.sign) prev.sign = p.sign;
@@ -787,6 +789,7 @@ function upsertPerson(partial) {
   found.lastName = names.lastName;
   found.name = names.name || name;
   if (String(partial.cert || "").trim()) found.cert = String(partial.cert).trim();
+  if (typeof partial.level === "string") found.level = partial.level.trim();
   if (String(partial.lead || "").trim()) found.lead = String(partial.lead).trim();
   if (partial.note != null) found.note = String(partial.note).trim();
   if (partial.following === true) found.following = true;
@@ -794,6 +797,7 @@ function upsertPerson(partial) {
   if (typeof partial.sign === "string") found.sign = partial.sign.startsWith("data:image") ? partial.sign : "";
   if (twin) {
     if (!found.cert && twin.cert) found.cert = twin.cert;
+    if (!found.level && twin.level) found.level = twin.level;
     if (!found.lead && twin.lead) found.lead = twin.lead;
     if (!found.note && twin.note) found.note = twin.note;
     if (!found.sign && twin.sign) found.sign = twin.sign;
@@ -1263,6 +1267,7 @@ function storeFollowedPerson(card, role) {
     cert: card.cert,
     following: true,
   };
+  if (card.level) payload.level = card.level;
   if (card.sign) payload.sign = card.sign;
   const before = existing ? { ...existing } : null;
   const person = upsertPerson(payload);
@@ -1346,8 +1351,10 @@ async function readCommunityCard(name) {
     const firstName = String(data?.firstName || "").trim();
     const lastName = String(data?.lastName || "").trim();
     const cert = String(data?.cert || "").trim();
+    const level = String(data?.level || "").trim();
     if (!firstName || !lastName) return { error: "missing" };
     const card = { firstName, lastName, cert, owner: String(data?.owner || "") };
+    if (level) card.level = level;
     if (typeof data?.sign === "string" && data.sign.startsWith("data:image")) card.sign = data.sign;
     return { card };
   } catch {
@@ -1368,6 +1375,7 @@ async function publishMyProfile() {
     firstName: names.firstName,
     lastName: names.lastName,
     cert: String(state.profile?.certNumber || "").trim(),
+    level: String(state.profile?.certLevel || "").trim(),
     owner,
     at: new Date().toISOString(),
   };
@@ -1390,7 +1398,20 @@ async function publishMyProfile() {
 function queueProfilePublish() {
   if (queueProfilePublish.started) return;
   queueProfilePublish.started = true;
-  publishMyProfile().catch(() => {});
+  publishMyProfile()
+    .then((res) => {
+      if (res?.error !== "confirm" || view.personId) return;
+      view.peopleHint = communityMissText("confirm");
+      if (view.name === "people") render();
+    })
+    .catch(() => {});
+}
+
+function profileShareLine(person, sign) {
+  if (!person) return "";
+  return [person.name, person.level, person.cert ? "brevetto " + person.cert : "", sign ? "firma inserita" : "manca la firma"]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 async function adoptCommunityProfile(name) {
@@ -1403,9 +1424,9 @@ async function adoptCommunityProfile(name) {
 
 function communityMissText(error) {
   if (error === "short") return "Scrivi nome e cognome interi.";
-  if (error === "confirm") return "Apri la mail di conferma arrivata su Gmail e clicca il link. Poi cerca di nuovo il nominativo.";
+  if (error === "confirm") return "Apri la mail di conferma su Gmail e clicca il link, poi riapri l'app. Solo dopo, Cerca nominativo trova nome, cognome, didattica, brevetto e firma anche la prima volta.";
   if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
-  return "Nessun profilo SeaDive con questo nominativo. L'altra persona deve aprire l'app con nome, cognome, brevetto e firma già salvati.";
+  return "Nessun profilo con questo nominativo. L'altra persona deve aprire l'app aggiornata, con nome, cognome, didattica, brevetto e firma già salvati.";
 }
 
 function scheduleCommunityPull(form) {
@@ -2198,7 +2219,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 99</p>
+        <p class="hint">Versione 100</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3718,7 +3739,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Cerca nome e cognome di chi usa SeaDive. Se ha salvato il profilo, arrivano numero di brevetto e firma. L'immersione resta solo su Condividi.</p>
+    <p class="hint">Cerca nome e cognome, anche se non è ancora in elenco. La prima volta arrivano didattica, numero di brevetto e firma. L'immersione resta solo su Condividi.</p>
     <div class="chips" data-roles></div>
     <input class="search" data-find placeholder="Nome e cognome" value="${escapeHtml(view.peopleQuery || "")}" />
     <button class="btn primary btn-block" type="button" data-findremote>Cerca nominativo</button>
@@ -3758,7 +3779,7 @@ function renderPeople() {
       const n = divesForPerson(p).length;
       const row = document.createElement("article");
       row.className = "people-row";
-      const extra = p.role === "center" ? p.lead : p.cert;
+      const extra = p.role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · ");
       const mine = samePersonName(p.name, state.profile.name);
       const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
       row.innerHTML = `
@@ -3828,9 +3849,11 @@ function renderPeople() {
     const result = await adoptCommunityProfile(q);
     if (result.card) {
       const who = [result.card.firstName, result.card.lastName].filter(Boolean).join(" ");
+      const detail = [result.card.level, result.card.cert ? "brevetto " + result.card.cert : ""].filter(Boolean).join(" · ");
+      view.personId = result.stored?.person?.id || null;
       view.peopleHint = result.card.sign
-        ? `Trovato ${who}. Nome, cognome, brevetto e firma sono pronti: scrivilo come buddy e la firma entra nello spazio.`
-        : `Trovato ${who}. Nome e brevetto sono pronti. Manca la firma sul suo profilo.`;
+        ? `Trovato ${who}${detail ? " · " + detail : ""}. La firma è sul contatto: nella nuova immersione scrivi il nominativo e entra nello spazio Firma buddy.`
+        : `Trovato ${who}${detail ? " · " + detail : ""}. Manca la firma sul suo profilo.`;
     } else {
       view.peopleHint = communityMissText(result.error);
     }
@@ -4132,7 +4155,7 @@ function bindPeoplePicks(form, d) {
             const line = form.querySelector("[data-pickedperson]");
             if (line) {
               line.hidden = false;
-              line.textContent = `${p.name}${p.cert ? " · brevetto " + p.cert : ""}${sign ? " · firma inserita" : " · manca la firma sul contatto"}`;
+              line.textContent = profileShareLine(p, sign);
             }
             save(state);
           }
@@ -4160,7 +4183,7 @@ function renderProfile() {
     </section>
     <section class="profile-block">
       <h3>La tua firma</h3>
-      <p class="hint">Firma qui una volta. Nome, cognome, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo. Nella nuova immersione la firma entra nello spazio del buddy.</p>
+      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "Possessore di questa app", false)}
       ${signPreviewHtml(profileSignImage())}
     </section>
@@ -4285,7 +4308,7 @@ function renderProfile() {
     save(state);
     const published = await publishMyProfile();
     if (published?.error === "confirm") {
-      alert("Apri la mail di conferma arrivata su Gmail e clicca il link. Poi salva di nuovo il profilo.");
+      alert("Apri la mail di conferma su Gmail e clicca il link. Poi salva di nuovo: didattica, brevetto e firma diventano trovabili.");
     }
     render();
   };
@@ -4846,7 +4869,7 @@ function renderEdit() {
       if (line && shown) {
         const sign = personKnownSign(shown);
         line.hidden = false;
-        line.textContent = `${shown.name}${shown.cert ? " · brevetto " + shown.cert : ""}${sign ? " · firma inserita" : " · manca la firma sul contatto"}`;
+        line.textContent = profileShareLine(shown, sign);
       } else if (line && !opts.forceBuddy && !opts.forceGuide) {
         line.hidden = true;
         line.textContent = "";
