@@ -522,6 +522,95 @@ function parseUDDF(xml) {
   return dives;
 }
 
+function ratioWhen(unixSec) {
+  const d = new Date(Number(unixSec) * 1000);
+  if (!Number.isFinite(d.getTime())) return { date: "", time: "" };
+  const p = (n) => String(n).padStart(2, "0");
+  return {
+    date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+    time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+  };
+}
+
+function parseRatioXml(xml, fileName) {
+  const segments = findAll(xml, "divesegment");
+  return segments
+    .map((seg) => {
+      const header = findOne(seg, "segmentheader") || seg;
+      const sampleNodes = findAll(seg, "sample");
+      const when = ratioWhen(txt(header, ["utcstartingtimes"]));
+      const depthCm = num(txt(header, ["depthmax"]));
+      const avgCm = num(txt(header, ["avgdepth"]));
+      let maxDm = 0;
+      const profilePoints = [];
+      let tempSum = 0;
+      let tempN = 0;
+      let bottomTemp = "";
+      let last = null;
+      sampleNodes.forEach((s) => {
+        const dm = num(txt(s, ["depthdm"]));
+        const sec = num(txt(s, ["runtimes"]));
+        const dc = num(txt(s, ["temperaturedc"]));
+        if (dm === "" || sec === "") return;
+        maxDm = Math.max(maxDm, Number(dm));
+        const depth = Number(dm) / 10;
+        const pt = { t: Math.round((Number(sec) / 60) * 100) / 100, d: Math.round(depth * 10) / 10 };
+        if (dc !== "") {
+          const c = Number(dc) / 10;
+          if (c > -2 && c < 45) {
+            pt.c = Math.round(c * 10) / 10;
+            tempSum += c;
+            tempN += 1;
+          }
+        }
+        profilePoints.push(pt);
+        last = s;
+      });
+      if (bottomTemp === "" && profilePoints.length) {
+        const deepest = profilePoints.reduce((a, b) => (b.d > a.d ? b : a));
+        if (deepest.c != null) bottomTemp = String(deepest.c);
+      }
+      const maxM = depthCm !== "" ? Number(depthCm) / 100 : maxDm / 10;
+      const avgM = avgCm !== "" ? Number(avgCm) / 100 : "";
+      const runtime = last ? num(txt(last, ["runtimes"])) : "";
+      const mins = runtime === "" ? "" : String(Math.round(Number(runtime) / 60));
+      const ndl = last ? num(txt(last, ["ndlortts"])) : "";
+      const cns = last ? num(txt(last, ["cns"])) : "";
+      const otu = last ? num(txt(last, ["otu"])) : "";
+      const gfLo = last ? txt(last, ["buhlgflow"]) : "";
+      const gfHi = last ? txt(last, ["buhlgfhigh"]) : "";
+      const o2 = last ? txt(last, ["activemixo2percent"]) : "";
+      const surfaceS = num(txt(header, ["lastsurfacetimes"]));
+      const model = /ix3m/i.test(fileName || "") ? "Ratio iX3M" : "Ratio";
+      return baseImported({
+        date: when.date,
+        timeIn: when.time,
+        maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
+        avgDepth: avgM !== "" ? String(Math.round(Number(avgM) * 10) / 10) : "",
+        bottomTime: mins,
+        totalTime: mins,
+        safetyStop: txt(header, ["safetystopmin"]),
+        surfaceInterval: surfaceS > 60 ? String(Math.round(surfaceS / 60)) : "",
+        waterTemp: tempN ? String(Math.round((tempSum / tempN) * 10) / 10) : "",
+        bottomTemp,
+        mix: o2,
+        cns: cns === "" ? "" : String(cns),
+        otu: otu === "" ? "" : String(otu),
+        gf: gfLo && gfHi ? `${gfLo}/${gfHi}` : "",
+        ndl: ndl !== "" && Number(ndl) < 1000 ? String(ndl) : "",
+        deco: false,
+        noDeco: true,
+        circuitOpen: true,
+        circuitClosed: false,
+        instruments: model,
+        sourceComputer: "ratio-ix3m",
+        profilePoints,
+        site: "",
+      });
+    })
+    .filter((d) => d.date || d.maxDepth || (d.profilePoints || []).length >= 3);
+}
+
 function parseSuuntoXml(xml) {
   const diveNodes = findAll(xml, "dive");
   if (!diveNodes.length) return [];
@@ -2918,6 +3007,7 @@ function parseComputerFile(name, text) {
     if (lower.endsWith(".gpx") || xml.querySelector("gpx, trkpt")) return { dives: parseGpx(xml), format: "GPX" };
     const uddfHits = findAll(xml, "uddf").length || findAll(xml, "profiledata").length;
     if (uddfHits || lower.endsWith(".uddf") || lower.endsWith(".ssrf")) return { dives: parseUDDF(xml), format: "UDDF" };
+    if (findAll(xml, "divesegment").length) return { dives: parseRatioXml(xml, name), format: "Ratio XML" };
     return { dives: parseSuuntoXml(xml), format: "XML computer" };
   }
   throw new Error(`Formato non riconosciuto: ${name}. Prova UDDF, FIT, JSON, XML, CSV o GPX.`);

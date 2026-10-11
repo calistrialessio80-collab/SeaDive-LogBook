@@ -1368,7 +1368,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 79</p>
+        <p class="hint">Versione 80</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2582,39 +2582,94 @@ function applyComputerOnto(target, incoming) {
 
 function divePickLabel(d) {
   const when = [fmtItDateLong(d.date), d.timeIn].filter(Boolean).join(" · ");
-  const where = d.site || d.location || "Senza sito";
+  const where = d.site || d.location || "";
   const depth = hasText(d.maxDepth) ? `${d.maxDepth} m` : "";
   const mins = hasText(d.bottomTime) ? `${d.bottomTime} min` : hasText(d.totalTime) ? `${d.totalTime} min` : "";
-  return [when, where, depth, mins].filter(Boolean).join(" · ");
+  return [when || "Senza data", where, depth, mins].filter(Boolean).join(" · ");
 }
 
-function askPickDive(dives) {
-  if (dives.length <= 1) return Promise.resolve(dives[0] || null);
+function divesByTime(dives) {
+  return [...dives].sort((a, b) => `${a.date || ""}T${a.timeIn || ""}`.localeCompare(`${b.date || ""}T${b.timeIn || ""}`));
+}
+
+function askPickDive(dives, base) {
+  if (!dives || dives.length <= 1) return Promise.resolve(dives?.[0] || null);
+  const ordered = divesByTime(dives);
+  const latest = ordered[ordered.length - 1];
+  const cardDate = String(base?.date || "");
   return new Promise((resolve) => {
     document.querySelector(".confirm-veil")?.remove();
     const veil = document.createElement("div");
     veil.className = "confirm-veil";
-    veil.innerHTML = `
-      <div class="confirm-card pick-card" role="dialog" aria-modal="true" aria-labelledby="pick-title">
-        <h3 id="pick-title">Quale immersione va in questa scheda?</h3>
-        <p>Il file ne contiene ${dives.length}. Scegline una: le altre non vengono aggiunte al diario.</p>
-        <div class="pick-list">
-          ${dives.map((d, i) => `<button type="button" class="btn ghost pick-dive" data-i="${i}">${escapeHtml(divePickLabel(d))}</button>`).join("")}
-        </div>
-        <button type="button" class="btn ghost" data-no>Annulla</button>
-      </div>
-    `;
     const done = (v) => {
       veil.remove();
       resolve(v);
     };
+    const paintChoices = () => {
+      const onCard = cardDate ? ordered.filter((d) => d.date === cardDate) : [];
+      veil.innerHTML = `
+        <div class="confirm-card pick-card" role="dialog" aria-modal="true" aria-labelledby="pick-title">
+          <h3 id="pick-title">Quale immersione va in questa scheda?</h3>
+          <p>Il file ne contiene ${ordered.length}. Puoi mettere solo l’ultima, oppure quella di una data. Le altre restano fuori dal diario.</p>
+          <div class="pick-list">
+            <button type="button" class="btn primary" data-last>Solo l’ultima<br><small>${escapeHtml(divePickLabel(latest))}</small></button>
+            ${
+              onCard.length
+                ? `<button type="button" class="btn ghost" data-card>Data di questa scheda<br><small>${escapeHtml(fmtItDateLong(cardDate))}${onCard.length > 1 ? " · " + onCard.length + " immersioni" : " · " + escapeHtml(onCard[0].timeIn || "")}</small></button>`
+                : ""
+            }
+          </div>
+          <label class="pick-date">Oppure scegli la data
+            <input type="date" data-day value="${escapeHtml(cardDate || latest.date || "")}" />
+          </label>
+          <p class="hint" data-pickmsg></p>
+          <div class="confirm-actions">
+            <button type="button" class="btn ghost" data-no>Annulla</button>
+            <button type="button" class="btn primary" data-daygo>Carica questa data</button>
+          </div>
+        </div>
+      `;
+      veil.querySelector("[data-no]").onclick = () => done(null);
+      veil.querySelector("[data-last]").onclick = () => done(latest);
+      veil.querySelector("[data-card]")?.addEventListener("click", () => chooseDay(onCard));
+      veil.querySelector("[data-daygo]").onclick = () => {
+        const day = veil.querySelector("[data-day]").value;
+        chooseDay(ordered.filter((d) => d.date === day), day);
+      };
+    };
+    const chooseDay = (hits, day) => {
+      if (!hits.length) {
+        const msg = veil.querySelector("[data-pickmsg]");
+        if (msg) msg.textContent = day ? `Nessuna immersione il ${fmtItDateLong(day)}.` : "Scegli una data.";
+        return;
+      }
+      if (hits.length === 1) {
+        done(hits[0]);
+        return;
+      }
+      veil.innerHTML = `
+        <div class="confirm-card pick-card" role="dialog" aria-modal="true">
+          <h3>Immersioni del ${escapeHtml(fmtItDateLong(hits[0].date))}</h3>
+          <p>In questa data ce ne sono ${hits.length}. Scegline una.</p>
+          <div class="pick-list">
+            ${hits.map((d, i) => `<button type="button" class="btn ghost" data-i="${i}">${escapeHtml(divePickLabel(d))}</button>`).join("")}
+          </div>
+          <div class="confirm-actions">
+            <button type="button" class="btn ghost" data-back>Indietro</button>
+            <button type="button" class="btn ghost" data-no>Annulla</button>
+          </div>
+        </div>
+      `;
+      veil.querySelector("[data-no]").onclick = () => done(null);
+      veil.querySelector("[data-back]").onclick = () => paintChoices();
+      veil.querySelectorAll("[data-i]").forEach((btn) => {
+        btn.onclick = () => done(hits[Number(btn.getAttribute("data-i"))]);
+      });
+    };
     veil.addEventListener("click", (e) => {
       if (e.target === veil) done(null);
     });
-    veil.querySelector("[data-no]").onclick = () => done(null);
-    veil.querySelectorAll("[data-i]").forEach((btn) => {
-      btn.onclick = () => done(dives[Number(btn.getAttribute("data-i"))]);
-    });
+    paintChoices();
     document.body.append(veil);
   });
 }
@@ -2663,7 +2718,7 @@ async function fillExistingFromFound(base, { found, notes }) {
     render();
     return;
   }
-  const chosen = await askPickDive(found);
+  const chosen = await askPickDive(found, base);
   if (!chosen) {
     view.computerHint = "Scelta annullata. La scheda non è cambiata.";
     render();
@@ -2696,8 +2751,8 @@ async function fillExistingFromFound(base, { found, notes }) {
 function computerFillHtml() {
   return `
     <div class="computer-fill">
-      <h3 class="serif">Dal computer o da file</h3>
-      <p class="hint">Compila questa scheda con un’immersione del computer o di un file. Foto, firme, buddy e note già scritti restano.</p>
+      <h3 class="serif">Dal file</h3>
+      <p class="hint">Carica il file dentro questa scheda. Se ci sono più immersioni, metti solo l’ultima oppure quella di una data. Foto, firme e note già scritti restano.</p>
       <div class="actions">
         <label class="btn primary">Carica file
           <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple hidden data-fillfiles />
