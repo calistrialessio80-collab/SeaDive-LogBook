@@ -1271,6 +1271,173 @@ function storeFollowedPerson(card, role) {
   return { person, created: !existing, name, card };
 }
 
+const COMMUNITY_BUCKET = "JsuPZNFjoWYUm3Bz3Z1kp2";
+
+function communityKey(name) {
+  const words = personNameKey(name)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .sort();
+  if (words.length < 2) return "";
+  return words.join("-").slice(0, 80);
+}
+
+function communityUrl(key) {
+  return `https://kvdb.io/${COMMUNITY_BUCKET}/${encodeURIComponent(key)}`;
+}
+
+async function profileOwnerKey() {
+  const sub = String(loadSession()?.sub || "");
+  if (sub && crypto?.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`seadive|${sub}`));
+    return Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  }
+  const stored = localStorage.getItem("seadive-community-owner");
+  if (stored) return stored;
+  const id = uid().replace(/-/g, "");
+  localStorage.setItem("seadive-community-owner", id);
+  return id;
+}
+
+function shrinkSign(dataUrl) {
+  return new Promise((resolve) => {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve("");
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 420;
+      const maxH = 140;
+      const scale = Math.min(1, maxW / Math.max(img.width, 1), maxH / Math.max(img.height, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      let quality = 0.62;
+      let out = canvas.toDataURL("image/jpeg", quality);
+      while (out.length > 11000 && quality > 0.28) {
+        quality -= 0.08;
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out.startsWith("data:image") && out.length <= 12000 ? out : "");
+    };
+    img.onerror = () => resolve("");
+    img.src = dataUrl;
+  });
+}
+
+async function readCommunityCard(name) {
+  const key = communityKey(name);
+  if (!key) return { error: "short" };
+  let res;
+  try {
+    res = await fetch(communityUrl(key), { cache: "no-store" });
+  } catch {
+    return { error: "network" };
+  }
+  if (res.status === 404) return { error: "missing" };
+  if (res.status === 403) return { error: "confirm" };
+  if (!res.ok) return { error: "network" };
+  try {
+    const data = await res.json();
+    const firstName = String(data?.firstName || "").trim();
+    const lastName = String(data?.lastName || "").trim();
+    const cert = String(data?.cert || "").trim();
+    if (!firstName || !lastName) return { error: "missing" };
+    const card = { firstName, lastName, cert, owner: String(data?.owner || "") };
+    if (typeof data?.sign === "string" && data.sign.startsWith("data:image")) card.sign = data.sign;
+    return { card };
+  } catch {
+    return { error: "missing" };
+  }
+}
+
+async function publishMyProfile() {
+  const names = personNames({ name: state.profile?.name || "" });
+  const key = communityKey(names.name);
+  if (!key || !names.firstName || !names.lastName) return { error: "short" };
+  const owner = await profileOwnerKey();
+  const current = await readCommunityCard(names.name);
+  if (current.error === "confirm" || current.error === "network") return current;
+  if (current.card?.owner && current.card.owner !== owner) return { error: "taken" };
+  const sign = await shrinkSign(profileSignImage());
+  const body = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: String(state.profile?.certNumber || "").trim(),
+    owner,
+    at: new Date().toISOString(),
+  };
+  if (sign) body.sign = sign;
+  if (JSON.stringify(body).length > 15000) delete body.sign;
+  try {
+    const res = await fetch(communityUrl(key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 403) return { error: "confirm" };
+    if (!res.ok) return { error: "network" };
+    return { ok: true, name: names.name };
+  } catch {
+    return { error: "network" };
+  }
+}
+
+function queueProfilePublish() {
+  if (queueProfilePublish.started) return;
+  queueProfilePublish.started = true;
+  publishMyProfile().catch(() => {});
+}
+
+async function adoptCommunityProfile(name) {
+  const found = await readCommunityCard(name);
+  if (!found.card) return found;
+  const stored = storeFollowedPerson(found.card, "buddy");
+  save(state);
+  return { ...found, stored };
+}
+
+function communityMissText(error) {
+  if (error === "short") return "Scrivi nome e cognome interi.";
+  if (error === "confirm") return "Apri la mail di conferma arrivata su Gmail e clicca il link. Poi cerca di nuovo il nominativo.";
+  if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
+  return "Nessun profilo SeaDive con questo nominativo. L'altra persona deve aprire l'app con nome, cognome, brevetto e firma già salvati.";
+}
+
+function scheduleCommunityPull(form) {
+  clearTimeout(form._communityTimer);
+  form._communityTimer = setTimeout(() => {
+    pullCommunitySigns(form).catch(() => {});
+  }, 700);
+}
+
+async function pullCommunitySigns(form) {
+  if (!form?.isConnected) return;
+  let changed = false;
+  for (const [nameKey, role] of [
+    ["buddyName", "buddy"],
+    ["guideName", "guide"],
+  ]) {
+    const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
+    if (!communityKey(typed)) continue;
+    const local = personByTypedName(role, typed);
+    if (local && personKnownSign(local)) continue;
+    const found = await readCommunityCard(typed);
+    if (!found.card) continue;
+    if (!form.isConnected) return;
+    if ((form.querySelector(`[name=${nameKey}]`)?.value || "") !== typed) continue;
+    storeFollowedPerson(found.card, role);
+    changed = true;
+  }
+  if (!changed || !form.isConnected) return;
+  save(state);
+  form._applyOwnerSign?.();
+}
+
 function backupFilename() {
   const day = new Date().toISOString().slice(0, 10);
   const who = (state.profile.name || "logbook")
@@ -1965,6 +2132,7 @@ function render() {
     fab.onclick = () => startNew();
     app.append(fab);
   }
+  queueProfilePublish();
 }
 
 function renderAuth() {
@@ -1982,7 +2150,7 @@ function renderAuth() {
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -2030,7 +2198,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 98</p>
+        <p class="hint">Versione 99</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3550,9 +3718,10 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Chi è in Community si scambia nome, cognome, brevetto e firma, e si segue da solo. L'immersione si passa soltanto con Condividi sulla scheda.</p>
+    <p class="hint">Cerca nome e cognome di chi usa SeaDive. Se ha salvato il profilo, arrivano numero di brevetto e firma. L'immersione resta solo su Condividi.</p>
     <div class="chips" data-roles></div>
-    <input class="search" data-find placeholder="Cerca nome o brevetto…" value="${escapeHtml(view.peopleQuery || "")}" />
+    <input class="search" data-find placeholder="Nome e cognome" value="${escapeHtml(view.peopleQuery || "")}" />
+    <button class="btn primary btn-block" type="button" data-findremote>Cerca nominativo</button>
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <div class="people-list" data-list></div>
     <div class="actions">
@@ -3644,13 +3813,37 @@ function renderPeople() {
     render();
     queueMicrotask(() => document.querySelector("[data-find]")?.focus());
   };
+  const findRemote = async () => {
+    const q = find.value.trim();
+    view.peopleQuery = q;
+    view.peopleHint = "Cerco il profilo…";
+    view.personId = null;
+    render();
+    const published = await publishMyProfile();
+    if (published?.error === "confirm") {
+      view.peopleHint = communityMissText("confirm");
+      render();
+      return;
+    }
+    const result = await adoptCommunityProfile(q);
+    if (result.card) {
+      const who = [result.card.firstName, result.card.lastName].filter(Boolean).join(" ");
+      view.peopleHint = result.card.sign
+        ? `Trovato ${who}. Nome, cognome, brevetto e firma sono pronti: scrivilo come buddy e la firma entra nello spazio.`
+        : `Trovato ${who}. Nome e brevetto sono pronti. Manca la firma sul suo profilo.`;
+    } else {
+      view.peopleHint = communityMissText(result.error);
+    }
+    render();
+  };
   find.onchange = applyFind;
   find.onkeydown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      applyFind();
+      findRemote();
     }
   };
+  card.querySelector("[data-findremote]").onclick = () => findRemote();
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
     view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
@@ -3967,7 +4160,7 @@ function renderProfile() {
     </section>
     <section class="profile-block">
       <h3>La tua firma</h3>
-      <p class="hint">Firma qui una volta. In una nuova immersione, se inserisci questo nome come buddy o guida, la firma si carica da sola.</p>
+      <p class="hint">Firma qui una volta. Nome, cognome, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "Possessore di questa app", false)}
       ${signPreviewHtml(profileSignImage())}
     </section>
@@ -4071,7 +4264,7 @@ function renderProfile() {
       ownerSign = v;
     });
   });
-  form.onsubmit = (e) => {
+  form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     fd.delete("certName");
@@ -4090,6 +4283,10 @@ function renderProfile() {
       sign: typeof ownerSign === "string" && ownerSign.startsWith("data:image") ? ownerSign : "",
     };
     save(state);
+    const published = await publishMyProfile();
+    if (published?.error === "confirm") {
+      alert("Apri la mail di conferma arrivata su Gmail e clicca il link. Poi salva di nuovo il profilo.");
+    }
     render();
   };
   form.querySelector("[data-out]").onclick = () => {
@@ -4657,7 +4854,10 @@ function renderEdit() {
     };
     form._applyOwnerSign();
     ["buddyName", "guideName"].forEach((name) => {
-      form.querySelector(`[name=${name}]`)?.addEventListener("input", () => form._applyOwnerSign());
+      form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
+        form._applyOwnerSign();
+        scheduleCommunityPull(form);
+      });
     });
     if (view.focusSign) {
       form.querySelector(`[data-sign="${view.focusSign}"]`)?.closest(".sign-pad")?.scrollIntoView({ behavior: "smooth", block: "center" });
