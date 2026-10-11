@@ -1276,7 +1276,7 @@ function storeFollowedPerson(card, role) {
   return { person, created: !existing, name, card };
 }
 
-const COMMUNITY_BUCKET = "JsuPZNFjoWYUm3Bz3Z1kp2";
+const COMMUNITY_API = "https://crudcrud.com/api/4323695fdbb14e2381719f8c374484fc/profiles";
 
 function communityKey(name) {
   const words = personNameKey(name)
@@ -1289,8 +1289,22 @@ function communityKey(name) {
   return words.join("-").slice(0, 80);
 }
 
-function communityUrl(key) {
-  return `https://kvdb.io/${COMMUNITY_BUCKET}/${encodeURIComponent(key)}`;
+function communityCardFromRow(data) {
+  const firstName = String(data?.firstName || "").trim();
+  const lastName = String(data?.lastName || "").trim();
+  const cert = String(data?.cert || "").trim();
+  const level = String(data?.level || "").trim();
+  if (!firstName || !lastName) return null;
+  const card = {
+    firstName,
+    lastName,
+    cert,
+    owner: String(data?.owner || ""),
+    id: String(data?._id || ""),
+  };
+  if (level) card.level = level;
+  if (typeof data?.sign === "string" && data.sign.startsWith("data:image")) card.sign = data.sign;
+  return card;
 }
 
 async function profileOwnerKey() {
@@ -1339,26 +1353,21 @@ async function readCommunityCard(name) {
   if (!key) return { error: "short" };
   let res;
   try {
-    res = await fetch(communityUrl(key), { cache: "no-store" });
+    res = await fetch(COMMUNITY_API, { cache: "no-store" });
   } catch {
     return { error: "network" };
   }
-  if (res.status === 404) return { error: "missing" };
-  if (res.status === 403) return { error: "confirm" };
   if (!res.ok) return { error: "network" };
   try {
-    const data = await res.json();
-    const firstName = String(data?.firstName || "").trim();
-    const lastName = String(data?.lastName || "").trim();
-    const cert = String(data?.cert || "").trim();
-    const level = String(data?.level || "").trim();
-    if (!firstName || !lastName) return { error: "missing" };
-    const card = { firstName, lastName, cert, owner: String(data?.owner || "") };
-    if (level) card.level = level;
-    if (typeof data?.sign === "string" && data.sign.startsWith("data:image")) card.sign = data.sign;
+    const list = await res.json();
+    if (!Array.isArray(list)) return { error: "network" };
+    const row = list.find((item) => item?.key === key);
+    if (!row) return { error: "missing" };
+    const card = communityCardFromRow(row);
+    if (!card) return { error: "missing" };
     return { card };
   } catch {
-    return { error: "missing" };
+    return { error: "network" };
   }
 }
 
@@ -1368,10 +1377,11 @@ async function publishMyProfile() {
   if (!key || !names.firstName || !names.lastName) return { error: "short" };
   const owner = await profileOwnerKey();
   const current = await readCommunityCard(names.name);
-  if (current.error === "confirm" || current.error === "network") return current;
+  if (current.error === "network") return current;
   if (current.card?.owner && current.card.owner !== owner) return { error: "taken" };
   const sign = await shrinkSign(profileSignImage());
   const body = {
+    key,
     firstName: names.firstName,
     lastName: names.lastName,
     cert: String(state.profile?.certNumber || "").trim(),
@@ -1382,12 +1392,12 @@ async function publishMyProfile() {
   if (sign) body.sign = sign;
   if (JSON.stringify(body).length > 15000) delete body.sign;
   try {
-    const res = await fetch(communityUrl(key), {
-      method: "POST",
+    const url = current.card?.id ? `${COMMUNITY_API}/${current.card.id}` : COMMUNITY_API;
+    const res = await fetch(url, {
+      method: current.card?.id ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (res.status === 403) return { error: "confirm" };
     if (!res.ok) return { error: "network" };
     return { ok: true, name: names.name };
   } catch {
@@ -1398,13 +1408,7 @@ async function publishMyProfile() {
 function queueProfilePublish() {
   if (queueProfilePublish.started) return;
   queueProfilePublish.started = true;
-  publishMyProfile()
-    .then((res) => {
-      if (res?.error !== "confirm" || view.personId) return;
-      view.peopleHint = communityMissText("confirm");
-      if (view.name === "people") render();
-    })
-    .catch(() => {});
+  publishMyProfile().catch(() => {});
 }
 
 function profileShareLine(person, sign) {
@@ -1424,7 +1428,6 @@ async function adoptCommunityProfile(name) {
 
 function communityMissText(error) {
   if (error === "short") return "Scrivi nome e cognome interi.";
-  if (error === "confirm") return "Apri la mail di conferma su Gmail e clicca il link, poi riapri l'app. Solo dopo, Cerca nominativo trova nome, cognome, didattica, brevetto e firma anche la prima volta.";
   if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
   return "Nessun profilo con questo nominativo. L'altra persona deve aprire l'app aggiornata, con nome, cognome, didattica, brevetto e firma già salvati.";
 }
@@ -2171,7 +2174,7 @@ function renderAuth() {
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, didattica, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -2219,7 +2222,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 100</p>
+        <p class="hint">Versione 101</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3840,12 +3843,7 @@ function renderPeople() {
     view.peopleHint = "Cerco il profilo…";
     view.personId = null;
     render();
-    const published = await publishMyProfile();
-    if (published?.error === "confirm") {
-      view.peopleHint = communityMissText("confirm");
-      render();
-      return;
-    }
+    await publishMyProfile();
     const result = await adoptCommunityProfile(q);
     if (result.card) {
       const who = [result.card.firstName, result.card.lastName].filter(Boolean).join(" ");
@@ -4306,10 +4304,7 @@ function renderProfile() {
       sign: typeof ownerSign === "string" && ownerSign.startsWith("data:image") ? ownerSign : "",
     };
     save(state);
-    const published = await publishMyProfile();
-    if (published?.error === "confirm") {
-      alert("Apri la mail di conferma su Gmail e clicca il link. Poi salva di nuovo: didattica, brevetto e firma diventano trovabili.");
-    }
+    publishMyProfile().catch(() => {});
     render();
   };
   form.querySelector("[data-out]").onclick = () => {
