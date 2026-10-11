@@ -280,6 +280,7 @@ function cleanPerson(p) {
     lead: String(p.lead || "").trim(),
     note: String(p.note || "").trim(),
     following: Boolean(p.following),
+    sign: typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : "",
   };
 }
 
@@ -523,6 +524,7 @@ function mergePeople(a, b) {
     if (!prev.cert && p.cert) prev.cert = p.cert;
     if (!prev.lead && p.lead) prev.lead = p.lead;
     if (!prev.note && p.note) prev.note = p.note;
+    if (!prev.sign && p.sign) prev.sign = p.sign;
     if (!prev.firstName && p.firstName) prev.firstName = p.firstName;
     if (!prev.lastName && p.lastName) prev.lastName = p.lastName;
     if (p.following) prev.following = true;
@@ -786,10 +788,12 @@ function upsertPerson(partial) {
   if (partial.note != null) found.note = String(partial.note).trim();
   if (partial.following === true) found.following = true;
   if (partial.following === false) found.following = false;
+  if (typeof partial.sign === "string") found.sign = partial.sign.startsWith("data:image") ? partial.sign : "";
   if (twin) {
     if (!found.cert && twin.cert) found.cert = twin.cert;
     if (!found.lead && twin.lead) found.lead = twin.lead;
     if (!found.note && twin.note) found.note = twin.note;
+    if (!found.sign && twin.sign) found.sign = twin.sign;
     (state.dives || []).forEach((d) => {
       if (d.buddyId === twin.id) d.buddyId = found.id;
       if (d.guideId === twin.id) d.guideId = found.id;
@@ -1879,7 +1883,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 93</p>
+        <p class="hint">Versione 94</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3555,6 +3559,10 @@ function renderPerson() {
       ${field("note", "Note", current.note, true)}
     </div>
     <p class="hint">Per buddy e istruttore bastano nome, cognome e brevetto. La denominazione serve al diving. Seguirsi scambia solo quei tre dati, non l'immersione.</p>
+    <div data-personsign ${current.role === "center" ? "hidden" : ""}>
+      <p class="hint">Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma.</p>
+      ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
+    </div>
     ${current.following ? `<p class="hint">Seguito. I dati che arrivano da questa persona aggiornano solo nome, cognome e brevetto.</p>` : ""}
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
     <div class="actions">
@@ -3578,6 +3586,8 @@ function renderPerson() {
         roleInput.value = id;
         roles.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
         b.classList.add("on");
+        const signBox = form.querySelector("[data-personsign]");
+        if (signBox) signBox.hidden = id === "center";
       };
     } else if (id !== (current.role || "buddy")) {
       b.disabled = true;
@@ -3599,6 +3609,12 @@ function renderPerson() {
       };
       diveBox.append(b);
     });
+  let personSign = typeof current.sign === "string" && current.sign.startsWith("data:image") ? current.sign : "";
+  queueMicrotask(() => {
+    bindSign(form.querySelector('[data-sign="personSign"]'), personSign, (v) => {
+      personSign = v;
+    });
+  });
   form.onsubmit = (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -3622,6 +3638,7 @@ function renderPerson() {
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
       following: role === "center" ? false : current.following === true,
+      sign: role === "center" ? "" : personSign,
     });
     if (before && person) applyPersonOntoDives(before, person);
     state.peopleSeeded = true;
@@ -4183,7 +4200,7 @@ function renderEdit() {
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
       ${peoplePicksHtml()}
-      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Community. Se il nome è quello del profilo, la firma registrata si inserisce da sola.</p>
+      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Community. La firma registrata sul profilo o sul contatto del buddy va nello spazio firma.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
@@ -4364,32 +4381,31 @@ function renderEdit() {
     applyPlaceToDive(d);
     bindDiveSiteMap(form, d);
     refreshProfile();
-    const ownerAuto = { buddy: false, guide: false };
+    const applied = { buddy: "", guide: "" };
     const buddyPad = bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => {
       d.buddySign = v;
-      if (v !== profileSignImage()) ownerAuto.buddy = false;
+      if (v !== applied.buddy) applied.buddy = "";
     });
     const guidePad = bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => {
       d.guideSign = v;
-      if (v !== profileSignImage()) ownerAuto.guide = false;
+      if (v !== applied.guide) applied.guide = "";
     });
     bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
     form._applyOwnerSign = () => {
-      const sign = profileSignImage();
       [
         ["buddyName", "buddySign", buddyPad, "buddy"],
         ["guideName", "guideSign", guidePad, "guide"],
       ].forEach(([nameKey, signKey, pad, role]) => {
         const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
-        const matches = Boolean(sign) && personNameKey(typed) === personNameKey(state.profile.name);
+        const sign = signForInsertedPerson(role, typed);
         const current = d[signKey] || "";
-        if (matches && (!current || ownerAuto[role])) {
+        if (sign && (!current || applied[role])) {
           if (current !== sign) {
-            ownerAuto[role] = true;
+            applied[role] = sign;
             pad?.set(sign);
           }
-        } else if (!matches && ownerAuto[role]) {
-          ownerAuto[role] = false;
+        } else if (!sign && applied[role]) {
+          applied[role] = "";
           pad?.clear();
         }
       });
@@ -4529,6 +4545,15 @@ function personNameKey(value) {
 function profileSignImage() {
   const sign = state.profile?.sign;
   return typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+}
+
+function signForInsertedPerson(role, typedName) {
+  const key = personNameKey(typedName);
+  if (!key || role === "center") return "";
+  const person = (state.people || []).find((p) => p.role === role && personNameKey(p.name) === key);
+  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
+  if (personNameKey(state.profile.name) === key) return profileSignImage();
+  return "";
 }
 
 function signPad(key, title, note, withConfirm = true) {
