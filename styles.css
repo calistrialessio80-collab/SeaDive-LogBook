@@ -573,8 +573,14 @@ body.page-home .section-head h3 { color: #1c2430; }
 .people-row {
   display: flex; justify-content: space-between; align-items: center; gap: 10px;
   width: 100%; text-align: left; border: 1px solid var(--line); background: #fff;
-  border-radius: 16px; padding: 12px 14px; cursor: pointer; color: inherit;
+  border-radius: 16px; padding: 12px 14px; color: inherit;
 }
+button.people-row { cursor: pointer; }
+.people-open {
+  flex: 1; min-width: 0; border: 0; background: transparent; padding: 0;
+  text-align: left; color: inherit; cursor: pointer; font: inherit;
+}
+.people-del { flex: none; }
 .people-row strong { display: block; font-size: 16px; }
 .people-row small { display: block; margin-top: 2px; opacity: 0.7; font-size: 13px; }
 .people-row em { font-style: normal; font-size: 12px; font-weight: 600; opacity: 0.65; white-space: nowrap; }

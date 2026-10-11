@@ -424,6 +424,20 @@ function askDeleteDive(d) {
   });
 }
 
+async function removePerson(person) {
+  if (!person) return false;
+  const ok = await askConfirm({
+    title: "Elimina contatto",
+    message: `Vuoi eliminare ${person.name || "questo contatto"} dalla Community? Il nome resta sulle schede già scritte.`,
+    ok: "Elimina",
+    cancel: "Annulla",
+  });
+  if (!ok) return false;
+  state.people = (state.people || []).filter((p) => p.id !== person.id);
+  save(state);
+  return true;
+}
+
 async function removeDive(d) {
   if (!d) return false;
   if (!(await askDeleteDive(d))) return false;
@@ -1865,7 +1879,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 92</p>
+        <p class="hint">Versione 93</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3417,23 +3431,30 @@ function renderPeople() {
   } else {
     people.forEach((p) => {
       const n = divesForPerson(p).length;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "people-row";
+      const row = document.createElement("article");
+      row.className = "people-row";
       const extra = p.role === "center" ? p.lead : p.cert;
-      btn.innerHTML = `
-        <span>
+      row.innerHTML = `
+        <button type="button" class="people-open">
           <strong>${escapeHtml(p.name)}</strong>
           <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}${p.following ? " · seguito" : ""}</small>
-        </span>
+        </button>
         <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
+        <button class="btn danger people-del" type="button">Elimina</button>
       `;
-      btn.onclick = () => {
+      row.querySelector(".people-open").onclick = () => {
         view.personId = p.id;
         view.peopleHint = "";
         render();
       };
-      list.append(btn);
+      row.querySelector(".people-del").onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!(await removePerson(p))) return;
+        if (view.personId === p.id) view.personId = null;
+        render();
+      };
+      list.append(row);
     });
   }
   const find = card.querySelector("[data-find]");
@@ -3541,7 +3562,7 @@ function renderPerson() {
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-follow>${current.following ? "Invia i miei dati" : "Segui"}</button>`}
       ${!creating && current.following && current.role !== "center" ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
       <button class="btn ghost" type="button" data-back>Torna a Community</button>
-      ${creating ? "" : `<button class="btn danger" type="button" data-del>Togli dalla community</button>`}
+      ${creating ? "" : `<button class="btn danger" type="button" data-del>Elimina contatto</button>`}
     </div>
   `;
   const roleInput = form.querySelector("[name=role]");
@@ -3652,17 +3673,11 @@ function renderPerson() {
     view.personId = current.id;
     render();
   });
-  form.querySelector("[data-del]")?.addEventListener("click", async () => {
-    const ok = await askConfirm({
-      title: "Togli dalla community",
-      message: `${current.name} esce dall'elenco. Il nome resta sulle schede già scritte.`,
-      ok: "Togli",
-      cancel: "Annulla",
-    });
-    if (!ok) return;
-    state.people = (state.people || []).filter((p) => p.id !== current.id);
-    save(state);
+  form.querySelector("[data-del]")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!(await removePerson(current))) return;
     view.personId = null;
+    view.personDraft = null;
     render();
   });
   frag.append(form);
