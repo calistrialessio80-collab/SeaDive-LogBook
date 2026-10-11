@@ -1278,13 +1278,16 @@ function storeFollowedPerson(card, role) {
 
 const COMMUNITY_API = "https://crudcrud.com/api/4323695fdbb14e2381719f8c374484fc/profiles";
 
-function communityKey(name) {
-  const words = personNameKey(name)
+function communityWords(name) {
+  return personNameKey(name)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-    .sort();
+    .filter((word) => word.length >= 2);
+}
+
+function communityKey(name) {
+  const words = communityWords(name).slice().sort();
   if (words.length < 2) return "";
   return words.join("-").slice(0, 80);
 }
@@ -1348,9 +1351,7 @@ function shrinkSign(dataUrl) {
   });
 }
 
-async function readCommunityCard(name) {
-  const key = communityKey(name);
-  if (!key) return { error: "short" };
+async function loadOnlineProfiles() {
   let res;
   try {
     res = await fetch(COMMUNITY_API, { cache: "no-store" });
@@ -1361,14 +1362,39 @@ async function readCommunityCard(name) {
   try {
     const list = await res.json();
     if (!Array.isArray(list)) return { error: "network" };
-    const row = list.find((item) => item?.key === key);
-    if (!row) return { error: "missing" };
-    const card = communityCardFromRow(row);
-    if (!card) return { error: "missing" };
-    return { card };
+    return {
+      list: list
+        .map((row) => {
+          const card = communityCardFromRow(row);
+          if (!card) return null;
+          card.key = String(row?.key || "");
+          return card;
+        })
+        .filter(Boolean),
+    };
   } catch {
     return { error: "network" };
   }
+}
+
+async function findOnlineProfiles(query) {
+  const words = communityWords(query);
+  if (words.join("").length < 3) return { error: "short" };
+  const loaded = await loadOnlineProfiles();
+  if (loaded.error) return loaded;
+  const hits = loaded.list.filter((card) => {
+    const hay = communityWords(`${card.firstName} ${card.lastName}`);
+    return words.every((word) => hay.some((part) => part === word || part.startsWith(word)));
+  });
+  if (!hits.length) return { error: "missing" };
+  return { hits };
+}
+
+async function readCommunityCard(name) {
+  const found = await findOnlineProfiles(name);
+  if (found.error) return found;
+  if (found.hits.length !== 1) return { error: "missing" };
+  return { card: found.hits[0] };
 }
 
 async function publishMyProfile() {
@@ -1376,9 +1402,10 @@ async function publishMyProfile() {
   const key = communityKey(names.name);
   if (!key || !names.firstName || !names.lastName) return { error: "short" };
   const owner = await profileOwnerKey();
-  const current = await readCommunityCard(names.name);
-  if (current.error === "network") return current;
-  if (current.card?.owner && current.card.owner !== owner) return { error: "taken" };
+  const loaded = await loadOnlineProfiles();
+  if (loaded.error) return loaded;
+  const current = loaded.list.find((card) => card.key === key) || null;
+  if (current?.owner && current.owner !== owner) return { error: "taken" };
   const sign = await shrinkSign(profileSignImage());
   const body = {
     key,
@@ -1392,9 +1419,9 @@ async function publishMyProfile() {
   if (sign) body.sign = sign;
   if (JSON.stringify(body).length > 15000) delete body.sign;
   try {
-    const url = current.card?.id ? `${COMMUNITY_API}/${current.card.id}` : COMMUNITY_API;
+    const url = current?.id ? `${COMMUNITY_API}/${current.id}` : COMMUNITY_API;
     const res = await fetch(url, {
-      method: current.card?.id ? "PUT" : "POST",
+      method: current?.id ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -1405,10 +1432,21 @@ async function publishMyProfile() {
   }
 }
 
+let profileOnlineStatus = "";
+
 function queueProfilePublish() {
   if (queueProfilePublish.started) return;
   queueProfilePublish.started = true;
-  publishMyProfile().catch(() => {});
+  publishMyProfile()
+    .then((res) => {
+      profileOnlineStatus = res?.ok ? "online" : res?.error || "";
+      if (view.name === "profile") render();
+    })
+    .catch(() => {});
+}
+
+function insertOnlineProfile(card) {
+  return storeFollowedPerson(card, "buddy");
 }
 
 function profileShareLine(person, sign) {
@@ -1429,7 +1467,7 @@ async function adoptCommunityProfile(name) {
 function communityMissText(error) {
   if (error === "short") return "Scrivi nome e cognome interi.";
   if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
-  return "Nessun profilo con questo nominativo. L'altra persona deve aprire l'app aggiornata, con nome, cognome, didattica, brevetto e firma già salvati.";
+  return "Nessun profilo in rete con questo nominativo. L'altra persona deve aprire l'app aggiornata: online vanno solo nome, cognome, numero di brevetto e firma.";
 }
 
 function scheduleCommunityPull(form) {
@@ -1447,14 +1485,25 @@ async function pullCommunitySigns(form) {
     ["guideName", "guide"],
   ]) {
     const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
-    if (!communityKey(typed)) continue;
+    if (communityWords(typed).join("").length < 3) continue;
     const local = personByTypedName(role, typed);
     if (local && personKnownSign(local)) continue;
-    const found = await readCommunityCard(typed);
-    if (!found.card) continue;
+    const found = await findOnlineProfiles(typed);
+    if (found.hits?.length !== 1) continue;
+    const card = found.hits[0];
     if (!form.isConnected) return;
     if ((form.querySelector(`[name=${nameKey}]`)?.value || "") !== typed) continue;
-    storeFollowedPerson(found.card, role);
+    const full = [card.firstName, card.lastName].filter(Boolean).join(" ");
+    const certKey = role === "guide" ? "guideCert" : "buddyCert";
+    storeFollowedPerson(card, role);
+    if (view.draft) {
+      view.draft[nameKey] = full;
+      view.draft[certKey] = card.cert || "";
+    }
+    const nameInput = form.querySelector(`[name=${nameKey}]`);
+    const certInput = form.querySelector(`[name=${certKey}]`);
+    if (nameInput) nameInput.value = full;
+    if (certInput) certInput.value = card.cert || "";
     changed = true;
   }
   if (!changed || !form.isConnected) return;
@@ -2222,7 +2271,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 101</p>
+        <p class="hint">Versione 102</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3742,7 +3791,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Cerca nome e cognome, anche se non è ancora in elenco. La prima volta arrivano didattica, numero di brevetto e firma. L'immersione resta solo su Condividi.</p>
+    <p class="hint">Scrivi nome o cognome. Se il profilo è in rete, entrano da soli nome, cognome, numero di brevetto e firma. In rete non va il diario.</p>
     <div class="chips" data-roles></div>
     <input class="search" data-find placeholder="Nome e cognome" value="${escapeHtml(view.peopleQuery || "")}" />
     <button class="btn primary btn-block" type="button" data-findremote>Cerca nominativo</button>
@@ -3770,7 +3819,39 @@ function renderPeople() {
     roles.append(b);
   });
   const list = card.querySelector("[data-list]");
-  if (!people.length) {
+  (view.onlineHits || []).forEach((cardHit) => {
+    const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+    const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
+    const row = document.createElement("article");
+    row.className = "people-row";
+    row.innerHTML = `
+      <button type="button" class="people-open">
+        <strong>${escapeHtml(who)}</strong>
+        <small>In rete${extra ? " · " + escapeHtml(extra) : ""}${cardHit.sign ? " · firma" : ""}</small>
+      </button>
+      ${cardHit.sign ? `<img class="people-sign" alt="" src="${escapeHtml(cardHit.sign)}" />` : ""}
+      <button class="btn primary people-share" type="button">Inserisci</button>
+    `;
+    const insert = () => {
+      const stored = insertOnlineProfile(cardHit);
+      save(state);
+      view.onlineHits = [];
+      view.peopleQuery = who;
+      view.personId = stored.person?.id || null;
+      view.peopleHint = cardHit.sign
+        ? `Inserito ${who}. Numero di brevetto e firma entrano nella nuova immersione.`
+        : `Inserito ${who}. Manca la firma sul profilo.`;
+      render();
+    };
+    row.querySelector(".people-open").onclick = insert;
+    row.querySelector(".people-share").onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      insert();
+    };
+    list.append(row);
+  });
+  if (!people.length && !(view.onlineHits || []).length) {
     const empty = document.createElement("p");
     empty.className = "hint";
     empty.textContent = q || role !== "all"
@@ -3832,39 +3913,62 @@ function renderPeople() {
     });
   }
   const find = card.querySelector("[data-find]");
-  const applyFind = () => {
-    view.peopleQuery = find.value;
-    render();
-    queueMicrotask(() => document.querySelector("[data-find]")?.focus());
-  };
   const findRemote = async () => {
     const q = find.value.trim();
     view.peopleQuery = q;
-    view.peopleHint = "Cerco il profilo…";
+    view.onlineHits = [];
     view.personId = null;
+    if (communityWords(q).join("").length < 3) {
+      view.peopleHint = "";
+      render();
+      queueMicrotask(() => document.querySelector("[data-find]")?.focus());
+      return;
+    }
+    view.peopleHint = "Cerco in rete…";
     render();
-    await publishMyProfile();
-    const result = await adoptCommunityProfile(q);
-    if (result.card) {
-      const who = [result.card.firstName, result.card.lastName].filter(Boolean).join(" ");
-      const detail = [result.card.level, result.card.cert ? "brevetto " + result.card.cert : ""].filter(Boolean).join(" · ");
-      view.personId = result.stored?.person?.id || null;
-      view.peopleHint = result.card.sign
-        ? `Trovato ${who}${detail ? " · " + detail : ""}. La firma è sul contatto: nella nuova immersione scrivi il nominativo e entra nello spazio Firma buddy.`
-        : `Trovato ${who}${detail ? " · " + detail : ""}. Manca la firma sul suo profilo.`;
+    const box = document.querySelector("[data-find]");
+    const result = await findOnlineProfiles(q);
+    if ((box?.value || "").trim() !== q) return;
+    if (result.hits?.length === 1) {
+      const cardHit = result.hits[0];
+      const stored = insertOnlineProfile(cardHit);
+      save(state);
+      const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+      view.personId = stored.person?.id || null;
+      view.peopleHint = cardHit.sign
+        ? `Inserito ${who}. Numero di brevetto e firma entrano nella nuova immersione.`
+        : `Inserito ${who}. Manca la firma sul profilo.`;
+    } else if (result.hits?.length > 1) {
+      view.onlineHits = result.hits;
+      view.peopleHint = "Più profili in rete. Tocca Inserisci su quello giusto.";
     } else {
       view.peopleHint = communityMissText(result.error);
     }
     render();
+    queueMicrotask(() => {
+      const again = document.querySelector("[data-find]");
+      if (!again) return;
+      again.focus();
+      const end = again.value.length;
+      again.setSelectionRange?.(end, end);
+    });
   };
-  find.onchange = applyFind;
+  let peopleSearchTimer = 0;
+  find.oninput = () => {
+    clearTimeout(peopleSearchTimer);
+    peopleSearchTimer = setTimeout(() => findRemote(), 450);
+  };
   find.onkeydown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
+      clearTimeout(peopleSearchTimer);
       findRemote();
     }
   };
-  card.querySelector("[data-findremote]").onclick = () => findRemote();
+  card.querySelector("[data-findremote]").onclick = () => {
+    clearTimeout(peopleSearchTimer);
+    findRemote();
+  };
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
     view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
@@ -4175,6 +4279,7 @@ function renderProfile() {
     <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
     <section class="profile-block">
       <h3>Anagrafica</h3>
+      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. Gli altri trovano nome, cognome, numero di brevetto e firma." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "Online vanno solo nome, cognome, numero di brevetto e firma. Il diario resta sul telefono."}</p>
       <div class="form-grid">
         ${field("name", "Nome e cognome", p.name, true)}
       </div>
