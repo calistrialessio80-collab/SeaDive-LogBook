@@ -2332,7 +2332,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 105</p>
+        <p class="hint">Versione 111</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2672,6 +2672,44 @@ function flagIcon(kind, zoom) {
   };
 }
 
+const DIVE_COUNTRY = {
+  IT: "Italia", FR: "Francia", ES: "Spagna", PT: "Portogallo", HR: "Croazia", GR: "Grecia", TR: "Turchia",
+  MT: "Malta", CY: "Cipro", EG: "Egitto", IL: "Israele", JO: "Giordania", TN: "Tunisia", MA: "Marocco",
+  DZ: "Algeria", AL: "Albania", ME: "Montenegro", SI: "Slovenia", DE: "Germania", GB: "Regno Unito",
+  IE: "Irlanda", NO: "Norvegia", SE: "Svezia", IS: "Islanda", NL: "Paesi Bassi", BE: "Belgio",
+  US: "USA", MX: "Messico", AU: "Australia", NZ: "Nuova Zelanda", ID: "Indonesia", MY: "Malaysia",
+  TH: "Thailandia", PH: "Filippine", JP: "Giappone", MV: "Maldive", ZA: "Sudafrica", BR: "Brasile",
+};
+
+function diveCountryName(code) {
+  const raw = String(code || "").trim();
+  if (!raw) return "";
+  return DIVE_COUNTRY[raw.toUpperCase()] || raw;
+}
+
+let diveCatalogPromise = null;
+
+function loadDiveCatalog() {
+  if (!diveCatalogPromise) {
+    diveCatalogPromise = fetch("./dive-sites.json?v=111", { cache: "force-cache" })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows) =>
+        (Array.isArray(rows) ? rows : [])
+          .map((row) => ({
+            name: String(row.n || "").trim(),
+            country: diveCountryName(row.c),
+            lat: Number(row.a),
+            lng: Number(row.o),
+            kind: row.k === "d" ? "diving" : "sito",
+            osm: true,
+          }))
+          .filter((row) => row.name && Number.isFinite(row.lat) && Number.isFinite(row.lng))
+      )
+      .catch(() => []);
+  }
+  return diveCatalogPromise;
+}
+
 function renderWorldMap() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("siti del mondo"));
@@ -2682,7 +2720,7 @@ function renderWorldMap() {
   hero.className = "card hero map-head";
   hero.innerHTML = `
     <h2>Mappa satellitare</h2>
-    <p class="tagline">Google Maps, bandierine rettangolari da diving. <strong>Rosso e bianco</strong> = già fatti. <strong>Grigio e bianco</strong> = siti e diving da scoprire. Avvicina per caricare tutti i diving della zona. Tocca per aggiungere un sito.</p>
+    <p class="tagline">Siti e diving del Mediterraneo e del mondo. <strong>Rosso e bianco</strong> = già fatti. <strong>Grigio e bianco</strong> = da scoprire. Le bandierine sono piccole da lontano e crescono quando ti avvicini: da vicino compaiono tutti i punti. Tocca la mappa per aggiungere un sito.</p>
     <div class="map-legend">
       <span><i class="flag-ico done"></i> Fatti ${doneN}</span>
       <span><i class="flag-ico todo"></i> Catalogo e diving</span>
@@ -2770,12 +2808,78 @@ function renderWorldMap() {
             info.open({ map: gmap, anchor: m });
           });
           bucket.push(m);
-          googleWorldMarkers.push(m);
+          if (bucket !== googleWorldMarkers) googleWorldMarkers.push(m);
         };
         pack.sites.forEach((site) => putFlag(site, googleWorldMarkers));
+        let catalogMarkers = [];
+        let catalogRows = [];
+        let catalogDrawing = false;
+        const clearCatalog = () => {
+          googleWorldMarkers.slice().forEach((m) => {
+            if (!m.get("fromCatalog")) return;
+            m.setMap(null);
+          });
+          googleWorldMarkers = googleWorldMarkers.filter((m) => !m.get("fromCatalog"));
+          catalogMarkers = [];
+        };
+        const lngInside = (lng, west, east) => (west <= east ? lng >= west && lng <= east : lng >= west || lng <= east);
+        const redrawCatalog = () => {
+          if (catalogDrawing || !catalogRows.length) return;
+          const b = gmap.getBounds();
+          if (!b) return;
+          catalogDrawing = true;
+          try {
+            clearCatalog();
+            const zoom = gmap.getZoom();
+            const ne = b.getNorthEast();
+            const sw = b.getSouthWest();
+            const north = ne.lat();
+            const south = sw.lat();
+            const east = ne.lng();
+            const west = sw.lng();
+            const hits = [];
+            catalogRows.forEach((site) => {
+              if (site.lat > north || site.lat < south || !lngInside(site.lng, west, east)) return;
+              hits.push(site);
+            });
+            let show = hits;
+            const cell = zoom < 4 ? 2.2 : zoom < 6 ? 0.45 : zoom < 8 ? 0.12 : 0;
+            if (cell && hits.length > 220) {
+              const seen = new Set();
+              show = [];
+              hits.forEach((site) => {
+                const key = Math.round(site.lat / cell) + ":" + Math.round(site.lng / cell);
+                if (seen.has(key)) return;
+                seen.add(key);
+                show.push(site);
+              });
+            }
+            if (show.length > 700) {
+              const step = Math.ceil(show.length / 700);
+              show = show.filter((_, i) => i % step === 0);
+            }
+            show.forEach((site) => {
+              if (pack.sites.some((known) => haversineMapKm(known, site) < 0.7)) return;
+              const done = (state.dives || []).some((d) => {
+                const p = api.divePoint(d);
+                return p && haversineMapKm(p, site) <= 3;
+              });
+              putFlag({ ...site, done }, catalogMarkers);
+              const marker = catalogMarkers[catalogMarkers.length - 1];
+              if (marker) marker.set("fromCatalog", true);
+            });
+          } finally {
+            catalogDrawing = false;
+          }
+        };
+        loadDiveCatalog().then((rows) => {
+          if (googleWorldMap !== gmap) return;
+          catalogRows = rows;
+          redrawCatalog();
+        });
         let osmTimer = 0;
         const loadOsm = () => {
-          if (!api.fetchOsmDivePlaces || gmap.getZoom() < 5) {
+          if (!api.fetchOsmDivePlaces || gmap.getZoom() < 11) {
             osmMarkers.forEach((m) => m.setMap(null));
             osmMarkers.length = 0;
             return;
@@ -2798,7 +2902,11 @@ function renderWorldMap() {
                 osmMarkers.length = 0;
                 const marked = api.markDoneAgainstDives?.(rows, state.dives) || rows;
                 marked.forEach((site) => {
-                  const near = pack.sites.some((s) => haversineMapKm(s, site) < 1.2);
+                  const near =
+                    pack.sites.some((s) => haversineMapKm(s, site) < 1.2) ||
+                    catalogRows.some(
+                      (s) => Math.abs(s.lat - site.lat) < 0.02 && Math.abs(s.lng - site.lng) < 0.02
+                    );
                   if (near) return;
                   putFlag(site, osmMarkers);
                 });
@@ -2806,19 +2914,26 @@ function renderWorldMap() {
               .catch(() => {});
           }, 400);
         };
-        gmap.addListener("idle", loadOsm);
+        gmap.addListener("idle", () => {
+          redrawCatalog();
+          loadOsm();
+        });
         let flagFrame = 0;
+        const rescaleFlags = () => {
+          const zoom = gmap.getZoom();
+          googleWorldMarkers.forEach((m) => {
+            if (!m.getMap()) return;
+            m.setIcon(flagIcon(m.get("flagKind") || "todo", zoom));
+          });
+        };
         gmap.addListener("zoom_changed", () => {
-          if (flagFrame) return;
+          if (flagFrame) cancelAnimationFrame(flagFrame);
           flagFrame = requestAnimationFrame(() => {
             flagFrame = 0;
-            const zoom = gmap.getZoom();
-            googleWorldMarkers.forEach((m) => {
-              if (!m.getMap()) return;
-              m.setIcon(flagIcon(m.get("flagKind") || "todo", zoom));
-            });
+            rescaleFlags();
           });
         });
+        gmap.addListener("idle", rescaleFlags);
         gmap.addListener("click", (ev) => {
           if (!ev.latLng) return;
           mapPick = {
@@ -5385,10 +5500,31 @@ function compressImage(file) {
   });
 }
 
+function drawSignFrame(ctx, img, canvas, onBaseline) {
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  if (!onBaseline || !iw || !ih) {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return;
+  }
+  const dpr = devicePixelRatio || 1;
+  const padX = 16 * dpr;
+  const padTop = 6 * dpr;
+  const padBottom = 18 * dpr;
+  const boxW = Math.max(1, canvas.width - padX * 2);
+  const boxH = Math.max(1, canvas.height - padTop - padBottom);
+  const scale = Math.min(boxW / iw, boxH / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  ctx.drawImage(img, padX + (boxW - dw) / 2, padTop + boxH - dh, dw, dh);
+}
+
 function bindSign(canvas, existing, onChange) {
   if (!canvas) return;
   let current = existing || "";
   const pad = canvas.closest(".sign-pad");
+  const profilePad = canvas.dataset.sign === "ownerSign";
+  let frameCapture = false;
   const ghost = pad?.querySelector(".sign-ghost");
   const ok = pad?.querySelector('input[type="checkbox"]');
   const showGhost = () => {
@@ -5402,43 +5538,44 @@ function bindSign(canvas, existing, onChange) {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
   };
+  const paintImage = (dataUrl, onBaseline) => {
+    if (!dataUrl) return;
+    const im = new Image();
+    im.onload = () => {
+      if (!canvas.isConnected) return;
+      drawSignFrame(ctx, im, canvas, onBaseline);
+    };
+    im.src = dataUrl;
+  };
   const fit = () => {
     const r = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.floor(r.width * devicePixelRatio));
     canvas.height = Math.max(1, Math.floor(r.height * devicePixelRatio));
     stylePen();
-    if (current) {
-      const im = new Image();
-      im.onload = () => ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
-      im.src = current;
-    }
+    if (current) paintImage(current, profilePad && !frameCapture);
     showGhost();
     reveal(current, false);
   };
   const reveal = (value, notify) => {
-    if (canvas.dataset.sign !== "ownerSign" || !value) {
+    if (!profilePad || !value) {
       showAppliedSign(pad, value);
       if (notify) onChange(value || "");
       return;
     }
+    showAppliedSign(pad, "");
     trimSign(value).then((trimmed) => {
       if (!pad.isConnected) return;
       const shown = trimmed || value;
       if (current !== value && current !== shown) return;
-      current = shown;
-      showAppliedSign(pad, shown);
       if (notify || shown !== value) onChange(shown);
     });
   };
   const paint = (value, notify) => {
     current = value || "";
+    frameCapture = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     stylePen();
-    if (current) {
-      const im = new Image();
-      im.onload = () => ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
-      im.src = current;
-    }
+    if (current) paintImage(current, profilePad);
     if (ok) ok.checked = Boolean(current);
     showGhost();
     reveal(current, notify);
@@ -5472,6 +5609,7 @@ function bindSign(canvas, existing, onChange) {
     if (!drawing) return;
     drawing = false;
     current = canvas.toDataURL("image/png");
+    if (profilePad) frameCapture = true;
     showGhost();
     reveal(current, true);
   };
