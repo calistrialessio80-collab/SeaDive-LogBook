@@ -328,7 +328,11 @@ function diveTombstoneKeys(d) {
 function diveIsDeleted(d, tombs) {
   if (!d) return false;
   const set = new Set(tombs || []);
-  return diveTombstoneKeys(d).some((k) => set.has(k));
+  if (d.id && set.has(String(d.id))) return true;
+  if (d.shareId && set.has("s:" + d.shareId)) return true;
+  if (d.manual) return false;
+  const key = window.SeaDiveComputers?.diveKey?.(d) || `${d?.date || ""}|${d?.timeIn || ""}|${Number(d?.maxDepth) || 0}|${Number(d?.bottomTime) || 0}`;
+  return Boolean(key) && set.has("k:" + key);
 }
 
 function rememberDeletedDive(d) {
@@ -1060,6 +1064,14 @@ function fmtItDateLong(iso) {
   return d.toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
 }
 
+function dotNumber(v) {
+  const raw = String(v ?? "").trim();
+  const s = raw.replace(/\s/g, "").replace(",", ".");
+  if (!s) return "";
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return raw;
+  return String(Number(s));
+}
+
 function parseDecimal(v) {
   if (v == null || v === "") return NaN;
   const n = parseFloat(String(v).trim().replace(/\s/g, "").replace(",", "."));
@@ -1668,7 +1680,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 88</p>
+        <p class="hint">Versione 89</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3581,7 +3593,7 @@ function field(name, label, value, full = false, type = "text") {
   if (type === "time") {
     return `<label class="${cls}">${escapeHtml(label)}<span class="time-box"><input name="${name}" type="time" value="${escapeHtml(value)}" /></span></label>`;
   }
-  if (type === "decimal") {
+  if (type === "decimal" || type === "number") {
     return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="text" inputmode="decimal" lang="it" enterkeyhint="done" value="${escapeHtml(value)}" /></label>`;
   }
   return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="${type}" value="${escapeHtml(value)}" /></label>`;
@@ -3727,6 +3739,7 @@ function renderDetail() {
 
 function startNew() {
   const draft = emptyDive();
+  draft.manual = true;
   draft.number = nextNumber();
   draft.certOnDive = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
   const prev = [...(state.dives || [])].sort((a, b) => {
@@ -3736,6 +3749,9 @@ function startNew() {
   }).pop();
   draft.tank = "15";
   draft.pressureStart = Number(prev?.pressureStart) >= 150 ? String(prev.pressureStart) : "200";
+  forgetDeletedDive(draft);
+  state.dives.push(draft);
+  save(state);
   view = { name: "edit", diveId: draft.id, draft, query: view.query };
   render();
 }
@@ -4054,8 +4070,10 @@ function renderEdit() {
       view.focusSign = "";
     }
   });
+  form.noValidate = true;
   form.onsubmit = async (e) => {
     e.preventDefault();
+    try {
     const fd = new FormData(form);
     fd.delete("photoFile");
     fd.delete("buddySignOk");
@@ -4102,6 +4120,10 @@ function renderEdit() {
     next.deco = fd.has("hadDeco");
     delete next.hadDeco;
     ensureCircuit(next);
+    ["number", "maxDepth", "avgDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "surfaceInterval", "visibility", "waterTemp", "bottomTemp", "airTemp", "cns", "otu", "tss", "ascentRate", "ascentMax", "sac", "ndl", "pressureStart", "pressureEnd"].forEach((k) => {
+      if (next[k] != null && next[k] !== "") next[k] = dotNumber(next[k]);
+    });
+    if (!next.computerLog && !next.profileFromComputer) next.manual = true;
     next.profilePoints = ensureThermoProfile(next);
     applyDiveMetrics(next);
     linkPeopleOnDive(next);
@@ -4130,6 +4152,9 @@ function renderEdit() {
     save(state);
     view = { name: "detail", diveId: next.id, query: view.query };
     render();
+    } catch (err) {
+      alert(err.message || String(err));
+    }
   };
   form.querySelector("[data-cancel]").onclick = () => {
     view = { name: "log", query: view.query };
