@@ -1323,6 +1323,67 @@ async function profileOwnerKey() {
   return id;
 }
 
+function trimSign(dataUrl) {
+  return new Promise((resolve) => {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve(dataUrl || "");
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) return resolve(dataUrl);
+      const src = document.createElement("canvas");
+      src.width = w;
+      src.height = h;
+      const ctx = src.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      let pixels;
+      try {
+        pixels = ctx.getImageData(0, 0, w, h).data;
+      } catch {
+        return resolve(dataUrl);
+      }
+      let minX = w;
+      let minY = h;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (pixels[i + 3] < 24) continue;
+          if (pixels[i] > 242 && pixels[i + 1] > 242 && pixels[i + 2] > 242) continue;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+      if (maxX < 0) return resolve("");
+      const padX = Math.max(12, Math.round(w * 0.02));
+      const padY = Math.max(6, Math.round(h * 0.015));
+      minX = Math.max(0, minX - padX);
+      minY = Math.max(0, minY - padY);
+      maxX = Math.min(w - 1, maxX + padX);
+      maxY = Math.min(h - 1, maxY + padY);
+      const cw = maxX - minX + 1;
+      const ch = maxY - minY + 1;
+      if (cw > w * 0.92 && ch > h * 0.92) return resolve(dataUrl);
+      const out = document.createElement("canvas");
+      out.width = cw;
+      out.height = ch;
+      const octx = out.getContext("2d");
+      octx.drawImage(src, minX, minY, cw, ch, 0, 0, cw, ch);
+      const cut = octx.getImageData(0, 0, cw, ch);
+      for (let i = 0; i < cut.data.length; i += 4) {
+        if (cut.data[i] > 242 && cut.data[i + 1] > 242 && cut.data[i + 2] > 242) cut.data[i + 3] = 0;
+      }
+      octx.putImageData(cut, 0, 0);
+      resolve(out.toDataURL("image/png"));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 function shrinkSign(dataUrl) {
   return new Promise((resolve) => {
     if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve("");
@@ -2271,7 +2332,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 102</p>
+        <p class="hint">Versione 103</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4287,8 +4348,7 @@ function renderProfile() {
     <section class="profile-block">
       <h3>La tua firma</h3>
       <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
-      ${signPad("ownerSign", "Firma del subacqueo", p.name || "Possessore di questa app", false)}
-      ${signPreviewHtml(profileSignImage())}
+      ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
     </section>
     <section class="profile-block">
       <h3>Brevetto principale</h3>
@@ -5207,19 +5267,21 @@ function ownerSignCard() {
 }
 
 function signPad(key, title, note, withConfirm = true) {
+  const profile = key === "ownerSign";
   return `
-    <div class="sign-pad" data-pad="${key}">
+    <div class="sign-pad${profile ? " sign-pad-profile" : ""}" data-pad="${key}">
       <div class="sign-pad-top">
         <div>
           <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(note)}</span>
         </div>
+        ${profile ? `<button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>` : ""}
       </div>
       <div class="sign-stage">
         <canvas class="sign" data-sign="${key}"></canvas>
         <img class="sign-applied" data-appliedsign="${key}" alt="" hidden />
-        <p class="sign-ghost">Firma qui con il dito o il pennino</p>
-        <button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>
+        <p class="sign-ghost">${profile ? "Firma sulla riga" : "Firma qui con il dito o il pennino"}</p>
+        ${profile ? "" : `<button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>`}
       </div>
       ${
         withConfirm
@@ -5332,7 +5394,22 @@ function bindSign(canvas, existing, onChange) {
       im.src = current;
     }
     showGhost();
-    showAppliedSign(pad, current);
+    reveal(current, false);
+  };
+  const reveal = (value, notify) => {
+    if (canvas.dataset.sign !== "ownerSign" || !value) {
+      showAppliedSign(pad, value);
+      if (notify) onChange(value || "");
+      return;
+    }
+    trimSign(value).then((trimmed) => {
+      if (!pad.isConnected) return;
+      const shown = trimmed || value;
+      if (current !== value && current !== shown) return;
+      current = shown;
+      showAppliedSign(pad, shown);
+      if (notify || shown !== value) onChange(shown);
+    });
   };
   const paint = (value, notify) => {
     current = value || "";
@@ -5345,8 +5422,7 @@ function bindSign(canvas, existing, onChange) {
     }
     if (ok) ok.checked = Boolean(current);
     showGhost();
-    showAppliedSign(pad, current);
-    if (notify) onChange(current);
+    reveal(current, notify);
   };
   const clear = () => paint("", true);
   fit();
@@ -5378,7 +5454,7 @@ function bindSign(canvas, existing, onChange) {
     drawing = false;
     current = canvas.toDataURL("image/png");
     showGhost();
-    onChange(current);
+    reveal(current, true);
   };
   canvas.onmousedown = start;
   canvas.onmousemove = move;

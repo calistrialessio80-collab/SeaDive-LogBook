@@ -152,6 +152,7 @@ body.page-auth #app { max-width: none; padding: 0; }
   position: absolute; inset: 0; display: grid; place-items: center;
   margin: 0; pointer-events: none; color: rgba(8, 56, 72, 0.35); font-weight: 600;
 }
+.sign-ghost[hidden] { display: none !important; }
 .btn-wipe {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   background: var(--coral); color: #fff;
@@ -1004,6 +1005,75 @@ body.page-map #app {
   color: #5b6573;
   font-weight: 700;
 }
+.sign-pad-profile {
+  margin-top: 4px;
+  padding: 12px 12px 8px;
+  border-radius: 18px;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+.sign-pad-profile .sign-pad-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sign-pad-profile .sign-pad-top strong { display: none; }
+.sign-pad-profile .sign-pad-top span {
+  font-size: 15px;
+  font-weight: 650;
+  opacity: 0.9;
+  margin: 0;
+}
+.sign-pad-profile .btn-wipe {
+  position: static;
+  flex: none;
+  background: transparent;
+  color: #c44532;
+  box-shadow: none;
+  padding: 4px 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+.sign-pad-profile .sign-stage {
+  margin-top: 6px;
+  height: 108px;
+  border-radius: 14px;
+  background: #f7f8fb;
+  overflow: hidden;
+}
+.sign-pad-profile .sign-stage::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 22px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: rgba(28, 36, 48, 0.28);
+  pointer-events: none;
+  z-index: 1;
+}
+.sign-pad-profile canvas.sign {
+  height: 108px;
+  border-radius: 14px;
+  background: transparent;
+}
+.sign-pad-profile .sign-applied {
+  background: transparent;
+  object-fit: contain;
+  object-position: center bottom;
+  padding: 6px 16px 18px;
+  box-sizing: border-box;
+}
+.sign-pad-profile .sign-ghost {
+  place-items: end start;
+  padding: 0 18px 32px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.profile-form .sign-preview { display: none; }
 .profile-form .form-grid { grid-template-columns: 1fr; }
 .profile-form .form-pair { grid-template-columns: 1fr; }
 .profile-form .field {
