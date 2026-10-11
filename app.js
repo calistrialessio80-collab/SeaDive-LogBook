@@ -2030,7 +2030,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 97</p>
+        <p class="hint">Versione 98</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3722,7 +3722,7 @@ function renderPerson() {
       ${field("lead", "Responsabile del diving", current.lead, true)}
       ${field("note", "Note", current.note, true)}
     </div>
-    <p class="hint">Per buddy e istruttore, appena li salvi li segui. Condividi scambia nome, cognome, brevetto e firma. Se poi lo scegli come buddy, questi dati entrano da soli nella nuova immersione.</p>
+    <p class="hint">Appena salvi un buddy o un istruttore lo segui. Nella nuova immersione basta scrivere nome e cognome: brevetto e firma entrano da soli, insieme al tuo profilo.</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
       <p class="hint">Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma.</p>
       ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
@@ -4410,9 +4410,10 @@ function renderEdit() {
     <div class="sign-legal" id="firme">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
+      ${ownerOnDiveHtml()}
       ${peoplePicksHtml()}
       <p class="hint" data-pickedperson hidden></p>
-      <p class="hint">Tocca un buddy: nome, cognome, brevetto e firma entrano da soli. Oppure scrivili a mano.</p>
+      <p class="hint">Scrivi nome e cognome di un buddy già in Community: brevetto e firma entrano da soli, insieme al tuo profilo.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
@@ -4603,14 +4604,32 @@ function renderEdit() {
       if (v !== applied.guide) applied.guide = "";
     });
     bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    const stamped = { buddy: null, guide: null };
     form._applyOwnerSign = (opts = {}) => {
       [
-        ["buddyName", "buddySign", buddyPad, "buddy", "buddyId"],
-        ["guideName", "guideSign", guidePad, "guide", "guideId"],
-      ].forEach(([nameKey, signKey, pad, role, idKey]) => {
+        ["buddyName", "buddyCert", "buddySign", buddyPad, "buddy", "buddyId"],
+        ["guideName", "guideCert", "guideSign", guidePad, "guide", "guideId"],
+      ].forEach(([nameKey, certKey, signKey, pad, role, idKey]) => {
         const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
-        const picked = (state.people || []).find((p) => p.id && p.id === d[idKey]);
-        const sign = (picked && personKnownSign(picked)) || signForInsertedPerson(role, typed);
+        const named = personByTypedName(role, typed);
+        const certInput = form.querySelector(`[name=${certKey}]`);
+        const prev = stamped[role];
+        if (named) {
+          d[idKey] = named.id;
+          d[certKey] = named.cert || "";
+          if (certInput) certInput.value = named.cert || "";
+          stamped[role] = { id: named.id, cert: named.cert || "" };
+          if (named.role !== "center" && named.following !== true) {
+            named.following = true;
+            save(state);
+          }
+        } else if (prev && certInput && certInput.value === prev.cert) {
+          d[idKey] = "";
+          d[certKey] = "";
+          certInput.value = "";
+          stamped[role] = null;
+        }
+        const sign = (named && personKnownSign(named)) || signForInsertedPerson(role, typed);
         const current = d[signKey] || "";
         const force = role === "buddy" ? opts.forceBuddy : opts.forceGuide;
         if (sign && (force || !current || applied[role] || current === sign)) {
@@ -4623,6 +4642,18 @@ function renderEdit() {
           showAppliedSign(form.querySelector(`[data-pad="${signKey}"]`), "");
         }
       });
+      const line = form.querySelector("[data-pickedperson]");
+      const buddyNamed = personByTypedName("buddy", form.querySelector("[name=buddyName]")?.value || "");
+      const guideNamed = personByTypedName("guide", form.querySelector("[name=guideName]")?.value || "");
+      const shown = buddyNamed || guideNamed;
+      if (line && shown) {
+        const sign = personKnownSign(shown);
+        line.hidden = false;
+        line.textContent = `${shown.name}${shown.cert ? " · brevetto " + shown.cert : ""}${sign ? " · firma inserita" : " · manca la firma sul contatto"}`;
+      } else if (line && !opts.forceBuddy && !opts.forceGuide) {
+        line.hidden = true;
+        line.textContent = "";
+      }
     };
     form._applyOwnerSign();
     ["buddyName", "guideName"].forEach((name) => {
@@ -4822,6 +4853,27 @@ function fillMissingSigns(d) {
     changed = true;
   });
   return changed;
+}
+
+function personByTypedName(role, typedName) {
+  const key = personNameKey(typedName);
+  if (!key || role === "center") return null;
+  const people = state.people || [];
+  return (
+    people.find((p) => p.role === role && samePersonName(p.name, typedName)) ||
+    people.find((p) => p.role !== "center" && samePersonName(p.name, typedName)) ||
+    null
+  );
+}
+
+function ownerOnDiveHtml() {
+  const name = String(state.profile?.name || "").trim();
+  const cert = String(state.profile?.certNumber || "").trim();
+  const sign = profileSignImage();
+  if (!name && !sign) {
+    return `<p class="hint">Il tuo profilo entra in ogni scheda: scrivi nome e firma in Profilo.</p>`;
+  }
+  return `<p class="hint">Il tuo profilo in scheda: ${escapeHtml(name || "—")}${cert ? " · brevetto " + escapeHtml(cert) : ""}${sign ? " · firma inserita" : " · manca la firma in Profilo"}</p>${signPreviewHtml(sign)}`;
 }
 
 function ownerSignCard() {
