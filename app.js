@@ -850,13 +850,37 @@ function shareDiveFilename(d) {
 
 function sharedDiveCopy(d) {
   const copy = { ...d };
-  ["id", "number", "photo", "buddySign", "guideSign", "centerSign", "sigMeta", "buddyId", "guideId", "centerId"].forEach((k) => delete copy[k]);
+  ["id", "number", "photo", "buddyId", "guideId", "centerId"].forEach((k) => delete copy[k]);
+  ["buddySign", "guideSign", "centerSign"].forEach((k) => {
+    if (typeof copy[k] !== "string" || !copy[k].startsWith("data:image")) delete copy[k];
+  });
+  if (copy.sigMeta && typeof copy.sigMeta === "object") {
+    copy.sigMeta = {
+      buddy: copy.sigMeta.buddy || null,
+      guide: copy.sigMeta.guide || null,
+      center: copy.sigMeta.center || null,
+    };
+  } else delete copy.sigMeta;
   if (copy.computerLog && typeof copy.computerLog === "object") {
     const log = { ...copy.computerLog };
     delete log.all;
     copy.computerLog = log;
   }
   return copy;
+}
+
+function keepSharedSigns(dive) {
+  const next = { ...dive };
+  ["buddySign", "guideSign", "centerSign"].forEach((k) => {
+    next[k] = typeof next[k] === "string" && next[k].startsWith("data:image") ? next[k] : "";
+  });
+  const meta = next.sigMeta && typeof next.sigMeta === "object" ? next.sigMeta : {};
+  next.sigMeta = {
+    buddy: meta.buddy || null,
+    guide: meta.guide || null,
+    center: meta.center || null,
+  };
+  return next;
 }
 
 async function shareOneDive(d) {
@@ -939,9 +963,17 @@ async function readSharedText(file) {
 async function importSharedFile(file) {
   const data = parseSharedPayload(await readSharedText(file));
   const shareId = String(data.shareId || data.dive.shareId || "");
+  const signed = keepSharedSigns(data.dive);
   if (shareId) {
     const already = (state.dives || []).find((d) => d.shareId === shareId);
-    if (already) return already;
+    if (already) {
+      already.buddySign = signed.buddySign;
+      already.guideSign = signed.guideSign;
+      already.centerSign = signed.centerSign;
+      already.sigMeta = signed.sigMeta;
+      save(state);
+      return already;
+    }
   }
   const dive = {
     ...emptyDive(),
@@ -950,10 +982,10 @@ async function importSharedFile(file) {
     shareId: shareId || uid(),
     number: nextNumber(),
     photo: "",
-    buddySign: "",
-    guideSign: "",
-    centerSign: "",
-    sigMeta: { buddy: null, guide: null, center: null },
+    buddySign: signed.buddySign,
+    guideSign: signed.guideSign,
+    centerSign: signed.centerSign,
+    sigMeta: signed.sigMeta,
   };
   delete dive.hadDeco;
   ensureCircuit(dive);
@@ -1832,7 +1864,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 90</p>
+        <p class="hint">Versione 91</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3927,6 +3959,7 @@ function renderDetail() {
       <button class="btn ghost" type="button" data-act="back">Torna al diario</button>
       <button class="btn danger" type="button" data-act="del">Elimina</button>
     </div>
+    <p class="hint">Condividi porta anche la firma del buddy, della guida e del diving. Chi la riceve con Ricevi immersione la ritrova già firmata.</p>
   `;
   bindComputerFill(card);
   card.querySelector("[data-act=edit]").onclick = () => {
