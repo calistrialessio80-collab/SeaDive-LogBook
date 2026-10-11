@@ -814,6 +814,14 @@ function linkPeopleOnDive(dive) {
   dive.buddyId = buddy?.id || "";
   dive.guideId = guide?.id || "";
   dive.centerId = center?.id || "";
+  if (buddy && !(typeof dive.buddySign === "string" && dive.buddySign.startsWith("data:image"))) {
+    const sign = personKnownSign(buddy);
+    if (sign) dive.buddySign = sign;
+  }
+  if (guide && !(typeof dive.guideSign === "string" && dive.guideSign.startsWith("data:image"))) {
+    const sign = personKnownSign(guide);
+    if (sign) dive.guideSign = sign;
+  }
 }
 
 function seedPeopleOnce() {
@@ -890,6 +898,20 @@ function divesForPerson(p) {
   });
 }
 
+function stampPersonSign(person) {
+  if (!person || person.role === "center") return;
+  const sign = personKnownSign(person);
+  if (!sign) return;
+  const signKey = person.role === "guide" ? "guideSign" : "buddySign";
+  const nameKey = person.role === "guide" ? "guideName" : "buddyName";
+  const idKey = person.role === "guide" ? "guideId" : "buddyId";
+  (state.dives || []).forEach((d) => {
+    if (d[idKey] !== person.id && !samePersonName(d[nameKey], person.name)) return;
+    if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
+    d[signKey] = sign;
+  });
+}
+
 function applyPersonOntoDives(before, person) {
   if (!before || before.role !== person.role) return;
   const oldKey = personKey(before.role, before.name);
@@ -898,11 +920,15 @@ function applyPersonOntoDives(before, person) {
       d.buddyId = person.id;
       d.buddyName = person.name;
       d.buddyCert = person.cert || "";
+      const sign = personKnownSign(person);
+      if (sign && !(typeof d.buddySign === "string" && d.buddySign.startsWith("data:image"))) d.buddySign = sign;
     }
     if (person.role === "guide" && (d.guideId === before.id || personKey("guide", d.guideName) === oldKey)) {
       d.guideId = person.id;
       d.guideName = person.name;
       d.guideCert = person.cert || "";
+      const sign = personKnownSign(person);
+      if (sign && !(typeof d.guideSign === "string" && d.guideSign.startsWith("data:image"))) d.guideSign = sign;
     }
     if (person.role === "center" && (d.centerId === before.id || personKey("center", d.centerName) === oldKey)) {
       d.centerId = person.id;
@@ -1070,8 +1096,8 @@ async function importSharedFile(file) {
   return dive;
 }
 
-function myFollowCard() {
-  const names = personNames({ name: state.profile.name || "" });
+function personShareCard(person) {
+  const names = personNames(person || {});
   return {
     app: "seadive-logbook",
     kind: "person-follow",
@@ -1080,25 +1106,24 @@ function myFollowCard() {
     person: {
       firstName: names.firstName,
       lastName: names.lastName,
-      cert: String(state.profile.certNumber || "").trim(),
+      cert: String(person?.cert || "").trim(),
     },
   };
 }
 
-async function shareFollowCard() {
-  const card = myFollowCard();
-  if (!card.person.firstName && !card.person.lastName) {
-    alert("Scrivi nome e cognome nel profilo, poi segui. Nel file vanno solo quelli e il numero di brevetto.");
-    return false;
-  }
+function myFollowCard() {
+  const names = personNames({ name: state.profile.name || "" });
+  return personShareCard({
+    name: state.profile.name || "",
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: state.profile.certNumber || "",
+  });
+}
+
+async function sharePayloadFile(card, filename) {
   const blob = new Blob([JSON.stringify(card, null, 2)], { type: "text/plain" });
-  const who = (card.person.lastName || card.person.firstName || "contatto")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\w]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 24) || "contatto";
-  const file = new File([blob], `seadive-contatto-${who}.json`, { type: "text/plain" });
+  const file = new File([blob], filename, { type: "text/plain" });
   try {
     if (navigator.share) {
       await navigator.share({ files: [file] });
@@ -1110,10 +1135,39 @@ async function shareFollowCard() {
   const a = document.createElement("a");
   const url = URL.createObjectURL(blob);
   a.href = url;
-  a.download = file.name;
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   return true;
+}
+
+function contactFileName(person) {
+  const names = personNames(person || {});
+  const who = (names.lastName || names.firstName || "contatto")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 24) || "contatto";
+  return `seadive-contatto-${who}.json`;
+}
+
+async function sharePersonCard(person) {
+  const card = personShareCard(person);
+  if (!card.person.firstName && !card.person.lastName && !card.person.cert) {
+    alert("Scrivi nome e numero di brevetto, poi condividi.");
+    return false;
+  }
+  return sharePayloadFile(card, contactFileName(person));
+}
+
+async function shareFollowCard() {
+  const card = myFollowCard();
+  if (!card.person.firstName && !card.person.lastName) {
+    alert("Scrivi nome e cognome nel profilo, poi segui. Nel file vanno solo quelli e il numero di brevetto.");
+    return false;
+  }
+  return sharePayloadFile(card, contactFileName({ name: state.profile.name || "", cert: state.profile.certNumber || "" }));
 }
 
 function parseFollowPayload(text) {
@@ -1942,7 +1996,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 95</p>
+        <p class="hint">Versione 96</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3511,6 +3565,7 @@ function renderPeople() {
         </button>
         ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
         <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
+        ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
         <button class="btn danger people-del" type="button">Elimina</button>
       `;
       row.querySelector(".people-open").onclick = () => {
@@ -3518,6 +3573,14 @@ function renderPeople() {
         view.peopleHint = "";
         render();
       };
+      row.querySelector(".people-share")?.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const sent = await sharePersonCard(p);
+        if (!sent) return;
+        view.peopleHint = `Condivisi nome e brevetto di ${p.name}.`;
+        render();
+      });
       row.querySelector(".people-del").onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -3625,7 +3688,7 @@ function renderPerson() {
       ${field("lead", "Responsabile del diving", current.lead, true)}
       ${field("note", "Note", current.note, true)}
     </div>
-    <p class="hint">Per buddy e istruttore bastano nome, cognome e brevetto. La denominazione serve al diving. Seguirsi scambia solo quei tre dati, non l'immersione.</p>
+    <p class="hint">Per buddy e istruttore bastano nome, cognome e brevetto. Condividi invia solo nome e numero di brevetto. Se è un buddy, la firma del suo profilo va da sola nello spazio Firma buddy.</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
       <p class="hint">Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma.</p>
       ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
@@ -3635,6 +3698,7 @@ function renderPerson() {
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
     <div class="actions">
       <button class="btn primary" type="submit">Salva</button>
+      ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-shareperson>Condividi nome e brevetto</button>`}
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-follow>${current.following ? "Invia i miei dati" : "Segui"}</button>`}
       ${!creating && current.following && current.role !== "center" ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
       <button class="btn ghost" type="button" data-back>Torna a Community</button>
@@ -3709,6 +3773,7 @@ function renderPerson() {
       sign: role === "center" ? "" : personSign,
     });
     if (before && person) applyPersonOntoDives(before, person);
+    if (person) stampPersonSign(person);
     state.peopleSeeded = true;
     save(state);
     view.personId = null;
@@ -3716,6 +3781,23 @@ function renderPerson() {
     view.peopleHint = "";
     render();
   };
+  form.querySelector("[data-shareperson]")?.addEventListener("click", async () => {
+    const names = personNames({
+      ...current,
+      firstName: form.querySelector("[name=firstName]")?.value || current.firstName,
+      lastName: form.querySelector("[name=lastName]")?.value || current.lastName,
+      name: current.role === "center" ? current.name : "",
+    });
+    const sent = await sharePersonCard({
+      ...current,
+      firstName: names.firstName,
+      lastName: names.lastName,
+      name: names.name || current.name,
+      cert: form.querySelector("[name=cert]")?.value || current.cert,
+    });
+    if (!sent) return;
+    view.peopleHint = "Condivisi solo nome e numero di brevetto.";
+  });
   form.querySelector("[data-back]").onclick = () => {
     view.personId = null;
     view.personDraft = null;
@@ -3810,7 +3892,12 @@ function bindPeoplePicks(form, d) {
           if (extraInput) extraInput.value = d[extraKey];
           chips.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
           b.classList.add("on");
-          form._applyOwnerSign?.();
+          if (role === "buddy" || role === "guide") {
+            const signKey = role === "buddy" ? "buddySign" : "guideSign";
+            const sign = personKnownSign(p);
+            if (sign) d[signKey] = sign;
+            form._applyOwnerSign?.({ forceBuddy: role === "buddy", forceGuide: role === "guide" });
+          }
         };
         chips.append(b);
       });
@@ -4470,22 +4557,24 @@ function renderEdit() {
       if (v !== applied.guide) applied.guide = "";
     });
     bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
-    form._applyOwnerSign = () => {
+    form._applyOwnerSign = (opts = {}) => {
       [
-        ["buddyName", "buddySign", buddyPad, "buddy"],
-        ["guideName", "guideSign", guidePad, "guide"],
-      ].forEach(([nameKey, signKey, pad, role]) => {
+        ["buddyName", "buddySign", buddyPad, "buddy", "buddyId"],
+        ["guideName", "guideSign", guidePad, "guide", "guideId"],
+      ].forEach(([nameKey, signKey, pad, role, idKey]) => {
         const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
-        const sign = signForInsertedPerson(role, typed);
+        const picked = (state.people || []).find((p) => p.id && p.id === d[idKey]);
+        const sign = (picked && personKnownSign(picked)) || signForInsertedPerson(role, typed);
         const current = d[signKey] || "";
-        if (sign && (!current || applied[role])) {
-          if (current !== sign) {
-            applied[role] = sign;
-            pad?.set(sign);
-          }
+        const force = role === "buddy" ? opts.forceBuddy : opts.forceGuide;
+        if (sign && (force || !current || applied[role] || current === sign)) {
+          applied[role] = sign;
+          pad?.set(sign);
+          showAppliedSign(form.querySelector(`[data-pad="${signKey}"]`), sign);
         } else if (!sign && applied[role]) {
           applied[role] = "";
           pad?.clear();
+          showAppliedSign(form.querySelector(`[data-pad="${signKey}"]`), "");
         }
       });
     };
@@ -4641,6 +4730,20 @@ function personKnownSign(person) {
   return "";
 }
 
+function showAppliedSign(padRoot, sign) {
+  const img = padRoot?.querySelector("[data-appliedsign]");
+  if (!img) return;
+  const ghost = padRoot.querySelector(".sign-ghost");
+  if (typeof sign === "string" && sign.startsWith("data:image")) {
+    img.src = sign;
+    img.hidden = false;
+    if (ghost) ghost.hidden = true;
+  } else {
+    img.hidden = true;
+    img.removeAttribute("src");
+  }
+}
+
 function signPreviewHtml(sign) {
   return typeof sign === "string" && sign.startsWith("data:image")
     ? `<img class="sign-preview" alt="Firma salvata" src="${escapeHtml(sign)}" />`
@@ -4693,6 +4796,7 @@ function signPad(key, title, note, withConfirm = true) {
       </div>
       <div class="sign-stage">
         <canvas class="sign" data-sign="${key}"></canvas>
+        <img class="sign-applied" data-appliedsign="${key}" alt="" hidden />
         <p class="sign-ghost">Firma qui con il dito o il pennino</p>
         <button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>
       </div>
@@ -4807,6 +4911,7 @@ function bindSign(canvas, existing, onChange) {
       im.src = current;
     }
     showGhost();
+    showAppliedSign(pad, current);
   };
   const paint = (value, notify) => {
     current = value || "";
@@ -4819,6 +4924,7 @@ function bindSign(canvas, existing, onChange) {
     }
     if (ok) ok.checked = Boolean(current);
     showGhost();
+    showAppliedSign(pad, current);
     if (notify) onChange(current);
   };
   const clear = () => paint("", true);
@@ -4831,6 +4937,8 @@ function bindSign(canvas, existing, onChange) {
     return { x: (t.clientX - r.left) * (canvas.width / r.width), y: (t.clientY - r.top) * (canvas.height / r.height) };
   };
   const start = (ev) => {
+    const appliedImg = pad?.querySelector("[data-appliedsign]");
+    if (appliedImg) appliedImg.hidden = true;
     drawing = true;
     const p = pos(ev);
     ctx.beginPath();

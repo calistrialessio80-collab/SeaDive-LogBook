@@ -586,6 +586,11 @@ button.people-row { cursor: pointer; }
 .people-row em { font-style: normal; font-size: 12px; font-weight: 600; opacity: 0.65; white-space: nowrap; }
 .people-sign { width: 72px; height: 36px; object-fit: contain; flex: none; background: #fff; border-radius: 8px; border: 1px solid var(--line); }
 .sign-preview { display: block; width: 100%; max-height: 120px; object-fit: contain; margin-top: 8px; background: #f3fbfb; border-radius: 12px; }
+.sign-applied {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: contain; background: #fff; z-index: 2; pointer-events: none;
+}
+.people-share { flex: none; padding: 8px 10px; font-size: 12px; }
 .sign-lock { font-size: 12px; font-weight: 700; color: var(--teal, #0b4d5e); white-space: nowrap; }
 .people-picks { margin: 8px 0 4px; }
 .people-picks .hint { margin-top: 10px; }
