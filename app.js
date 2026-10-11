@@ -2332,7 +2332,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 103</p>
+        <p class="hint">Versione 104</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4346,17 +4346,23 @@ function renderProfile() {
       </div>
     </section>
     <section class="profile-block">
-      <h3>La tua firma</h3>
-      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
-      ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
-    </section>
-    <section class="profile-block">
       <h3>Brevetto principale</h3>
       <div class="form-grid">
         ${field("certLevel", "Didattica / livello", p.certLevel, true)}
         ${field("certNumber", "N° brevetto", p.certNumber, true)}
         ${field("certDate", "Conseguito il", p.certDate, true, "date")}
       </div>
+    </section>
+    <section class="profile-block certs-box">
+      <h3>Altri brevetti</h3>
+      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
+      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
+      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
+    </section>
+    <section class="profile-block">
+      <h3>La tua firma</h3>
+      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
+      ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
     </section>
     <section class="profile-block">
       <h3>Medico e assicurazione</h3>
@@ -4389,12 +4395,6 @@ function renderProfile() {
           ${field("recoverEmail", "Email", p.recoverEmail, false, "email")}
         </div>
       </div>
-    </section>
-    <section class="profile-block certs-box">
-      <h3>Altri brevetti</h3>
-      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
-      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
-      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
     </section>
     <section class="profile-block vault-box">
       <h3>Copia di sicurezza</h3>
