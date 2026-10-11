@@ -1037,6 +1037,7 @@ body.page-map #app {
   font-weight: 650;
 }
 .sign-pad-profile .sign-stage {
+  position: relative;
   margin-top: 6px;
   height: 108px;
   border-radius: 14px;
@@ -1061,11 +1062,7 @@ body.page-map #app {
   background: transparent;
 }
 .sign-pad-profile .sign-applied {
-  background: transparent;
-  object-fit: contain;
-  object-position: center bottom;
-  padding: 6px 16px 18px;
-  box-sizing: border-box;
+  display: none !important;
 }
 .sign-pad-profile .sign-ghost {
   place-items: end start;
