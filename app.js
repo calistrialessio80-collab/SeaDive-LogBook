@@ -306,6 +306,7 @@ function normalizeState(data) {
     deletedDiveIds,
     people,
     peopleSeeded: Boolean(data?.peopleSeeded),
+    peopleBackfilled: Boolean(data?.peopleBackfilled),
   };
 }
 
@@ -505,6 +506,7 @@ function mergeVaults(local, cloud) {
     deletedDiveIds,
     people: mergePeople(L.people, C.people),
     peopleSeeded: Boolean(L.peopleSeeded || C.peopleSeeded),
+    peopleBackfilled: Boolean(L.peopleBackfilled || C.peopleBackfilled),
   };
 }
 
@@ -585,6 +587,7 @@ function persistLocal(data) {
         deletedDiveIds: data.deletedDiveIds || [],
         people: data.people || [],
         peopleSeeded: Boolean(data.peopleSeeded),
+        peopleBackfilled: Boolean(data.peopleBackfilled),
         dives: (data.dives || []).map((d) => {
           const copy = { ...d };
           if (copy.photo && String(copy.photo).length > 8000) copy.photo = "";
@@ -823,6 +826,58 @@ function seedPeopleOnce() {
   });
   state.peopleSeeded = true;
   return true;
+}
+
+function adoptSessionName() {
+  if (String(state.profile?.name || "").trim()) return false;
+  const sessionName = String(loadSession()?.name || "").trim().replace(/\s+/g, " ");
+  if (!sessionName) return false;
+  state.profile.name = sessionName;
+  return true;
+}
+
+function backfillPeopleOnce() {
+  if (state.peopleBackfilled) return ensureOwnerPerson();
+  if (!Array.isArray(state.people)) state.people = [];
+  (state.dives || []).forEach((d) => {
+    if (String(d.buddyName || "").trim() && !state.people.some((p) => p.role === "buddy" && samePersonName(p.name, d.buddyName))) {
+      upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert || "" });
+    }
+    if (String(d.guideName || "").trim() && !state.people.some((p) => p.role === "guide" && samePersonName(p.name, d.guideName))) {
+      upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert || "" });
+    }
+    if (String(d.centerName || "").trim() && !state.people.some((p) => p.role === "center" && samePersonName(p.name, d.centerName))) {
+      upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead || "" });
+    }
+  });
+  state.peopleBackfilled = true;
+  ensureOwnerPerson();
+  return true;
+}
+
+function ensureOwnerPerson() {
+  const name = String(state.profile?.name || "").trim().replace(/\s+/g, " ");
+  if (!name) return false;
+  if (!Array.isArray(state.people)) state.people = [];
+  const sign = profileSignImage();
+  const mine = state.people.find((p) => p.role !== "center" && samePersonName(p.name, name));
+  if (!mine) {
+    const names = personNames({ name });
+    upsertPerson({
+      role: "buddy",
+      name,
+      firstName: names.firstName,
+      lastName: names.lastName,
+      cert: state.profile.certNumber || "",
+      sign,
+    });
+    return true;
+  }
+  if (sign && mine.sign !== sign && !mine.sign) {
+    mine.sign = sign;
+    return true;
+  }
+  return false;
 }
 
 function divesForPerson(p) {
@@ -1798,7 +1853,11 @@ function render() {
     app.append(renderAuth());
     return;
   }
-  if (seedPeopleOnce()) save(state);
+  let changed = false;
+  if (adoptSessionName()) changed = true;
+  if (seedPeopleOnce()) changed = true;
+  if (backfillPeopleOnce()) changed = true;
+  if (changed) save(state);
   if (view.name === "home") app.append(renderHome());
   if (view.name === "log") app.append(renderLog());
   if (view.name === "stats") app.append(renderStats());
@@ -1883,7 +1942,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 94</p>
+        <p class="hint">Versione 95</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3395,7 +3454,12 @@ function renderPeople() {
       if (!q) return true;
       return [p.name, p.firstName, p.lastName, p.cert, p.lead, p.note, roleLabel(p.role)].join(" ").toLowerCase().includes(q);
     })
-    .sort((a, b) => roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it"));
+    .sort((a, b) => {
+      const ao = samePersonName(a.name, state.profile.name) ? 0 : 1;
+      const bo = samePersonName(b.name, state.profile.name) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it");
+    });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
     <p class="hint">Buddy e istruttori che segui si scambiano solo nome, cognome e numero di brevetto. L'immersione si passa soltanto con Condividi sulla scheda.</p>
@@ -3438,11 +3502,14 @@ function renderPeople() {
       const row = document.createElement("article");
       row.className = "people-row";
       const extra = p.role === "center" ? p.lead : p.cert;
+      const mine = samePersonName(p.name, state.profile.name);
+      const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
       row.innerHTML = `
         <button type="button" class="people-open">
           <strong>${escapeHtml(p.name)}</strong>
-          <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}${p.following ? " · seguito" : ""}</small>
+          <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}${mine ? " · il tuo profilo" : ""}${p.following ? " · seguito" : ""}</small>
         </button>
+        ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
         <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
         <button class="btn danger people-del" type="button">Elimina</button>
       `;
@@ -3562,6 +3629,7 @@ function renderPerson() {
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
       <p class="hint">Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma.</p>
       ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
+      ${signPreviewHtml(personKnownSign(current))}
     </div>
     ${current.following ? `<p class="hint">Seguito. I dati che arrivano da questa persona aggiornano solo nome, cognome e brevetto.</p>` : ""}
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
@@ -3609,7 +3677,7 @@ function renderPerson() {
       };
       diveBox.append(b);
     });
-  let personSign = typeof current.sign === "string" && current.sign.startsWith("data:image") ? current.sign : "";
+  let personSign = personKnownSign(current);
   queueMicrotask(() => {
     bindSign(form.querySelector('[data-sign="personSign"]'), personSign, (v) => {
       personSign = v;
@@ -3758,7 +3826,7 @@ function renderProfile() {
   form.className = "card profile-form";
   const p = state.profile;
   form.innerHTML = `
-    <h2 class="serif profile-title">Il tuo profilo</h2>
+    <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
     <section class="profile-block">
       <h3>Anagrafica</h3>
       <div class="form-grid">
@@ -3768,7 +3836,8 @@ function renderProfile() {
     <section class="profile-block">
       <h3>La tua firma</h3>
       <p class="hint">Firma qui una volta. In una nuova immersione, se inserisci questo nome come buddy o guida, la firma si carica da sola.</p>
-      ${signPad("ownerSign", "Firma del subacqueo", "Possessore di questa app", false)}
+      ${signPad("ownerSign", "Firma del subacqueo", p.name || "Possessore di questa app", false)}
+      ${signPreviewHtml(profileSignImage())}
     </section>
     <section class="profile-block">
       <h3>Brevetto principale</h3>
@@ -3938,6 +4007,7 @@ function renderDetail() {
     return renderLog();
   }
   applyDiveMetrics(d);
+  if (fillMissingSigns(d)) save(state);
   frag.append(topbar(`immersione n° ${d.number}`));
   const card = document.createElement("section");
   card.className = "card";
@@ -3999,6 +4069,7 @@ function renderDetail() {
     <h3 class="serif">Firme — L. 70/2026</h3>
     <p class="hint">${LEGAL_L70}</p>
     <div class="sign-board">
+      ${ownerSignCard()}
       ${signEvidence("buddy", "Buddy", d.buddyName, d.buddyCert, d.buddySign, d.sigMeta?.buddy)}
       ${signEvidence("guide", "Guida / istruttore", d.guideName, d.guideCert, d.guideSign, d.sigMeta?.guide)}
       ${signEvidence("center", "Diving center", d.centerName, d.centerLead, d.centerSign, d.sigMeta?.center)}
@@ -4079,6 +4150,14 @@ function renderEdit() {
   const d = view.draft;
   ensureCircuit(d);
   applyDiveMetrics(d);
+  if (fillMissingSigns(d)) {
+    const live = (state.dives || []).find((x) => x.id === d.id);
+    if (live) {
+      if (!live.buddySign) live.buddySign = d.buddySign;
+      if (!live.guideSign) live.guideSign = d.guideSign;
+      save(state);
+    }
+  }
   const frag = document.createDocumentFragment();
   frag.append(topbar(d.number ? `scheda n° ${d.number}` : "nuova scheda"));
   const form = document.createElement("form");
@@ -4542,18 +4621,65 @@ function personNameKey(value) {
     .replace(/\s+/g, " ");
 }
 
+function samePersonName(a, b) {
+  const x = personNameKey(a);
+  const y = personNameKey(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const sort = (s) => s.split(" ").filter(Boolean).sort().join(" ");
+  return sort(x) === sort(y);
+}
+
 function profileSignImage() {
   const sign = state.profile?.sign;
   return typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
 }
 
+function personKnownSign(person) {
+  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
+  if (person && person.role !== "center" && samePersonName(person.name, state.profile?.name)) return profileSignImage();
+  return "";
+}
+
+function signPreviewHtml(sign) {
+  return typeof sign === "string" && sign.startsWith("data:image")
+    ? `<img class="sign-preview" alt="Firma salvata" src="${escapeHtml(sign)}" />`
+    : "";
+}
+
 function signForInsertedPerson(role, typedName) {
   const key = personNameKey(typedName);
   if (!key || role === "center") return "";
-  const person = (state.people || []).find((p) => p.role === role && personNameKey(p.name) === key);
-  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
-  if (personNameKey(state.profile.name) === key) return profileSignImage();
+  const people = state.people || [];
+  const exact = people.find((p) => p.role === role && samePersonName(p.name, typedName));
+  const person = exact || people.find((p) => p.role !== "center" && samePersonName(p.name, typedName));
+  const fromPerson = personKnownSign(person);
+  if (fromPerson) return fromPerson;
+  if (samePersonName(state.profile.name, typedName)) return profileSignImage();
   return "";
+}
+
+function fillMissingSigns(d) {
+  if (!d) return false;
+  let changed = false;
+  [
+    ["buddy", "buddyName", "buddySign"],
+    ["guide", "guideName", "guideSign"],
+  ].forEach(([role, nameKey, signKey]) => {
+    if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
+    const sign = signForInsertedPerson(role, d[nameKey]);
+    if (!sign) return;
+    d[signKey] = sign;
+    changed = true;
+  });
+  return changed;
+}
+
+function ownerSignCard() {
+  const name = String(state.profile?.name || "").trim();
+  if (!name) return "";
+  const cert = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
+  return signEvidence("owner", "Subacqueo", name, cert, profileSignImage(), null, true);
 }
 
 function signPad(key, title, note, withConfirm = true) {
@@ -4578,7 +4704,7 @@ function signPad(key, title, note, withConfirm = true) {
     </div>`;
 }
 
-function signEvidence(who, title, name, cert, image, meta) {
+function signEvidence(who, title, name, cert, image, meta, locked = false) {
   const when = meta?.at ? new Date(meta.at).toLocaleString("it-IT") : "";
   const signed = Boolean(image);
   return `<article class="sign-card">
@@ -4588,7 +4714,11 @@ function signEvidence(who, title, name, cert, image, meta) {
           <span>${escapeHtml(name || "—")}</span>
           <small>${escapeHtml(cert || "")}${when ? " · " + escapeHtml(when) : ""}</small>
         </div>
-        <button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>
+        ${
+          locked
+            ? `<span class="sign-lock">${signed ? "Firmata" : "Non firmata"}</span>`
+            : `<button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>`
+        }
       </div>
       ${signed ? `<img alt="firma" src="${image}" />` : `<p class="sign-empty">Non firmata</p>`}
       ${
@@ -4693,6 +4823,7 @@ function bindSign(canvas, existing, onChange) {
   };
   const clear = () => paint("", true);
   fit();
+  requestAnimationFrame(fit);
   let drawing = false;
   const pos = (ev) => {
     const r = canvas.getBoundingClientRect();
