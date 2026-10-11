@@ -1368,7 +1368,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 82</p>
+        <p class="hint">Versione 83</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2754,9 +2754,8 @@ function computerFillHtml() {
       <h3 class="serif">Dal file</h3>
       <p class="hint">Carica il file dentro questa scheda. Se ci sono più immersioni, metti solo l’ultima oppure quella di una data. Foto, firme e note già scritti restano.</p>
       <div class="actions">
-        <label class="btn primary">Carica file
-          <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple hidden data-fillfiles />
-        </label>
+        <button class="btn primary" type="button" data-fillpick>Carica file</button>
+        <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple data-fillfiles />
         <button class="btn ghost" type="button" data-fillble>Bluetooth (EON)</button>
       </div>
       <p class="hint" data-fillhint ${view.computerHint ? "" : "hidden"}>${escapeHtml(view.computerHint || "")}</p>
@@ -2767,12 +2766,18 @@ function computerFillHtml() {
 function bindComputerFill(root) {
   const input = root.querySelector("[data-fillfiles]");
   if (!input) return;
+  root.querySelector("[data-fillpick]").onclick = () => input.click();
   input.onchange = async (e) => {
-    const files = e.target.files;
-    const base = currentDiveBase();
+    const files = [...(e.target.files || [])];
     e.target.value = "";
-    if (!base || !files?.length) return;
-    await fillExistingFromFound(base, await collectImported(files));
+    const base = currentDiveBase();
+    if (!base || !files.length) return;
+    try {
+      await fillExistingFromFound(base, await collectImported(files));
+    } catch (err) {
+      view.computerHint = err.message || String(err);
+      render();
+    }
   };
   root.querySelector("[data-fillble]").onclick = async () => {
     const base = currentDiveBase();

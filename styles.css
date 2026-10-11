@@ -545,7 +545,17 @@ body.page-home .section-head h3 { color: #1c2430; }
 .pick-date input { font: inherit; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fff; }
 .computer-fill { margin: 4px 0 16px; }
 .computer-fill h3 { margin: 0 0 4px; font-size: 22px; }
-.computer-fill .actions { margin-top: 10px; }
+.computer-fill .actions { margin-top: 10px; position: relative; }
+.computer-fill input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
 .fab {
   position: fixed; right: 18px; bottom: calc(var(--nav-h) + 18px);
   width: 58px; height: 58px; border-radius: 50%; border: 0;
