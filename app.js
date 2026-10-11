@@ -246,13 +246,42 @@ const seed = () => ({
   ],
 });
 
+function cleanPerson(p) {
+  if (!p || !String(p.name || "").trim()) return null;
+  const role = p.role === "guide" || p.role === "center" ? p.role : "buddy";
+  return {
+    id: String(p.id || uid()),
+    role,
+    name: String(p.name).trim().replace(/\s+/g, " "),
+    cert: String(p.cert || "").trim(),
+    lead: String(p.lead || "").trim(),
+    note: String(p.note || "").trim(),
+  };
+}
+
 function normalizeState(data) {
   const profile = { ...emptyProfile(), ...(data?.profile || {}) };
   if (!Array.isArray(profile.certs)) profile.certs = [];
   const deletedDiveIds = Array.isArray(data?.deletedDiveIds)
     ? data.deletedDiveIds.map(String).filter(Boolean)
     : [];
-  return { profile, dives: Array.isArray(data?.dives) ? data.dives : [], deletedDiveIds };
+  const people = [];
+  const seen = new Set();
+  (Array.isArray(data?.people) ? data.people : []).forEach((raw) => {
+    const p = cleanPerson(raw);
+    if (!p) return;
+    const key = `${p.role}|${p.name.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    people.push(p);
+  });
+  return {
+    profile,
+    dives: Array.isArray(data?.dives) ? data.dives : [],
+    deletedDiveIds,
+    people,
+    peopleSeeded: Boolean(data?.peopleSeeded),
+  };
 }
 
 function load() {
@@ -402,7 +431,33 @@ function mergeVaults(local, cloud) {
   if (!localReal && !cloudReal) dives = L.dives.length ? L.dives : C.dives;
   else dives = mergeDiveLists(L.dives, C.dives, deletedDiveIds);
   dives = (dives || []).filter((d) => !diveIsDeleted(d, deletedDiveIds));
-  return { profile: mergeProfiles(L.profile, C.profile), dives, deletedDiveIds };
+  return {
+    profile: mergeProfiles(L.profile, C.profile),
+    dives,
+    deletedDiveIds,
+    people: mergePeople(L.people, C.people),
+    peopleSeeded: Boolean(L.peopleSeeded || C.peopleSeeded),
+  };
+}
+
+function mergePeople(a, b) {
+  const out = [];
+  const index = new Map();
+  [...(a || []), ...(b || [])].forEach((raw) => {
+    const p = cleanPerson(raw);
+    if (!p) return;
+    const key = `${p.role}|${p.name.toLowerCase()}`;
+    const prev = index.get(key);
+    if (!prev) {
+      index.set(key, p);
+      out.push(p);
+      return;
+    }
+    if (!prev.cert && p.cert) prev.cert = p.cert;
+    if (!prev.lead && p.lead) prev.lead = p.lead;
+    if (!prev.note && p.note) prev.note = p.note;
+  });
+  return out;
 }
 
 function openVault() {
@@ -456,6 +511,8 @@ function persistLocal(data) {
       const slim = {
         profile: data.profile,
         deletedDiveIds: data.deletedDiveIds || [],
+        people: data.people || [],
+        peopleSeeded: Boolean(data.peopleSeeded),
         dives: (data.dives || []).map((d) => {
           const copy = { ...d };
           if (copy.photo && String(copy.photo).length > 8000) copy.photo = "";
@@ -613,6 +670,8 @@ function backupPayload() {
     profile: state.profile,
     dives: state.dives,
     deletedDiveIds: state.deletedDiveIds || [],
+    people: state.people || [],
+    peopleSeeded: Boolean(state.peopleSeeded),
     sites: window.SeaDiveSites?.loadCustomSites?.() || [],
     brand,
   };
@@ -621,6 +680,185 @@ function backupPayload() {
 function parseBackup(data) {
   if (!data || typeof data !== "object") throw new Error("invalid");
   return normalizeState(data);
+}
+
+function personKey(role, name) {
+  return `${role}|${String(name || "").trim().toLowerCase().replace(/\s+/g, " ")}`;
+}
+
+function roleLabel(role) {
+  if (role === "guide") return "Istruttore";
+  if (role === "center") return "Diving";
+  return "Buddy";
+}
+
+function upsertPerson(partial) {
+  const name = String(partial?.name || "").trim().replace(/\s+/g, " ");
+  if (!name) return null;
+  const role = partial.role === "guide" || partial.role === "center" ? partial.role : "buddy";
+  if (!Array.isArray(state.people)) state.people = [];
+  let found = partial.id ? state.people.find((p) => p.id === partial.id) : null;
+  const key = personKey(role, name);
+  if (!found) found = state.people.find((p) => personKey(p.role, p.name) === key);
+  if (!found) {
+    found = { id: partial.id || uid(), role, name, cert: "", lead: "", note: "" };
+    state.people.push(found);
+  }
+  const twin = state.people.find((p) => p !== found && personKey(p.role, p.name) === key);
+  found.role = role;
+  found.name = name;
+  if (String(partial.cert || "").trim()) found.cert = String(partial.cert).trim();
+  if (String(partial.lead || "").trim()) found.lead = String(partial.lead).trim();
+  if (partial.note != null) found.note = String(partial.note).trim();
+  if (twin) {
+    if (!found.cert && twin.cert) found.cert = twin.cert;
+    if (!found.lead && twin.lead) found.lead = twin.lead;
+    if (!found.note && twin.note) found.note = twin.note;
+    (state.dives || []).forEach((d) => {
+      if (d.buddyId === twin.id) d.buddyId = found.id;
+      if (d.guideId === twin.id) d.guideId = found.id;
+      if (d.centerId === twin.id) d.centerId = found.id;
+    });
+    state.people = state.people.filter((p) => p !== twin);
+  }
+  return found;
+}
+
+function linkPeopleOnDive(dive) {
+  const buddy = upsertPerson({ role: "buddy", name: dive.buddyName, cert: dive.buddyCert });
+  const guide = upsertPerson({ role: "guide", name: dive.guideName, cert: dive.guideCert });
+  const center = upsertPerson({ role: "center", name: dive.centerName, lead: dive.centerLead });
+  dive.buddyId = buddy?.id || "";
+  dive.guideId = guide?.id || "";
+  dive.centerId = center?.id || "";
+}
+
+function seedPeopleOnce() {
+  if (state.peopleSeeded) return false;
+  if (!Array.isArray(state.people)) state.people = [];
+  (state.dives || []).forEach((d) => {
+    upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert });
+    upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert });
+    upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead });
+  });
+  state.peopleSeeded = true;
+  return true;
+}
+
+function divesForPerson(p) {
+  if (!p) return [];
+  const key = personKey(p.role, p.name);
+  return (state.dives || []).filter((d) => {
+    if (p.role === "buddy") return d.buddyId === p.id || personKey("buddy", d.buddyName) === key;
+    if (p.role === "guide") return d.guideId === p.id || personKey("guide", d.guideName) === key;
+    return d.centerId === p.id || personKey("center", d.centerName) === key;
+  });
+}
+
+function applyPersonOntoDives(before, person) {
+  if (!before || before.role !== person.role) return;
+  const oldKey = personKey(before.role, before.name);
+  (state.dives || []).forEach((d) => {
+    if (person.role === "buddy" && (d.buddyId === before.id || personKey("buddy", d.buddyName) === oldKey)) {
+      d.buddyId = person.id;
+      d.buddyName = person.name;
+      d.buddyCert = person.cert || "";
+    }
+    if (person.role === "guide" && (d.guideId === before.id || personKey("guide", d.guideName) === oldKey)) {
+      d.guideId = person.id;
+      d.guideName = person.name;
+      d.guideCert = person.cert || "";
+    }
+    if (person.role === "center" && (d.centerId === before.id || personKey("center", d.centerName) === oldKey)) {
+      d.centerId = person.id;
+      d.centerName = person.name;
+      d.centerLead = person.lead || "";
+    }
+  });
+}
+
+function shareDiveFilename(d) {
+  const site = String(d?.site || "immersione")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32) || "immersione";
+  return `seadive-${site}-${d?.date || "data"}.json`;
+}
+
+function sharedDiveCopy(d) {
+  const copy = { ...d };
+  ["id", "number", "photo", "buddySign", "guideSign", "centerSign", "sigMeta", "buddyId", "guideId", "centerId"].forEach((k) => delete copy[k]);
+  if (copy.computerLog && typeof copy.computerLog === "object") {
+    const log = { ...copy.computerLog };
+    delete log.all;
+    copy.computerLog = log;
+  }
+  return copy;
+}
+
+async function shareOneDive(d) {
+  const payload = {
+    app: "seadive-logbook",
+    kind: "dive-share",
+    version: 1,
+    sharedAt: new Date().toISOString(),
+    from: {
+      name: state.profile.name || "",
+      cert: [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" "),
+    },
+    dive: sharedDiveCopy(d),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const file = new File([blob], shareDiveFilename(d), { type: "application/json" });
+  try {
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        title: d.site || "Immersione SeaDive",
+        text: "Immersione condivisa da SeaDive. In Gente premi Ricevi immersione.",
+      });
+      return;
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = shareDiveFilename(d);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function importSharedFile(file) {
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    throw new Error("Il file non si legge. Serve un'immersione esportata da SeaDive.");
+  }
+  if (data?.kind !== "dive-share" || !data.dive || typeof data.dive !== "object") {
+    throw new Error("Questo file non è un'immersione condivisa. Qui si riceve una scheda, non il backup di tutto il diario.");
+  }
+  const dive = {
+    ...emptyDive(),
+    ...data.dive,
+    id: uid(),
+    number: nextNumber(),
+    photo: "",
+    buddySign: "",
+    guideSign: "",
+    centerSign: "",
+    sigMeta: { buddy: null, guide: null, center: null },
+  };
+  delete dive.hadDeco;
+  ensureCircuit(dive);
+  if (data.from?.name) upsertPerson({ role: "buddy", name: data.from.name, cert: data.from.cert || "" });
+  linkPeopleOnDive(dive);
+  state.dives.push(dive);
+  save(state);
+  return dive;
 }
 
 function backupFilename() {
@@ -1285,6 +1523,7 @@ function render() {
     app.append(renderAuth());
     return;
   }
+  if (seedPeopleOnce()) save(state);
   if (view.name === "home") app.append(renderHome());
   if (view.name === "log") app.append(renderLog());
   if (view.name === "stats") app.append(renderStats());
@@ -1292,6 +1531,7 @@ function render() {
   if (view.name === "computer") app.append(renderComputer());
   if (view.name === "map") app.append(renderWorldMap());
   if (view.name === "bio") app.append(renderBiology());
+  if (view.name === "people") app.append(view.personId ? renderPerson() : renderPeople());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   document.body.append(renderNav());
@@ -1368,7 +1608,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 83</p>
+        <p class="hint">Versione 84</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -1408,6 +1648,7 @@ function renderNav() {
   const items = [
     ["home", "🌊", "SeaDive"],
     ["log", "📒", "Diario"],
+    ["people", "👥", "Gente"],
     ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Bio"],
     ["computer", "⌚", "Computer"],
@@ -1427,6 +1668,7 @@ function renderNav() {
         bioQuery: view.bioQuery || "",
         bioFilter: view.bioFilter || "all",
         computerHint: view.computerHint || "",
+        peopleRole: view.peopleRole || "all",
       };
       render();
     };
@@ -2866,6 +3108,276 @@ function renderStats() {
   return frag;
 }
 
+function renderPeople() {
+  const frag = document.createDocumentFragment();
+  frag.append(topbar("community"));
+  const card = document.createElement("section");
+  card.className = "card";
+  const role = view.peopleRole || "all";
+  const q = String(view.peopleQuery || "").trim().toLowerCase();
+  const people = [...(state.people || [])]
+    .filter((p) => role === "all" || p.role === role)
+    .filter((p) => {
+      if (!q) return true;
+      return [p.name, p.cert, p.lead, p.note, roleLabel(p.role)].join(" ").toLowerCase().includes(q);
+    })
+    .sort((a, b) => roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it"));
+  card.innerHTML = `
+    <h2 class="serif" style="margin:0 0 6px">Gente</h2>
+    <p class="hint">Buddy, istruttori e diving con nome e numero di brevetto. Chi scrivi in una scheda entra qui. Per passare un'immersione: apri la scheda e premi Condividi. Chi la riceve la apre da qui.</p>
+    <div class="chips" data-roles></div>
+    <input class="search" data-find placeholder="Cerca nome o brevetto…" value="${escapeHtml(view.peopleQuery || "")}" />
+    <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
+    <div class="people-list" data-list></div>
+    <div class="actions">
+      <button class="btn primary" type="button" data-addperson>Aggiungi persona</button>
+      <button class="btn ghost" type="button" data-receive>Ricevi immersione</button>
+      <input type="file" accept="application/json,.json" data-receivefile />
+    </div>
+  `;
+  const roles = card.querySelector("[data-roles]");
+  [["all", "Tutti"], ["buddy", "Buddy"], ["guide", "Istruttori"], ["center", "Diving"]].forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${role === id ? " on" : ""}`;
+    b.textContent = label;
+    b.onclick = () => {
+      view.peopleRole = id;
+      view.personId = null;
+      render();
+    };
+    roles.append(b);
+  });
+  const list = card.querySelector("[data-list]");
+  if (!people.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = q || role !== "all"
+      ? "Nessuno con questo filtro."
+      : "Nessuno ancora. Aggiungi un buddy, un istruttore o un diving, oppure salva un'immersione con il loro nome.";
+    list.append(empty);
+  } else {
+    people.forEach((p) => {
+      const n = divesForPerson(p).length;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "people-row";
+      const extra = p.role === "center" ? p.lead : p.cert;
+      btn.innerHTML = `
+        <span>
+          <strong>${escapeHtml(p.name)}</strong>
+          <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}</small>
+        </span>
+        <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
+      `;
+      btn.onclick = () => {
+        view.personId = p.id;
+        view.peopleHint = "";
+        render();
+      };
+      list.append(btn);
+    });
+  }
+  const find = card.querySelector("[data-find]");
+  const applyFind = () => {
+    view.peopleQuery = find.value;
+    render();
+    queueMicrotask(() => document.querySelector("[data-find]")?.focus());
+  };
+  find.onchange = applyFind;
+  find.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyFind();
+    }
+  };
+  card.querySelector("[data-addperson]").onclick = () => {
+    view.personId = "new";
+    view.personDraft = { id: uid(), role: "buddy", name: "", cert: "", lead: "", note: "" };
+    view.peopleHint = "";
+    render();
+  };
+  const input = card.querySelector("[data-receivefile]");
+  card.querySelector("[data-receive]").onclick = () => input.click();
+  input.onchange = async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    if (!files.length) return;
+    try {
+      const dive = await importSharedFile(files[0]);
+      view = { name: "detail", diveId: dive.id, query: view.query || "", peopleRole: view.peopleRole || "all" };
+      render();
+    } catch (err) {
+      view.peopleHint = err.message || String(err);
+      render();
+    }
+  };
+  frag.append(card);
+  return frag;
+}
+
+function renderPerson() {
+  const creating = view.personId === "new";
+  const current = creating ? view.personDraft : (state.people || []).find((p) => p.id === view.personId);
+  if (!current) {
+    view.personId = null;
+    return renderPeople();
+  }
+  const frag = document.createDocumentFragment();
+  frag.append(topbar(creating ? "nuova persona" : roleLabel(current.role)));
+  const form = document.createElement("form");
+  form.className = "card";
+  const dives = creating ? [] : divesForPerson(current);
+  form.innerHTML = `
+    <h2 class="serif" style="margin:0 0 6px">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
+    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Nome e brevetto restano pronti quando compili una scheda." : "Il nome e il brevetto si aggiornano anche sulle schede in cui compare già."}</p>
+    <p class="hint" style="margin-top:12px">Ruolo</p>
+    <div class="chips" data-roles></div>
+    <input type="hidden" name="role" value="${escapeHtml(current.role || "buddy")}" />
+    <div class="form-grid" style="margin-top:12px">
+      ${field("name", "Nome e cognome / denominazione", current.name, true)}
+      ${field("cert", "N° brevetto", current.cert, true)}
+      ${field("lead", "Responsabile del diving", current.lead, true)}
+      ${field("note", "Note", current.note, true)}
+    </div>
+    <p class="hint">Il responsabile serve per il diving center. Per buddy e istruttore basta nome e brevetto.</p>
+    ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
+    <div class="actions">
+      <button class="btn primary" type="submit">Salva</button>
+      <button class="btn ghost" type="button" data-back>Torna a Gente</button>
+      ${creating ? "" : `<button class="btn danger" type="button" data-del>Togli dalla community</button>`}
+    </div>
+  `;
+  const roleInput = form.querySelector("[name=role]");
+  const roles = form.querySelector("[data-roles]");
+  [["buddy", "Buddy"], ["guide", "Istruttore"], ["center", "Diving"]].forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${(current.role || "buddy") === id ? " on" : ""}`;
+    b.textContent = label;
+    if (creating) {
+      b.onclick = () => {
+        current.role = id;
+        roleInput.value = id;
+        roles.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+      };
+    } else if (id !== (current.role || "buddy")) {
+      b.disabled = true;
+    }
+    roles.append(b);
+  });
+  const diveBox = form.querySelector("[data-dives]");
+  dives
+    .slice()
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+    .forEach((d) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "people-row";
+      b.innerHTML = `<span><strong>${escapeHtml(d.site || "Senza nome")}</strong><small>${escapeHtml(d.date || "")}${d.maxDepth ? " · " + escapeHtml(d.maxDepth) + " m" : ""}</small></span>`;
+      b.onclick = () => {
+        view = { name: "detail", diveId: d.id, query: view.query || "" };
+        render();
+      };
+      diveBox.append(b);
+    });
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const name = String(fd.get("name") || "").trim();
+    if (!name) {
+      alert("Scrivi il nome.");
+      return;
+    }
+    const before = creating ? null : { ...current };
+    const person = upsertPerson({
+      id: current.id,
+      role: fd.get("role") || current.role,
+      name,
+      cert: fd.get("cert") || "",
+      lead: fd.get("lead") || "",
+      note: fd.get("note") || "",
+    });
+    if (before && person) applyPersonOntoDives(before, person);
+    state.peopleSeeded = true;
+    save(state);
+    view.personId = null;
+    view.personDraft = null;
+    view.peopleHint = "";
+    render();
+  };
+  form.querySelector("[data-back]").onclick = () => {
+    view.personId = null;
+    view.personDraft = null;
+    render();
+  };
+  form.querySelector("[data-del]")?.addEventListener("click", async () => {
+    const ok = await askConfirm({
+      title: "Togli dalla community",
+      message: `${current.name} esce dall'elenco. Il nome resta sulle schede già scritte.`,
+      ok: "Togli",
+      cancel: "Annulla",
+    });
+    if (!ok) return;
+    state.people = (state.people || []).filter((p) => p.id !== current.id);
+    save(state);
+    view.personId = null;
+    render();
+  });
+  frag.append(form);
+  return frag;
+}
+
+function peoplePicksHtml() {
+  return `<div class="people-picks" data-peoplepicks></div>`;
+}
+
+function bindPeoplePicks(form, d) {
+  const box = form.querySelector("[data-peoplepicks]");
+  if (!box) return;
+  const groups = [
+    ["buddy", "Buddy in community", "buddyName", "buddyCert", "buddyId"],
+    ["guide", "Istruttori in community", "guideName", "guideCert", "guideId"],
+    ["center", "Diving in community", "centerName", "centerLead", "centerId"],
+  ];
+  groups.forEach(([role, title, nameKey, extraKey, idKey]) => {
+    const list = (state.people || []).filter((p) => p.role === role);
+    if (!list.length) return;
+    const wrap = document.createElement("div");
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = title;
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    list
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, "it"))
+      .forEach((p) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        const extra = role === "center" ? p.lead : p.cert;
+        const selected = d[idKey] === p.id || personKey(role, d[nameKey]) === personKey(role, p.name);
+        b.className = `chip${selected ? " on" : ""}`;
+        b.textContent = extra ? `${p.name} · ${extra}` : p.name;
+        b.onclick = () => {
+          d[nameKey] = p.name;
+          d[idKey] = p.id;
+          d[extraKey] = role === "center" ? p.lead || "" : p.cert || "";
+          const nameInput = form.querySelector(`[name=${nameKey}]`);
+          const extraInput = form.querySelector(`[name=${extraKey}]`);
+          if (nameInput) nameInput.value = d[nameKey];
+          if (extraInput) extraInput.value = d[extraKey];
+          chips.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
+          b.classList.add("on");
+        };
+        chips.append(b);
+      });
+    wrap.append(hint, chips);
+    box.append(wrap);
+  });
+}
+
 function renderProfile() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("profilo"));
@@ -3104,6 +3616,7 @@ function renderDetail() {
     </div>
     <div class="actions">
       <button class="btn primary" type="button" data-act="edit">Modifica</button>
+      <button class="btn ghost" type="button" data-act="share">Condividi</button>
       <button class="btn ghost" type="button" data-act="back">Torna al diario</button>
       <button class="btn danger" type="button" data-act="del">Elimina</button>
     </div>
@@ -3113,6 +3626,7 @@ function renderDetail() {
     view = { name: "edit", diveId: d.id, draft: cloneObj(d), query: view.query };
     render();
   };
+  card.querySelector("[data-act=share]").onclick = () => shareOneDive(d);
   card.querySelector("[data-act=back]").onclick = () => {
     view = { name: "log", query: view.query };
     render();
@@ -3292,6 +3806,8 @@ function renderEdit() {
     <div class="sign-legal" id="firme">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
+      ${peoplePicksHtml()}
+      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Gente.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
@@ -3311,6 +3827,7 @@ function renderEdit() {
     </div>
   `;
   bindComputerFill(form);
+  bindPeoplePicks(form, d);
   const certInput = form.querySelector("[name=certOnDive]");
   const picks = form.querySelector("[data-certpicks]");
   profileCerts().forEach((c) => {
@@ -3529,6 +4046,8 @@ function renderEdit() {
     ensureCircuit(next);
     next.profilePoints = ensureThermoProfile(next);
     applyDiveMetrics(next);
+    linkPeopleOnDive(next);
+    state.peopleSeeded = true;
     if (next.guideSign && !String(next.guideName || "").trim()) {
       alert("Per la firma legale della guida indica le generalità (L. 70/2026).");
       return;
