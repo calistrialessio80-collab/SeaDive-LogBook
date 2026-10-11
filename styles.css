@@ -530,6 +530,19 @@ body.page-home .section-head h3 { color: #1c2430; }
   gap: 8px;
 }
 .confirm-actions .btn { width: 100%; }
+.pick-card { width: min(420px, 100%); }
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(52vh, 380px);
+  overflow: auto;
+  margin: 0 0 12px;
+}
+.pick-list .btn { width: 100%; text-align: left; border-radius: 14px; white-space: normal; }
+.computer-fill { margin: 4px 0 16px; }
+.computer-fill h3 { margin: 0 0 4px; font-size: 22px; }
+.computer-fill .actions { margin-top: 10px; }
 .fab {
   position: fixed; right: 18px; bottom: calc(var(--nav-h) + 18px);
   width: 58px; height: 58px; border-radius: 50%; border: 0;

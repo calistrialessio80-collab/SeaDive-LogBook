@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v59";
+const CACHE = "seadive-logbook-v79";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,14 +11,15 @@ const ASSETS = [
   "./drive.js",
   "./config.js",
   "./manifest.json",
-  "./icon-192.png",
-  "./icon-512.png",
-  "./apple-touch-icon.png",
-  "./brand.jpg",
+  "./aggiorna.html",
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
+  event.waitUntil(
+    caches.open(CACHE).then((cache) =>
+      Promise.all(ASSETS.map((url) => cache.add(url).catch(() => {})))
+    )
+  );
   self.skipWaiting();
 });
 

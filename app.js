@@ -1368,6 +1368,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
+        <p class="hint">Versione 79</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2303,7 +2304,7 @@ function renderComputer() {
     <p class="tagline">Carica il file: le immersioni vanno <strong>subito nel diario</strong>, con profilo, luogo e mappa. Formati: UDDF, FIT, JSON, XML, CSV, GPX. Bluetooth sperimentale solo EON su Chrome Android.</p>
     <div class="actions">
       <label class="btn primary">Carica file
-        <input type="file" accept=".uddf,.xml,.csv,.txt,.json,.fit,.gpx,.log,.sml,.ssrf,.zxu,.divelog,application/json,application/xml,application/gpx+xml,*/*" multiple hidden data-files />
+        <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple hidden data-files />
       </label>
       <button class="btn ghost" type="button" data-ble>Prova Bluetooth (EON)</button>
     </div>
@@ -2345,10 +2346,12 @@ function renderComputer() {
   return frag;
 }
 
-async function ingestFiles(fileList) {
+const COMPUTER_FILE_ACCEPT =
+  ".uddf,.xml,.csv,.txt,.json,.fit,.gpx,.log,.sml,.ssrf,.zxu,.divelog,application/json,application/xml,application/gpx+xml,*/*";
+
+async function collectImported(fileList) {
   const api = window.SeaDiveComputers;
   const files = [...fileList];
-  const found = [];
   const notes = [];
   const parsed = [];
   for (const file of files) {
@@ -2362,6 +2365,7 @@ async function ingestFiles(fileList) {
     }
   }
   const used = new Set();
+  const found = [];
   const stem = (n) =>
     String(n || "")
       .replace(/\.[^.]+$/, "")
@@ -2389,6 +2393,11 @@ async function ingestFiles(fileList) {
     found.push(...a.dives);
     used.add(i);
   });
+  return { found, notes };
+}
+
+async function ingestFiles(fileList) {
+  const { found, notes } = await collectImported(fileList);
   if (found.length) {
     const { added, last } = await mergeImported(found);
     view.computerHint = `${notes.join(" · ")} → ${added} immersioni nel diario.`;
@@ -2472,6 +2481,267 @@ async function mergeImported(dives) {
   save(state);
   view.pending = [];
   return { added, last };
+}
+
+function hasText(v) {
+  return String(v ?? "").trim() !== "";
+}
+
+function genericComputerSite(s) {
+  return /^(punto gps|import |suunto|garmin|computer)/i.test(String(s || "").trim());
+}
+
+function applyComputerOnto(target, incoming) {
+  const next = cloneObj(target);
+  [
+    "date",
+    "timeIn",
+    "timeOut",
+    "maxDepth",
+    "avgDepth",
+    "bottomTime",
+    "totalTime",
+    "waterTemp",
+    "airTemp",
+    "bottomTemp",
+    "cns",
+    "otu",
+    "ascentRate",
+    "ascentMax",
+    "gf",
+    "ndl",
+    "surfaceInterval",
+    "instruments",
+    "lat",
+    "lng",
+    "safetyStop",
+  ].forEach((k) => {
+    if (hasText(incoming[k])) next[k] = incoming[k];
+  });
+  if ((incoming.profilePoints || []).length >= 3) {
+    next.profilePoints = incoming.profilePoints;
+    next.profileFromComputer = true;
+  }
+  if (incoming.computerLog) next.computerLog = incoming.computerLog;
+  if (incoming.sourceComputer) next.sourceComputer = incoming.sourceComputer;
+  next.imported = true;
+  if (incoming.deco != null) {
+    next.deco = Boolean(incoming.deco);
+    next.noDeco = incoming.noDeco != null ? Boolean(incoming.noDeco) : !next.deco;
+  }
+  if (incoming.circuitOpen != null || incoming.circuitClosed != null) {
+    next.circuitOpen = Boolean(incoming.circuitOpen);
+    next.circuitClosed = Boolean(incoming.circuitClosed);
+    if (hasText(incoming.regulator)) next.regulator = incoming.regulator;
+  }
+  ["visibility", "current", "seaConditions", "wetsuit", "ballast", "plannedDepth"].forEach((k) => {
+    if (!hasText(next[k]) && hasText(incoming[k])) next[k] = incoming[k];
+  });
+  if (hasText(incoming.pressureEnd)) next.pressureEnd = incoming.pressureEnd;
+  if (hasText(incoming.sac) && !target.sacManual) next.sac = incoming.sac;
+  if (hasText(incoming.tss) && target.tssKind !== "manual") {
+    next.tss = incoming.tss;
+    if (incoming.tssKind) next.tssKind = incoming.tssKind;
+    if (incoming.tssLabel) next.tssLabel = incoming.tssLabel;
+  }
+  if (!hasText(next.site) || genericComputerSite(next.site)) {
+    if (hasText(incoming.site)) next.site = incoming.site;
+  }
+  if (!hasText(next.location) && hasText(incoming.location)) next.location = incoming.location;
+  if (!hasText(next.notes) && hasText(incoming.notes)) next.notes = incoming.notes;
+  if (!hasText(next.tank) || (hasText(incoming.tank) && incoming.tank !== "15" && String(target.tank) === "15")) {
+    next.tank = incoming.tank || next.tank;
+  }
+  if (!hasText(next.mix) || (hasText(incoming.mix) && incoming.mix !== "21" && String(target.mix) === "21")) {
+    next.mix = incoming.mix || next.mix;
+  }
+  if (
+    !hasText(next.pressureStart) ||
+    (hasText(incoming.pressureStart) && incoming.pressureStart !== "200" && String(target.pressureStart) === "200")
+  ) {
+    next.pressureStart = incoming.pressureStart || next.pressureStart;
+  }
+  if (Array.isArray(incoming.types) && incoming.types.length) {
+    next.types = [...new Set([...(next.types || []), ...incoming.types])];
+  }
+  ["buddyName", "buddyCert", "guideName", "guideCert", "centerName", "centerLead"].forEach((k) => {
+    if (!hasText(next[k]) && hasText(incoming[k])) next[k] = incoming[k];
+  });
+  next.id = target.id;
+  next.number = target.number;
+  next.photo = target.photo;
+  next.feeling = target.feeling;
+  next.buddySign = target.buddySign;
+  next.guideSign = target.guideSign;
+  next.centerSign = target.centerSign;
+  next.sigMeta = target.sigMeta;
+  next.certOnDive = hasText(target.certOnDive) ? target.certOnDive : next.certOnDive;
+  next.sacManual = target.sacManual;
+  return next;
+}
+
+function divePickLabel(d) {
+  const when = [fmtItDateLong(d.date), d.timeIn].filter(Boolean).join(" · ");
+  const where = d.site || d.location || "Senza sito";
+  const depth = hasText(d.maxDepth) ? `${d.maxDepth} m` : "";
+  const mins = hasText(d.bottomTime) ? `${d.bottomTime} min` : hasText(d.totalTime) ? `${d.totalTime} min` : "";
+  return [when, where, depth, mins].filter(Boolean).join(" · ");
+}
+
+function askPickDive(dives) {
+  if (dives.length <= 1) return Promise.resolve(dives[0] || null);
+  return new Promise((resolve) => {
+    document.querySelector(".confirm-veil")?.remove();
+    const veil = document.createElement("div");
+    veil.className = "confirm-veil";
+    veil.innerHTML = `
+      <div class="confirm-card pick-card" role="dialog" aria-modal="true" aria-labelledby="pick-title">
+        <h3 id="pick-title">Quale immersione va in questa scheda?</h3>
+        <p>Il file ne contiene ${dives.length}. Scegline una: le altre non vengono aggiunte al diario.</p>
+        <div class="pick-list">
+          ${dives.map((d, i) => `<button type="button" class="btn ghost pick-dive" data-i="${i}">${escapeHtml(divePickLabel(d))}</button>`).join("")}
+        </div>
+        <button type="button" class="btn ghost" data-no>Annulla</button>
+      </div>
+    `;
+    const done = (v) => {
+      veil.remove();
+      resolve(v);
+    };
+    veil.addEventListener("click", (e) => {
+      if (e.target === veil) done(null);
+    });
+    veil.querySelector("[data-no]").onclick = () => done(null);
+    veil.querySelectorAll("[data-i]").forEach((btn) => {
+      btn.onclick = () => done(dives[Number(btn.getAttribute("data-i"))]);
+    });
+    document.body.append(veil);
+  });
+}
+
+function snapshotEditForm(form, d) {
+  const fd = new FormData(form);
+  ["photoFile", "buddySignOk", "guideSignOk", "centerSignOk"].forEach((k) => fd.delete(k));
+  const next = {
+    ...d,
+    ...Object.fromEntries(fd.entries()),
+    types: d.types,
+    photo: d.photo,
+    feeling: d.feeling,
+    tssKind: d.tssKind,
+    tssLabel: d.tssKind === "manual" ? "TSS(Manuale)" : d.tssLabel,
+    buddySign: d.buddySign,
+    guideSign: d.guideSign,
+    centerSign: d.centerSign,
+    sigMeta: d.sigMeta,
+    profileFromComputer: d.profileFromComputer,
+    profilePoints: d.profilePoints,
+    computerLog: d.computerLog || null,
+    sacManual: d.sacManual,
+    id: d.id,
+  };
+  next.circuitOpen = fd.has("circuitOpen");
+  next.circuitClosed = fd.has("circuitClosed");
+  next.noDeco = fd.has("noDeco");
+  next.deco = fd.has("hadDeco");
+  delete next.hadDeco;
+  return next;
+}
+
+function currentDiveBase() {
+  if (view.name === "edit" && view.draft) {
+    const form = document.querySelector("form.dive-edit");
+    return form ? snapshotEditForm(form, view.draft) : cloneObj(view.draft);
+  }
+  const live = state.dives.find((x) => x.id === view.diveId);
+  return live ? cloneObj(live) : null;
+}
+
+async function fillExistingFromFound(base, { found, notes }) {
+  if (!found.length) {
+    view.computerHint = notes.join(" · ") || "Nessuna immersione nel file.";
+    render();
+    return;
+  }
+  const chosen = await askPickDive(found);
+  if (!chosen) {
+    view.computerHint = "Scelta annullata. La scheda non è cambiata.";
+    render();
+    return;
+  }
+  const api = window.SeaDiveComputers;
+  const raw = cloneObj(chosen);
+  if (!(Number(raw.surfaceInterval) > 0) && api.surfaceFromPrevDives) {
+    const si = api.surfaceFromPrevDives(raw, state.dives);
+    if (si) {
+      raw.surfaceInterval = si;
+      if (raw.computerLog) raw.computerLog.surfaceInterval = si;
+    }
+  }
+  let filled = applyComputerOnto(base, raw);
+  await reverseImportedPlace(filled);
+  filled = enrichImported(filled);
+  filled.id = base.id;
+  filled.number = base.number;
+  view = {
+    name: "edit",
+    diveId: filled.id,
+    draft: filled,
+    query: view.query || "",
+    computerHint: "Dati del computer messi in questa scheda. Controlla e premi Salva. Foto, firme e note già scritti restano.",
+  };
+  render();
+}
+
+function computerFillHtml() {
+  return `
+    <div class="computer-fill">
+      <h3 class="serif">Dal computer o da file</h3>
+      <p class="hint">Compila questa scheda con un’immersione del computer o di un file. Foto, firme, buddy e note già scritti restano.</p>
+      <div class="actions">
+        <label class="btn primary">Carica file
+          <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple hidden data-fillfiles />
+        </label>
+        <button class="btn ghost" type="button" data-fillble>Bluetooth (EON)</button>
+      </div>
+      <p class="hint" data-fillhint ${view.computerHint ? "" : "hidden"}>${escapeHtml(view.computerHint || "")}</p>
+    </div>
+  `;
+}
+
+function bindComputerFill(root) {
+  const input = root.querySelector("[data-fillfiles]");
+  if (!input) return;
+  input.onchange = async (e) => {
+    const files = e.target.files;
+    const base = currentDiveBase();
+    e.target.value = "";
+    if (!base || !files?.length) return;
+    await fillExistingFromFound(base, await collectImported(files));
+  };
+  root.querySelector("[data-fillble]").onclick = async () => {
+    const base = currentDiveBase();
+    if (!base) return;
+    const hint = root.querySelector("[data-fillhint]");
+    const say = (m) => {
+      view.computerHint = m;
+      if (hint) {
+        hint.hidden = !m;
+        hint.textContent = m;
+      }
+    };
+    try {
+      say("Apri il selettore Bluetooth…");
+      const { name, dives } = await window.SeaDiveBle.downloadEonDives(say);
+      await fillExistingFromFound(base, {
+        found: dives || [],
+        notes: [`${name}: ${(dives || []).length} immersioni`],
+      });
+    } catch (err) {
+      view.computerHint = err.message || String(err);
+      render();
+    }
+  };
 }
 
 function renderStats() {
@@ -2721,6 +2991,7 @@ function renderDetail() {
       </div>
       <div class="num">${escapeHtml(d.number)}</div>
     </div>
+    ${computerFillHtml()}
     ${d.photo ? `<img class="cover" alt="" src="${d.photo}" />` : ""}
     ${satMapHtml(d, "sat-place")}
     <div class="kv">
@@ -2777,6 +3048,7 @@ function renderDetail() {
       <button class="btn danger" type="button" data-act="del">Elimina</button>
     </div>
   `;
+  bindComputerFill(card);
   card.querySelector("[data-act=edit]").onclick = () => {
     view = { name: "edit", diveId: d.id, draft: cloneObj(d), query: view.query };
     render();
@@ -2846,7 +3118,7 @@ function renderEdit() {
   form.className = "card dive-edit";
   const log = d.computerLog || {};
   form.innerHTML = `
-    ${view.computerHint ? `<p class="hint">${escapeHtml(view.computerHint)}</p>` : ""}
+    ${computerFillHtml()}
     <div class="form-grid">
       ${field("number", "Immersione n°", d.number, false, "number")}
       ${field("date", "Data", d.date, false, "date")}
@@ -2978,6 +3250,7 @@ function renderEdit() {
       ${state.dives.some((x) => x.id === d.id) ? `<button class="btn danger" type="button" data-deldive>Elimina</button>` : ""}
     </div>
   `;
+  bindComputerFill(form);
   const certInput = form.querySelector("[name=certOnDive]");
   const picks = form.querySelector("[data-certpicks]");
   profileCerts().forEach((c) => {
