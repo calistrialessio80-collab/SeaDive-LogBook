@@ -353,20 +353,35 @@ function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel =
         <p>${escapeHtml(message)}</p>
         <div class="confirm-actions">
           <button type="button" class="btn ghost" data-no>${escapeHtml(cancel)}</button>
-          <button type="button" class="btn danger" data-yes>${escapeHtml(ok)}</button>
+          <button type="button" class="btn danger" data-yes disabled>${escapeHtml(ok)}</button>
         </div>
       </div>
     `;
+    let armed = false;
+    const yes = veil.querySelector("[data-yes]");
     const done = (v) => {
+      if (v && !armed) return;
       veil.remove();
-      resolve(v);
+      resolve(Boolean(v));
     };
     veil.addEventListener("click", (e) => {
+      e.stopPropagation();
       if (e.target === veil) done(false);
     });
-    veil.querySelector("[data-no]").onclick = () => done(false);
-    veil.querySelector("[data-yes]").onclick = () => done(true);
+    veil.querySelector("[data-no]").onclick = (e) => {
+      e.stopPropagation();
+      done(false);
+    };
+    yes.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      done(true);
+    };
     document.body.append(veil);
+    setTimeout(() => {
+      armed = true;
+      yes.disabled = false;
+    }, 450);
   });
 }
 
@@ -381,11 +396,13 @@ function askDeleteDive(d) {
   });
 }
 
-function removeDive(d) {
-  if (!d) return;
+async function removeDive(d) {
+  if (!d) return false;
+  if (!(await askDeleteDive(d))) return false;
   rememberDeletedDive(d);
   state.dives = (state.dives || []).filter((x) => x.id !== d.id && !diveIsDeleted(x, state.deletedDiveIds));
   save(state);
+  return true;
 }
 
 function mergeDiveLists(a, b, tombs) {
@@ -1651,7 +1668,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 87</p>
+        <p class="hint">Versione 88</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2270,8 +2287,7 @@ function diveCard(d) {
   art.querySelector("[data-deldive]").onclick = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!(await askDeleteDive(d))) return;
-    removeDive(d);
+    if (!(await removeDive(d))) return;
     render();
   };
   art.onclick = () => {
@@ -3675,8 +3691,7 @@ function renderDetail() {
     render();
   };
   card.querySelector("[data-act=del]").onclick = async () => {
-    if (!(await askDeleteDive(d))) return;
-    removeDive(d);
+    if (!(await removeDive(d))) return;
     view = { name: "log", query: view.query };
     render();
   };
@@ -4120,9 +4135,10 @@ function renderEdit() {
     view = { name: "log", query: view.query };
     render();
   };
-  form.querySelector("[data-deldive]")?.addEventListener("click", async () => {
-    if (!(await askDeleteDive(d))) return;
-    removeDive(d);
+  form.querySelector("[data-deldive]")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!(await removeDive(d))) return;
     view = { name: "log", query: view.query };
     render();
   });

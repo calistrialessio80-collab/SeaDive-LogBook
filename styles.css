@@ -552,6 +552,7 @@ body.page-home .section-head h3 { color: #1c2430; }
   gap: 8px;
 }
 .confirm-actions .btn { width: 100%; }
+.confirm-actions .btn:disabled { opacity: 0.4; }
 .pick-card { width: min(420px, 100%); }
 .pick-list {
   display: flex;
