@@ -1020,7 +1020,7 @@ function parseSharedPayload(text) {
   const tryParse = (raw) => {
     const data = JSON.parse(raw);
     if (data?.kind === "person-follow") {
-      const err = new Error("Questo file è un contatto: contiene solo nome, cognome e brevetto. Aprilo con Ricevi contatto.");
+      const err = new Error("Questo file è un contatto: contiene nome, cognome, brevetto e firma. Aprilo con Ricevi contatto.");
       err.code = "person-follow";
       throw err;
     }
@@ -1098,27 +1098,40 @@ async function importSharedFile(file) {
 
 function personShareCard(person) {
   const names = personNames(person || {});
+  const sign = personKnownSign(person);
+  const body = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: String(person?.cert || "").trim(),
+  };
+  if (sign) body.sign = sign;
   return {
     app: "seadive-logbook",
     kind: "person-follow",
     version: 1,
     sharedAt: new Date().toISOString(),
-    person: {
-      firstName: names.firstName,
-      lastName: names.lastName,
-      cert: String(person?.cert || "").trim(),
-    },
+    person: body,
   };
 }
 
-function myFollowCard() {
+function myIdentityCard() {
   const names = personNames({ name: state.profile.name || "" });
-  return personShareCard({
-    name: state.profile.name || "",
+  const sign = profileSignImage();
+  const body = {
     firstName: names.firstName,
     lastName: names.lastName,
-    cert: state.profile.certNumber || "",
-  });
+    cert: String(state.profile.certNumber || "").trim(),
+  };
+  if (sign) body.sign = sign;
+  return body;
+}
+
+function withMyFollow(card) {
+  const me = myIdentityCard();
+  const mine = personNameKey([me.firstName, me.lastName].filter(Boolean).join(" "));
+  const theirs = personNameKey([card.person.firstName, card.person.lastName].filter(Boolean).join(" "));
+  if ((me.firstName || me.lastName) && mine !== theirs) card.me = me;
+  return card;
 }
 
 async function sharePayloadFile(card, filename) {
@@ -1153,7 +1166,7 @@ function contactFileName(person) {
 }
 
 async function sharePersonCard(person) {
-  const card = personShareCard(person);
+  const card = withMyFollow(personShareCard(person));
   if (!card.person.firstName && !card.person.lastName && !card.person.cert) {
     alert("Scrivi nome e numero di brevetto, poi condividi.");
     return false;
@@ -1162,9 +1175,12 @@ async function sharePersonCard(person) {
 }
 
 async function shareFollowCard() {
-  const card = myFollowCard();
+  const card = withMyFollow(personShareCard({
+    name: state.profile.name || "",
+    cert: state.profile.certNumber || "",
+  }));
   if (!card.person.firstName && !card.person.lastName) {
-    alert("Scrivi nome e cognome nel profilo, poi segui. Nel file vanno solo quelli e il numero di brevetto.");
+    alert("Scrivi nome e cognome nel profilo, poi segui. Nel file vanno nome, cognome, brevetto e firma.");
     return false;
   }
   return sharePayloadFile(card, contactFileName({ name: state.profile.name || "", cert: state.profile.certNumber || "" }));
@@ -1175,16 +1191,28 @@ function parseFollowPayload(text) {
   const read = (raw) => {
     const data = JSON.parse(raw);
     if (data?.kind === "dive-share" || data?.dive) {
-      const err = new Error("Questo file è un'immersione. Si riceve solo con Ricevi immersione. Qui passano nome, cognome e brevetto.");
+      const err = new Error("Questo file è un'immersione. Si riceve solo con Ricevi immersione. Qui passano nome, cognome, brevetto e firma.");
       err.code = "dive-share";
       throw err;
     }
     if (data?.kind !== "person-follow" || !data.person || typeof data.person !== "object") return null;
-    return {
-      firstName: String(data.person.firstName || "").trim(),
-      lastName: String(data.person.lastName || "").trim(),
-      cert: String(data.person.cert || "").trim(),
+    const readOne = (raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      const sign = typeof raw.sign === "string" && raw.sign.startsWith("data:image") ? raw.sign : "";
+      const one = {
+        firstName: String(raw.firstName || "").trim(),
+        lastName: String(raw.lastName || "").trim(),
+        cert: String(raw.cert || "").trim(),
+      };
+      if (sign) one.sign = sign;
+      if (!one.firstName && !one.lastName && !one.cert) return null;
+      return one;
     };
+    const person = readOne(data.person);
+    if (!person) return null;
+    const me = readOne(data.me);
+    if (me) person.me = me;
+    return person;
   };
   const tryRaw = (raw) => {
     try {
@@ -1217,24 +1245,30 @@ function findFollowMatch(card) {
 
 async function importFollowFile(file) {
   const card = parseFollowPayload(await readSharedText(file));
+  const main = storeFollowedPerson(card, "buddy");
+  if (card.me) storeFollowedPerson(card.me, "buddy");
+  save(state);
+  return main;
+}
+
+function storeFollowedPerson(card, role) {
   const name = [card.firstName, card.lastName].filter(Boolean).join(" ");
   const existing = findFollowMatch(card);
-  if (existing) {
-    const before = { ...existing };
-    const person = upsertPerson({
-      id: existing.id,
-      role: existing.role,
-      name,
-      firstName: card.firstName,
-      lastName: card.lastName,
-      cert: card.cert,
-      following: true,
-    });
-    if (person) applyPersonOntoDives(before, person);
-    save(state);
-    return { person, created: false };
-  }
-  return { card, created: true, name };
+  const payload = {
+    id: existing?.id,
+    role: existing?.role || role || "buddy",
+    name,
+    firstName: card.firstName,
+    lastName: card.lastName,
+    cert: card.cert,
+    following: true,
+  };
+  if (card.sign) payload.sign = card.sign;
+  const before = existing ? { ...existing } : null;
+  const person = upsertPerson(payload);
+  if (before && person) applyPersonOntoDives(before, person);
+  if (person) stampPersonSign(person);
+  return { person, created: !existing, name, card };
 }
 
 function backupFilename() {
@@ -1996,7 +2030,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 96</p>
+        <p class="hint">Versione 97</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3516,7 +3550,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Buddy e istruttori che segui si scambiano solo nome, cognome e numero di brevetto. L'immersione si passa soltanto con Condividi sulla scheda.</p>
+    <p class="hint">Chi è in Community si scambia nome, cognome, brevetto e firma, e si segue da solo. L'immersione si passa soltanto con Condividi sulla scheda.</p>
     <div class="chips" data-roles></div>
     <input class="search" data-find placeholder="Cerca nome o brevetto…" value="${escapeHtml(view.peopleQuery || "")}" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
@@ -3576,9 +3610,22 @@ function renderPeople() {
       row.querySelector(".people-share")?.addEventListener("click", async (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (p.role !== "center") {
+          upsertPerson({
+            id: p.id,
+            role: p.role,
+            name: p.name,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            cert: p.cert,
+            following: true,
+          });
+          p.following = true;
+          save(state);
+        }
         const sent = await sharePersonCard(p);
         if (!sent) return;
-        view.peopleHint = `Condivisi nome e brevetto di ${p.name}.`;
+        view.peopleHint = `Vi seguite con ${p.name}. Scambiati nome, cognome, brevetto e firma.`;
         render();
       });
       row.querySelector(".people-del").onclick = async (e) => {
@@ -3606,7 +3653,7 @@ function renderPeople() {
   };
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
-    view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: false };
+    view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
     view.peopleHint = "";
     render();
   };
@@ -3633,24 +3680,11 @@ function renderPeople() {
     if (!files.length) return;
     try {
       const res = await importFollowFile(files[0]);
-      if (res.created) {
-        view.personId = "new";
-        view.personDraft = {
-          id: uid(),
-          role: "buddy",
-          name: res.name,
-          firstName: res.card.firstName,
-          lastName: res.card.lastName,
-          cert: res.card.cert,
-          lead: "",
-          note: "",
-          following: true,
-        };
-        view.peopleHint = "";
-      } else {
-        view.personId = null;
-        view.peopleHint = `Segui ${res.person.name}. Aggiornati solo nome, cognome e brevetto.`;
-      }
+      view.personId = res.person?.id || null;
+      view.personDraft = null;
+      view.peopleHint = res.person
+        ? `Segui ${res.person.name}. Nome, cognome, brevetto e firma sono pronti: se lo scegli come buddy, entrano nella nuova immersione.`
+        : "";
       render();
     } catch (err) {
       view.peopleHint = err.message || String(err);
@@ -3688,7 +3722,7 @@ function renderPerson() {
       ${field("lead", "Responsabile del diving", current.lead, true)}
       ${field("note", "Note", current.note, true)}
     </div>
-    <p class="hint">Per buddy e istruttore bastano nome, cognome e brevetto. Condividi invia solo nome e numero di brevetto. Se è un buddy, la firma del suo profilo va da sola nello spazio Firma buddy.</p>
+    <p class="hint">Per buddy e istruttore, appena li salvi li segui. Condividi scambia nome, cognome, brevetto e firma. Se poi lo scegli come buddy, questi dati entrano da soli nella nuova immersione.</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
       <p class="hint">Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma.</p>
       ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
@@ -3769,7 +3803,7 @@ function renderPerson() {
       cert: fd.get("cert") || "",
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
-      following: role === "center" ? false : current.following === true,
+      following: role === "center" ? false : current.following !== false,
       sign: role === "center" ? "" : personSign,
     });
     if (before && person) applyPersonOntoDives(before, person);
@@ -3796,7 +3830,7 @@ function renderPerson() {
       cert: form.querySelector("[name=cert]")?.value || current.cert,
     });
     if (!sent) return;
-    view.peopleHint = "Condivisi solo nome e numero di brevetto.";
+    view.peopleHint = "Condivisi nome, cognome, brevetto e firma. Vi seguite in automatico.";
   });
   form.querySelector("[data-back]").onclick = () => {
     view.personId = null;
@@ -3804,13 +3838,13 @@ function renderPerson() {
     render();
   };
   form.querySelector("[data-follow]")?.addEventListener("click", async () => {
-    const card = myFollowCard();
-    if (!card.person.firstName && !card.person.lastName) {
-      alert("Scrivi nome e cognome nel profilo. Al seguito si inviano solo nome, cognome e numero di brevetto.");
+    const me = myIdentityCard();
+    if (!me.firstName && !me.lastName) {
+      alert("Scrivi nome e cognome nel profilo. Al seguito si scambiano nome, cognome, brevetto e firma.");
       return;
     }
     if (!creating && current.id) {
-      upsertPerson({
+      const payload = {
         id: current.id,
         role: current.role,
         name: current.name,
@@ -3818,12 +3852,17 @@ function renderPerson() {
         lastName: current.lastName,
         cert: current.cert,
         following: true,
-      });
+      };
+      const sign = personKnownSign(current);
+      if (sign) payload.sign = sign;
+      upsertPerson(payload);
       current.following = true;
       save(state);
+      await sharePersonCard(current);
+    } else {
+      await shareFollowCard();
     }
-    await shareFollowCard();
-    view.peopleHint = "Inviato solo nome, cognome e brevetto. L'immersione resta sul tasto Condividi.";
+    view.peopleHint = "Vi seguite. Scambiati nome, cognome, brevetto e firma. L'immersione resta sul tasto Condividi.";
     render();
   });
   form.querySelector("[data-unfollow]")?.addEventListener("click", () => {
@@ -3897,6 +3936,12 @@ function bindPeoplePicks(form, d) {
             const sign = personKnownSign(p);
             if (sign) d[signKey] = sign;
             form._applyOwnerSign?.({ forceBuddy: role === "buddy", forceGuide: role === "guide" });
+            const line = form.querySelector("[data-pickedperson]");
+            if (line) {
+              line.hidden = false;
+              line.textContent = `${p.name}${p.cert ? " · brevetto " + p.cert : ""}${sign ? " · firma inserita" : " · manca la firma sul contatto"}`;
+            }
+            save(state);
           }
         };
         chips.append(b);
@@ -4366,7 +4411,8 @@ function renderEdit() {
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
       ${peoplePicksHtml()}
-      <p class="hint">Oppure scrivi nome e brevetto a mano: al salvataggio la persona entra in Community. La firma registrata sul profilo o sul contatto del buddy va nello spazio firma.</p>
+      <p class="hint" data-pickedperson hidden></p>
+      <p class="hint">Tocca un buddy: nome, cognome, brevetto e firma entrano da soli. Oppure scrivili a mano.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
