@@ -316,6 +316,10 @@ function diveScore(d) {
 function diveTombstoneKeys(d) {
   const keys = [];
   if (d?.id) keys.push(String(d.id));
+  if (d?.shareId) {
+    keys.push("s:" + d.shareId);
+    return keys;
+  }
   const key = window.SeaDiveComputers?.diveKey?.(d) || `${d?.date || ""}|${d?.timeIn || ""}|${Number(d?.maxDepth) || 0}|${Number(d?.bottomTime) || 0}`;
   if (key && key !== "|||0|0" && key !== "||0|0") keys.push("k:" + key);
   return keys;
@@ -394,9 +398,13 @@ function mergeDiveLists(a, b, tombs) {
   candidates.forEach((d) => {
     const key = api?.diveKey?.(d) || `${d.date}|${d.timeIn}|${d.maxDepth}`;
     const blank = key === "||0|0" || key === "|||0|0";
-    const i = groups.findIndex(
-      (x) => (d.id && x.id === d.id) || (!blank && (api?.diveKey?.(x) || "") === key)
-    );
+    const i = groups.findIndex((x) => {
+      if (d.id && x.id === d.id) return true;
+      const shareA = d.shareId || "";
+      const shareB = x.shareId || "";
+      if (shareA || shareB) return Boolean(shareA) && shareA === shareB;
+      return !blank && (api?.diveKey?.(x) || `${x.date}|${x.timeIn}|${x.maxDepth}`) === key;
+    });
     if (i < 0) groups.push(d);
     else if (diveScore(d) >= diveScore(groups[i])) groups[i] = d;
   });
@@ -799,52 +807,87 @@ function sharedDiveCopy(d) {
 }
 
 async function shareOneDive(d) {
+  const shareId = uid();
   const payload = {
     app: "seadive-logbook",
     kind: "dive-share",
     version: 1,
+    shareId,
     sharedAt: new Date().toISOString(),
     from: {
       name: state.profile.name || "",
       cert: [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" "),
     },
-    dive: sharedDiveCopy(d),
+    dive: { ...sharedDiveCopy(d), shareId },
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const file = new File([blob], shareDiveFilename(d), { type: "application/json" });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "text/plain" });
+  const file = new File([blob], shareDiveFilename(d), { type: "text/plain" });
   try {
-    if (navigator.canShare?.({ files: [file] })) {
-      await navigator.share({
-        files: [file],
-        title: d.site || "Immersione SeaDive",
-        text: "Immersione condivisa da SeaDive. In Community premi Ricevi immersione.",
-      });
+    if (navigator.share) {
+      await navigator.share({ files: [file] });
       return;
     }
   } catch (err) {
     if (err?.name === "AbortError") return;
   }
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+  a.href = url;
   a.download = shareDiveFilename(d);
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function parseSharedPayload(text) {
+  const clean = String(text || "").replace(/^\uFEFF/, "").trim();
+  const tryParse = (raw) => {
+    const data = JSON.parse(raw);
+    if (data?.kind === "dive-share" && data.dive && typeof data.dive === "object") return data;
+    if (data?.dive && typeof data.dive === "object" && (data.app === "seadive-logbook" || data.site || data.dive.site)) return data;
+    return null;
+  };
+  try {
+    const direct = tryParse(clean);
+    if (direct) return direct;
+  } catch {
+    /* il telefono a volte aggiunge testo intorno al file */
+  }
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const wrapped = tryParse(clean.slice(start, end + 1));
+      if (wrapped) return wrapped;
+    } catch {
+      /* testo intorno al file, ma il JSON interno non è una scheda */
+    }
+  }
+  throw new Error("Questo file non è un'immersione condivisa. Scegli il file SeaDive appena condiviso.");
+}
+
+async function readSharedText(file) {
+  try {
+    const text = await file.text();
+    if (String(text || "").trim()) return text;
+  } catch {
+    /* alcuni telefoni non espongono il testo diretto */
+  }
+  const buf = await file.arrayBuffer();
+  return new TextDecoder("utf-8", { fatal: false }).decode(buf);
 }
 
 async function importSharedFile(file) {
-  let data;
-  try {
-    data = JSON.parse(await file.text());
-  } catch {
-    throw new Error("Il file non si legge. Serve un'immersione esportata da SeaDive.");
-  }
-  if (data?.kind !== "dive-share" || !data.dive || typeof data.dive !== "object") {
-    throw new Error("Questo file non è un'immersione condivisa. Qui si riceve una scheda, non il backup di tutto il diario.");
+  const data = parseSharedPayload(await readSharedText(file));
+  const shareId = String(data.shareId || data.dive.shareId || "");
+  if (shareId) {
+    const already = (state.dives || []).find((d) => d.shareId === shareId);
+    if (already) return already;
   }
   const dive = {
     ...emptyDive(),
     ...data.dive,
     id: uid(),
+    shareId: shareId || uid(),
     number: nextNumber(),
     photo: "",
     buddySign: "",
@@ -1608,7 +1651,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 86</p>
+        <p class="hint">Versione 87</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3132,7 +3175,7 @@ function renderPeople() {
     <div class="actions">
       <button class="btn primary" type="button" data-addperson>Aggiungi persona</button>
       <button class="btn ghost" type="button" data-receive>Ricevi immersione</button>
-      <input type="file" accept="application/json,.json" data-receivefile />
+      <input type="file" data-receivefile />
     </div>
   `;
   const roles = card.querySelector("[data-roles]");
