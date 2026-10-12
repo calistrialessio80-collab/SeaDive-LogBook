@@ -1393,9 +1393,17 @@ body.page-map .nav-dock { background: transparent; }
   min-width: 0;
   padding: 0;
 }
-.profile-form .date-box input[type="date"]::-webkit-calendar-picker-indicator {
-  margin-left: 0;
-  flex-shrink: 0;
+.profile-form label.field:has([name="certDate"]) {
+  justify-self: start;
+  width: max-content;
+  max-width: 100%;
+}
+.profile-form label.field:has([name="certDate"]) .date-box,
+.profile-form label.field:has([name="certDate"]) input[type="date"] {
+  width: 9.4rem;
+  max-width: 9.4rem;
+  min-height: 38px;
+  padding: 4px 8px;
 }
 .profile-form .profile-actions {
   display: grid;
@@ -1432,6 +1440,49 @@ body.page-map .nav-dock { background: transparent; }
 .btn-block { width: 100%; margin-top: 8px; }
 
 .certs-box { margin-top: 8px; min-width: 0; }
+.certs-fold {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  padding: 0 12px 0;
+}
+.certs-fold summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.certs-fold summary::-webkit-details-marker { display: none; }
+.certs-fold summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 2px solid #5b6573;
+  border-bottom: 2px solid #5b6573;
+  transform: rotate(45deg) translateY(-2px);
+  flex: none;
+}
+.certs-fold[open] summary::after {
+  transform: rotate(-135deg) translateY(-2px);
+}
+.certs-fold summary em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0b6e75;
+  background: #e7f6f6;
+  border-radius: 99px;
+  min-width: 1.4em;
+  padding: 2px 7px;
+  text-align: center;
+}
+.certs-fold .hint { margin: 0 0 8px; }
+.certs-fold .btn-block { margin: 4px 0 12px; }
 .cert-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;

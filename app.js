@@ -2994,7 +2994,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 130</p>
+        <p class="hint">Versione 131</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3424,7 +3424,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=130")
+    divelogsPromise = fetch("./divelogs-sites.json?v=131")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5677,10 +5677,12 @@ function renderProfile() {
       </div>
     </section>
     <section class="profile-block certs-box">
-      <h3>Altri brevetti</h3>
-      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
-      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
-      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
+      <details class="certs-fold">
+        <summary>Altri brevetti${(p.certs || []).filter((c) => c.name || c.number).length ? `<em>${(p.certs || []).filter((c) => c.name || c.number).length}</em>` : ""}</summary>
+        <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
+        <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
+        <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
+      </details>
     </section>
     <section class="profile-block">
       <h3>La tua firma</h3>
