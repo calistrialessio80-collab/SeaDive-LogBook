@@ -1653,10 +1653,92 @@ function storeFollowedPerson(card, role) {
   return { person, created: !existing, name, card };
 }
 
-const COMMUNITY_ROOT = "https://crudcrud.com/api/71706b0e45ea4c56bfe46bbe068f8c20";
-const COMMUNITY_API = `${COMMUNITY_ROOT}/profiles`;
-const COMMUNITY_LINKS = `${COMMUNITY_ROOT}/links`;
-const COMMUNITY_MESSAGES = `${COMMUNITY_ROOT}/messages`;
+const COMMUNITY_CLOUD = "https://kvdb.io/4bHvcMQUYLWbNucNU2JKix";
+const COMMUNITY_API = "profiles";
+const COMMUNITY_LINKS = "links";
+const COMMUNITY_MESSAGES = "messages";
+
+function blankCommunityBoard() {
+  return { profiles: {}, links: {}, messages: [] };
+}
+
+function cloudJson(value) {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" ? value : null;
+}
+
+let communityBoardCache = { at: 0, data: null, flight: null };
+
+async function loadCommunityBoard(maxAge = 20000) {
+  if (communityBoardCache.data && Date.now() - communityBoardCache.at < maxAge) return communityBoardCache.data;
+  if (communityBoardCache.flight) return communityBoardCache.flight;
+  communityBoardCache.flight = fetch(`${COMMUNITY_CLOUD}/?values=true&format=json`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        const err = new Error(res.status === 403 || /verif/i.test(text) ? "verify" : "network");
+        throw err;
+      }
+      const rows = await res.json();
+      const board = blankCommunityBoard();
+      if (Array.isArray(rows)) {
+        rows.forEach((pair) => {
+          if (!Array.isArray(pair)) return;
+          const key = String(pair[0] || "");
+          const value = cloudJson(pair[1]);
+          if (!value) return;
+          if (key.startsWith("p-")) board.profiles[key.slice(2)] = value;
+          else if (key.startsWith("l-")) board.links[key.slice(2)] = value;
+          else if (key.startsWith("m-")) board.messages.push(value);
+        });
+      }
+      communityBoardCache = { at: Date.now(), data: board, flight: null };
+      return board;
+    })
+    .catch((err) => {
+      communityBoardCache.flight = null;
+      throw err;
+    });
+  return communityBoardCache.flight;
+}
+
+async function cloudSet(key, value) {
+  const res = await fetch(`${COMMUNITY_CLOUD}/${encodeURIComponent(key)}?ttl=604800`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(value),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const err = new Error(res.status === 403 || /verif/i.test(text) ? "verify" : "network");
+    throw err;
+  }
+  if (!communityBoardCache.data) communityBoardCache.data = blankCommunityBoard();
+  if (key.startsWith("p-")) communityBoardCache.data.profiles[key.slice(2)] = value;
+  else if (key.startsWith("l-")) communityBoardCache.data.links[key.slice(2)] = value;
+  else if (key.startsWith("m-")) {
+    const id = value._id;
+    communityBoardCache.data.messages = communityBoardCache.data.messages.filter((row) => row._id !== id);
+    communityBoardCache.data.messages.push(value);
+  }
+  communityBoardCache.at = Date.now();
+}
+
+function fitCloudProfile(body) {
+  const size = () => JSON.stringify(body).length;
+  if (size() > 15000) delete body.portrait;
+  if (size() > 15000) delete body.sign;
+  return body;
+}
 
 function communityWords(name) {
   return personNameKey(name)
@@ -1846,18 +1928,10 @@ function shrinkPortrait(dataUrl, maxSide = 240, limit = 14000) {
 }
 
 async function loadOnlineProfiles() {
-  let res;
   try {
-    res = await fetch(COMMUNITY_API, { cache: "no-store" });
-  } catch {
-    return { error: "network" };
-  }
-  if (!res.ok) return { error: "network" };
-  try {
-    const list = await res.json();
-    if (!Array.isArray(list)) return { error: "network" };
+    const board = await loadCommunityBoard();
     return {
-      list: list
+      list: Object.values(board.profiles)
         .map((row) => {
           const card = communityCardFromRow(row);
           if (!card) return null;
@@ -1866,8 +1940,8 @@ async function loadOnlineProfiles() {
         })
         .filter(Boolean),
     };
-  } catch {
-    return { error: "network" };
+  } catch (err) {
+    return { error: err?.message === "verify" ? "verify" : "network" };
   }
 }
 
@@ -1918,7 +1992,9 @@ async function connectSeaPerson(cardHit, chat) {
   }
   const res = await setMyFollow(cardHit, true);
   if (res.error) {
-    view.peopleHint = "Seguito non registrato. Riprova tra poco.";
+    view.peopleHint = res.error === "verify"
+      ? "Apri la mail su calistrialessio80@gmail.com, conferma il cloud, poi segui di nuovo."
+      : "Seguito non registrato. Riprova tra poco.";
     render();
     return;
   }
@@ -1986,25 +2062,15 @@ async function publishMyProfile() {
     at: new Date().toISOString(),
   };
   if (sign) body.sign = sign;
-  let portrait = await shrinkPortrait(profilePortraitImage(), 160, 7000);
+  let portrait = await shrinkPortrait(profilePortraitImage(), 96, 3500);
   if (portrait) body.portrait = portrait;
-  if (portrait && JSON.stringify(body).length > 22000) {
-    portrait = await shrinkPortrait(profilePortraitImage(), 96, 4000);
-    if (portrait) body.portrait = portrait;
-    else delete body.portrait;
-  }
-  if (JSON.stringify(body).length > 24000) delete body.sign;
+  body.id = owner;
+  fitCloudProfile(body);
   try {
-    const url = current?.id ? `${COMMUNITY_API}/${current.id}` : COMMUNITY_API;
-    const res = await fetch(url, {
-      method: current?.id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) return { error: "network" };
+    await cloudSet(`p-${owner}`, body);
     return { ok: true, name: names.name };
-  } catch {
-    return { error: "network" };
+  } catch (err) {
+    return { error: err?.message === "verify" ? "verify" : "network" };
   }
 }
 
@@ -2135,7 +2201,7 @@ function armChatNotices() {
   watchChatNotices().catch(() => {});
   setInterval(() => {
     watchChatNotices().catch(() => {});
-  }, 5000);
+  }, 60000);
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", (event) => {
       if (event.data?.type === "seadive-chat") openChatFromOwner(event.data.owner || "");
@@ -2143,17 +2209,12 @@ function armChatNotices() {
   }
 }
 
-async function crudList(url) {
-  let res;
-  try {
-    res = await fetch(url, { cache: "no-store" });
-  } catch {
-    throw new Error("network");
-  }
-  if (res.status === 404) return [];
-  if (!res.ok) throw new Error("network");
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+async function crudList(url, fresh) {
+  const board = await loadCommunityBoard(fresh ? 0 : 20000);
+  if (url === COMMUNITY_LINKS) return Object.values(board.links || {});
+  if (url === COMMUNITY_MESSAGES) return board.messages || [];
+  if (url === COMMUNITY_API) return Object.values(board.profiles || {});
+  return [];
 }
 
 function chatPair(a, b) {
@@ -2184,12 +2245,11 @@ async function ensureCommunityLink(mine, other) {
     leftFollows: false,
     rightFollows: false,
   };
-  const res = await fetch(COMMUNITY_LINKS, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) return { error: "network" };
+  try {
+    await cloudSet(`l-${pair}`, body);
+  } catch (err) {
+    return { error: err?.message === "verify" ? "verify" : "network" };
+  }
   linkedPairs.add(pair);
   return { ok: true, pair };
 }
@@ -2224,13 +2284,11 @@ async function setMyFollow(other, on) {
   };
   if (body.left === mine) body.leftFollows = Boolean(on);
   else body.rightFollows = Boolean(on);
-  const url = current?._id ? `${COMMUNITY_LINKS}/${current._id}` : COMMUNITY_LINKS;
-  const res = await fetch(url, {
-    method: current?._id ? "PUT" : "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) return { error: "network" };
+  try {
+    await cloudSet(`l-${pair}`, body);
+  } catch (err) {
+    return { error: err?.message === "verify" ? "verify" : "network" };
+  }
   linkedPairs.add(pair);
   return { ok: true, ...linkFollowFlags(body, mine) };
 }
@@ -2410,7 +2468,7 @@ function renderChat() {
   const pull = async () => {
     if (!thread || view.name !== "chat" || view.chatPersonId !== person.id || !log.isConnected) return;
     try {
-      const all = await crudList(COMMUNITY_MESSAGES);
+      const all = await crudList(COMMUNITY_MESSAGES, true);
       const rows = all
         .filter((row) => row.thread === thread && String(row.text || "").trim())
         .map((row) => ({
@@ -2434,12 +2492,15 @@ function renderChat() {
     input.disabled = true;
     try {
       const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
-      const res = await fetch(COMMUNITY_MESSAGES, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread, from: owner, name: sender.slice(0, 80), text, at: new Date().toISOString() }),
-      });
-      if (!res.ok) throw new Error("network");
+      const msg = {
+        _id: uid().replace(/-/g, ""),
+        thread,
+        from: owner,
+        name: sender.slice(0, 80),
+        text,
+        at: new Date().toISOString(),
+      };
+      await cloudSet(`m-${msg._id}`, msg);
       input.value = "";
       stick = true;
       await pull();
@@ -2455,7 +2516,7 @@ function renderChat() {
     thread = chatPair(mine, person.remoteOwner);
     pull();
     stopChatPoll();
-    chatTimer = setInterval(pull, 3500);
+    chatTimer = setInterval(pull, 15000);
   });
   frag.append(card);
   return frag;
@@ -3320,7 +3381,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 141</p>
+        <p class="hint">Versione 142</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3750,7 +3811,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=141")
+    divelogsPromise = fetch("./divelogs-sites.json?v=142")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5447,7 +5508,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Cerca chi usa SeaDive e seguilo. Nome, cognome, brevetto e firma entrano in immersione solo se vi seguite entrambi. La chat si apre anche prima. Il diario non va in rete.</p>
+    <p class="hint">Cerca chi usa SeaDive e seguilo. I profili stanno nel cloud della Community; il diario resta sul tuo Drive. Nome, cognome, brevetto e firma entrano in immersione solo se vi seguite entrambi.</p>
     <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <h3 class="serif people-block">Chi usa SeaDive</h3>
@@ -5501,7 +5562,9 @@ function renderPeople() {
   } else if (seaDirectory.error && !otherPeople.length) {
     const wait = document.createElement("p");
     wait.className = "hint";
-    wait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
+    wait.textContent = seaDirectory.error === "verify"
+      ? "Apri la mail su calistrialessio80@gmail.com, conferma il cloud della Community, poi riapri l'app."
+      : "Elenco non raggiungibile. Riprova tra poco.";
     sea.append(wait);
   } else if (!otherPeople.length) {
     const wait = document.createElement("p");
@@ -5519,9 +5582,11 @@ function renderPeople() {
       const extraSelf = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
       const selfStatus = profileOnlineStatus === "online"
         ? "Sei tu · visibile a chi usa SeaDive"
-        : profileOnlineStatus === "short"
-          ? "Sei tu · servono nome e cognome"
-          : "Sei tu · ti pubblico tra gli altri";
+        : profileOnlineStatus === "verify"
+          ? "Sei tu · conferma la mail del cloud"
+          : profileOnlineStatus === "short"
+            ? "Sei tu · servono nome e cognome"
+            : "Sei tu · ti pubblico tra gli altri";
       const selfRow = document.createElement("article");
       selfRow.className = "people-row";
       selfRow.innerHTML = `
@@ -5913,7 +5978,9 @@ function renderPerson() {
     }
     const res = await setMyFollow(current, true);
     if (res.error) {
-      view.peopleHint = "Seguito non registrato. Riprova tra poco.";
+      view.peopleHint = res.error === "verify"
+        ? "Apri la mail su calistrialessio80@gmail.com, conferma il cloud, poi segui di nuovo."
+        : "Seguito non registrato. Riprova tra poco.";
       view.personId = current.id;
       render();
       return;
