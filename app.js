@@ -1653,7 +1653,7 @@ function storeFollowedPerson(card, role) {
   return { person, created: !existing, name, card };
 }
 
-const COMMUNITY_ROOT = "https://crudcrud.com/api/4323695fdbb14e2381719f8c374484fc";
+const COMMUNITY_ROOT = "https://crudcrud.com/api/71706b0e45ea4c56bfe46bbe068f8c20";
 const COMMUNITY_API = `${COMMUNITY_ROOT}/profiles`;
 const COMMUNITY_LINKS = `${COMMUNITY_ROOT}/links`;
 const COMMUNITY_MESSAGES = `${COMMUNITY_ROOT}/messages`;
@@ -2011,14 +2011,19 @@ async function publishMyProfile() {
 let profileOnlineStatus = "";
 
 function queueProfilePublish() {
-  if (queueProfilePublish.started) return;
-  queueProfilePublish.started = true;
+  if (queueProfilePublish.busy || profileOnlineStatus === "online") return;
+  queueProfilePublish.busy = true;
   publishMyProfile()
     .then((res) => {
-      profileOnlineStatus = res?.ok ? "online" : res?.error || "";
-      if (view.name === "profile") render();
+      const next = res?.ok ? "online" : res?.error || "";
+      const became = next === "online" && profileOnlineStatus !== "online";
+      profileOnlineStatus = next;
+      if (view.name === "profile" || (became && view.name === "people" && !view.personId)) render();
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => {
+      queueProfilePublish.busy = false;
+    });
 }
 
 let chatTimer = 0;
@@ -3315,7 +3320,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 140</p>
+        <p class="hint">Versione 141</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3745,7 +3750,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=140")
+    divelogsPromise = fetch("./divelogs-sites.json?v=141")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5474,28 +5479,67 @@ function renderPeople() {
   const list = card.querySelector("[data-list]");
   const sea = card.querySelector("[data-sea]");
   const seaQuery = String(view.peopleQuery || "").trim();
-  const seaPeople = (seaDirectory.list || []).filter((cardHit) => seaQueryMatch(cardHit, seaQuery));
+  const myNames = personNames({ name: state.profile?.name || "" });
+  const selfCard = myNames.firstName && myNames.lastName
+    ? {
+        self: true,
+        firstName: myNames.firstName,
+        lastName: myNames.lastName,
+        cert: String(state.profile?.certNumber || "").trim(),
+        level: String(state.profile?.certLevel || "").trim(),
+        portrait: profilePortraitImage(),
+        owner: "me",
+      }
+    : null;
+  const otherPeople = (seaDirectory.list || []).filter((cardHit) => seaQueryMatch(cardHit, seaQuery));
+  const seaPeople = [selfCard, ...otherPeople].filter(Boolean);
   if (!seaDirectory.at && seaDirectory.loading) {
     const wait = document.createElement("p");
     wait.className = "hint";
     wait.textContent = "Carico chi usa SeaDive…";
     sea.append(wait);
-  } else if (seaDirectory.error && !seaPeople.length) {
+  } else if (seaDirectory.error && !otherPeople.length) {
     const wait = document.createElement("p");
     wait.className = "hint";
     wait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
     sea.append(wait);
-  } else if (!seaPeople.length) {
+  } else if (!otherPeople.length) {
     const wait = document.createElement("p");
     wait.className = "hint";
     wait.textContent = seaQuery
-      ? "Nessuno con questo nome. L'altra persona deve avere nome e cognome nel profilo."
-      : "Ancora nessuno oltre a te. Appena un altro salva nome e cognome, compare qui.";
+      ? "Nessuno con questo nome. L'altra persona deve aprire SeaDive con nome e cognome nel profilo."
+      : "Ancora nessun altro profilo. Chi ha già l'app deve aprirla una volta: con nome e cognome compare qui.";
     sea.append(wait);
   }
   seaPeople.forEach((cardHit) => {
     const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
     const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
+    if (cardHit.self) {
+      const whoSelf = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+      const extraSelf = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
+      const selfStatus = profileOnlineStatus === "online"
+        ? "Sei tu · visibile a chi usa SeaDive"
+        : profileOnlineStatus === "short"
+          ? "Sei tu · servono nome e cognome"
+          : "Sei tu · ti pubblico tra gli altri";
+      const selfRow = document.createElement("article");
+      selfRow.className = "people-row";
+      selfRow.innerHTML = `
+        <button type="button" class="people-open${cardHit.portrait ? " has-photo" : ""}">
+          ${avatarHtml(cardHit.portrait, whoSelf)}
+          <span>
+            <strong>${escapeHtml(whoSelf)}</strong>
+            <small>${escapeHtml(selfStatus)}${extraSelf ? " · " + escapeHtml(extraSelf) : ""}</small>
+          </span>
+        </button>
+      `;
+      selfRow.querySelector(".people-open").onclick = () => {
+        view.name = "profile";
+        render();
+      };
+      sea.append(selfRow);
+      return;
+    }
     const known = localSeaPerson(cardHit);
     const mode = !known ? "none" : known.followOut && known.followIn ? "mutual" : known.followOut ? "out" : known.followIn ? "in" : "none";
     const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "In attesa del suo seguito" : mode === "in" ? "Ti segue" : "Su SeaDive";
