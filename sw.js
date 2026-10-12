@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v123";
+const CACHE = "seadive-logbook-v124";
 const ASSETS = [
   "./",
   "./index.html",
@@ -35,6 +35,20 @@ self.addEventListener("activate", (event) => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const owner = event.notification.data?.owner || "";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        client.postMessage({ type: "seadive-chat", owner });
+        if ("focus" in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow("./");
+    })
+  );
 });
 
 self.addEventListener("fetch", (event) => {

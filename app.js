@@ -1694,6 +1694,114 @@ function stopChatPoll() {
   chatTimer = 0;
 }
 
+let chatUnread = 0;
+const chatSeen = new Set();
+let chatNoticeReady = false;
+
+function askChatNotice() {
+  if (!("Notification" in window) || Notification.permission !== "default") return;
+  Notification.requestPermission().catch(() => {});
+}
+
+function paintChatBadge() {
+  const label = document.querySelector("[data-chatnav] small");
+  if (!label) return;
+  label.textContent = chatUnread > 0 ? "Community " + chatUnread : "Community";
+}
+
+function openChatFromOwner(owner) {
+  const person = (state.people || []).find((p) => p.remoteOwner === owner);
+  chatUnread = 0;
+  if (!person) {
+    view.name = "people";
+    view.personId = null;
+    render();
+    return;
+  }
+  view.name = "chat";
+  view.chatPersonId = person.id;
+  view.peopleHint = "";
+  render();
+}
+
+async function showChatNotice(title, body, from) {
+  const key = from + "\n" + body;
+  if (showChatNotice.recent?.has(key)) return;
+  if (!showChatNotice.recent) showChatNotice.recent = new Set();
+  showChatNotice.recent.add(key);
+  setTimeout(() => showChatNotice.recent.delete(key), 20000);
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const options = {
+    body,
+    icon: "./icon-192.png",
+    badge: "./icon-192.png",
+    tag: "seadive-chat-" + from,
+    renotify: true,
+    data: { owner: from },
+  };
+  try {
+    const reg = await navigator.serviceWorker?.ready;
+    if (reg?.showNotification) {
+      await reg.showNotification(title || "SeaDive", options);
+      return;
+    }
+  } catch {
+    /* notifica diretta */
+  }
+  const note = new Notification(title || "SeaDive", options);
+  note.onclick = () => openChatFromOwner(from);
+}
+
+async function watchChatNotices() {
+  if (!loadSession()) return;
+  let rows = [];
+  try {
+    rows = await crudList(COMMUNITY_MESSAGES);
+  } catch {
+    return;
+  }
+  const mine = await profileOwnerKey();
+  const since = localStorage.getItem("seadive-chat-seen-at") || "";
+  const firstOpen = !chatNoticeReady && !since;
+  for (const row of rows) {
+    const id = String(row._id || "");
+    if (!id || chatSeen.has(id)) continue;
+    chatSeen.add(id);
+    const text = String(row.text || "").trim();
+    const from = String(row.from || "");
+    const at = String(row.at || "");
+    if (firstOpen || !text || !from || from === mine) continue;
+    if (since && at <= since) continue;
+    const person = (state.people || []).find((p) => p.remoteOwner === from);
+    const looking =
+      view.name === "chat" &&
+      person &&
+      view.chatPersonId === person.id &&
+      document.visibilityState === "visible";
+    if (looking) continue;
+    chatUnread += 1;
+    paintChatBadge();
+    const title = String(row.name || person?.name || "SeaDive").slice(0, 80);
+    await showChatNotice(title, text.slice(0, 140), from);
+  }
+  chatNoticeReady = true;
+  localStorage.setItem("seadive-chat-seen-at", new Date().toISOString());
+}
+
+function armChatNotices() {
+  if (armChatNotices.started || !loadSession()) return;
+  armChatNotices.started = true;
+  watchChatNotices().catch(() => {});
+  setInterval(() => {
+    watchChatNotices().catch(() => {});
+  }, 5000);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "seadive-chat") openChatFromOwner(event.data.owner || "");
+    });
+  }
+}
+
 async function crudList(url) {
   let res;
   try {
@@ -1875,7 +1983,7 @@ function renderChat() {
   }
   card.innerHTML = `
     <h2 class="serif" style="margin:0">${escapeHtml(person.name)}</h2>
-    <p class="hint">Siete collegati. I messaggi arrivano in pochi secondi. Il diario non viene inviato.</p>
+    <p class="hint">Siete collegati. I messaggi arrivano in pochi secondi e, se le notifiche sono consentite, l’avviso arriva sul telefono. Il diario non viene inviato.</p>
     <div class="chat-log" data-log><p class="hint">Carico la chat…</p></div>
     <form class="chat-compose">
       <input name="text" maxlength="400" placeholder="Scrivi un messaggio" autocomplete="off" enterkeyhint="send" />
@@ -1943,10 +2051,11 @@ function renderChat() {
     if (!text || !thread || !owner) return;
     input.disabled = true;
     try {
+      const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
       const res = await fetch(COMMUNITY_MESSAGES, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread, from: owner, text, at: new Date().toISOString() }),
+        body: JSON.stringify({ thread, from: owner, name: sender.slice(0, 80), text, at: new Date().toISOString() }),
       });
       if (!res.ok) throw new Error("network");
       input.value = "";
@@ -2724,7 +2833,9 @@ function render() {
   if (view.name === "chat") app.append(renderChat());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
+  if (loadSession() && (view.name === "people" || view.name === "chat")) chatUnread = 0;
   document.body.append(renderNav());
+  if (loadSession()) armChatNotices();
   if (view.name === "log") {
     const fab = document.createElement("button");
     fab.className = "fab";
@@ -2800,7 +2911,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 123</p>
+        <p class="hint">Versione 124</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2850,7 +2961,9 @@ function renderNav() {
     const b = document.createElement("button");
     const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
     b.className = on ? "active" : "";
-    b.innerHTML = `<span>${icon}</span><small>${label}</small>`;
+    if (id === "people") b.dataset.chatnav = "1";
+    const badge = id === "people" && chatUnread > 0 ? " " + chatUnread : "";
+    b.innerHTML = `<span>${icon}</span><small>${label}${badge}</small>`;
     b.onclick = () => {
       view = {
         name: id,
@@ -3227,7 +3340,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=123")
+    divelogsPromise = fetch("./divelogs-sites.json?v=124")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -4970,6 +5083,7 @@ function renderPeople() {
       row.querySelector(".people-chat")?.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        askChatNotice();
         openPersonChat(p);
       });
       row.querySelector(".people-share")?.addEventListener("click", async (e) => {
@@ -5236,6 +5350,7 @@ function renderPerson() {
     render();
   };
   form.querySelector("[data-chat]")?.addEventListener("click", () => {
+    askChatNotice();
     openPersonChat({
       ...current,
       firstName: form.querySelector("[name=firstName]")?.value || current.firstName,
