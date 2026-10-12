@@ -2,7 +2,7 @@
   "name": "SeaDive LogBook",
   "short_name": "SeaDive",
   "description": "Diario immersioni digitale dal tuo logbook cartaceo",
-  "start_url": "./?v=128",
+  "start_url": "./?v=129",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

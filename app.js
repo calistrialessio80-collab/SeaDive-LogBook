@@ -2911,7 +2911,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 128</p>
+        <p class="hint">Versione 129</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3341,7 +3341,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=128")
+    divelogsPromise = fetch("./divelogs-sites.json?v=129")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -3503,6 +3503,58 @@ function renderWorldMap() {
     }
   };
   dock.append(form);
+  const summary = dock.querySelector("summary");
+  const grab = document.createElement("span");
+  grab.className = "dock-grab";
+  grab.setAttribute("aria-hidden", "true");
+  summary.prepend(grab);
+  let dockDrag = null;
+  const parkDock = () => {
+    dock.classList.remove("pulling");
+    dock.style.transform = "";
+  };
+  const dismissDock = () => {
+    dock.open = false;
+    mapPick = null;
+    const hint = form.querySelector("[data-maphint]");
+    if (hint) hint.textContent = "";
+    ["lat", "lng"].forEach((name) => {
+      const input = form.querySelector(`[name=${name}]`);
+      if (input) input.value = "";
+    });
+  };
+  dock.addEventListener("pointerdown", (e) => {
+    if (!dock.open || (e.button != null && e.button !== 0)) return;
+    if (e.target.closest("input, textarea, button, a, select")) return;
+    dockDrag = { y: e.clientY, dy: 0, id: e.pointerId };
+    try { dock.setPointerCapture(e.pointerId); } catch { /* il dito resta sul pannello */ }
+  });
+  dock.addEventListener("pointermove", (e) => {
+    if (!dockDrag || e.pointerId !== dockDrag.id) return;
+    const dy = Math.max(0, e.clientY - dockDrag.y);
+    dockDrag.dy = dy;
+    if (dy < 6) return;
+    dock.classList.add("pulling");
+    dock.style.transform = `translateX(-50%) translateY(${dy}px)`;
+  });
+  const endDockDrag = (e) => {
+    if (!dockDrag || e.pointerId !== dockDrag.id) return;
+    const dy = dockDrag.dy;
+    dockDrag = null;
+    parkDock();
+    if (dy > 8) dock.dataset.pulled = "1";
+    if (dy > 52) dismissDock();
+  };
+  dock.addEventListener("pointerup", endDockDrag);
+  dock.addEventListener("pointercancel", endDockDrag);
+  summary.addEventListener("click", (e) => {
+    if (!dock.dataset.pulled) return;
+    e.preventDefault();
+    delete dock.dataset.pulled;
+  });
+  dock.addEventListener("toggle", () => {
+    if (!dock.open) mapPick = null;
+  });
   stage.append(dock);
   frag.append(stage);
   queueMicrotask(() => {

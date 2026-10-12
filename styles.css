@@ -940,14 +940,29 @@ body.page-map .nav-dock { background: transparent; }
   border-radius: 18px;
   padding: 8px 12px 10px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  transition: transform 0.18s ease;
+  touch-action: none;
 }
 .add-site-dock summary {
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   font-family: Fraunces, serif;
   font-size: 16px;
   font-weight: 600;
   list-style: none;
+  touch-action: none;
+  user-select: none;
 }
+.add-site-dock .dock-grab {
+  width: 42px;
+  height: 5px;
+  border-radius: 99px;
+  background: #8d97a3;
+}
+.add-site-dock.pulling { transition: none; }
 .add-site-dock summary::-webkit-details-marker { display: none; }
 .add-site-dock form { margin-top: 8px; }
 .add-site-dock .hint { margin-top: 4px; }
