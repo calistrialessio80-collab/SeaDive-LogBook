@@ -2450,7 +2450,7 @@ function renderAuth() {
       <p class="eyebrow">SeaDive LogBook</p>
       <h1>Registrati</h1>
       <p class="meta">Crea l’account con Google. Le immersioni restano tue e si copiano sul Drive, così non si perdono.</p>
-      <p class="hint"><a href="./privacy.html">Informativa privacy</a></p>
+      <p class="hint"><a href="./privacy.html">Informativa privacy</a> · <a href="./termini.html">Termini di servizio</a></p>
       <details class="privacy-fold">
         <summary>Informativa privacy</summary>
         <div class="privacy-body">
@@ -2505,7 +2505,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 120</p>
+        <p class="hint">Versione 121</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2932,7 +2932,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=120")
+    divelogsPromise = fetch("./divelogs-sites.json?v=121")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();

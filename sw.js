@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v120";
+const CACHE = "seadive-logbook-v121";
 const ASSETS = [
   "./",
   "./index.html",
@@ -16,6 +16,7 @@ const ASSETS = [
   "./aggiorna.html",
   "./splash.jpg",
   "./privacy.html",
+  "./termini.html",
 ];
 
 self.addEventListener("install", (event) => {
