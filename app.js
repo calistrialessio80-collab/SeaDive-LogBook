@@ -2911,7 +2911,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 127</p>
+        <p class="hint">Versione 128</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3341,7 +3341,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=127")
+    divelogsPromise = fetch("./divelogs-sites.json?v=128")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5272,7 +5272,6 @@ function renderPerson() {
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
     <div class="actions">
       <button class="btn primary" type="submit">Salva</button>
-      ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-chat>Chat</button>`}
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-shareperson>Condividi nome e brevetto</button>`}
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-follow>${current.following ? "Invia i miei dati" : "Segui"}</button>`}
       ${!creating && current.following && current.role !== "center" ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
@@ -5356,16 +5355,6 @@ function renderPerson() {
     view.peopleHint = "";
     render();
   };
-  form.querySelector("[data-chat]")?.addEventListener("click", () => {
-    askChatNotice();
-    openPersonChat({
-      ...current,
-      firstName: form.querySelector("[name=firstName]")?.value || current.firstName,
-      lastName: form.querySelector("[name=lastName]")?.value || current.lastName,
-      cert: form.querySelector("[name=cert]")?.value || current.cert,
-      name: current.role === "center" ? current.name : [form.querySelector("[name=firstName]")?.value, form.querySelector("[name=lastName]")?.value].filter(Boolean).join(" ") || current.name,
-    });
-  });
   form.querySelector("[data-shareperson]")?.addEventListener("click", async () => {
     const names = personNames({
       ...current,
