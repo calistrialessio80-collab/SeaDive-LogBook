@@ -1178,6 +1178,51 @@ async function sharePersonCard(person) {
   return sharePayloadFile(card, contactFileName(person));
 }
 
+async function shareProfileContact(profile, sign) {
+  const names = personNames({ name: profile?.name || "" });
+  if (!names.firstName || !names.lastName) return { error: "name" };
+  const cert = String(profile?.certNumber || "").trim();
+  if (!cert) return { error: "cert" };
+  const image = typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+  if (!image) return { error: "sign" };
+  const shrunk = await shrinkSign(image);
+  const body = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert,
+  };
+  const level = String(profile?.certLevel || "").trim();
+  if (level) body.level = level;
+  body.sign = shrunk || image;
+  const card = {
+    app: "seadive-logbook",
+    kind: "person-follow",
+    version: 1,
+    sharedAt: new Date().toISOString(),
+    person: body,
+  };
+  const filename = contactFileName({ name: names.name });
+  const blob = new Blob([JSON.stringify(card, null, 2)], { type: "text/plain" });
+  const file = new File([blob], filename, { type: "text/plain" });
+  const text = `Contatto SeaDive di ${names.name}. In Community tocca Ricevi contatto e scegli questo file: dentro ci sono nome, cognome, numero di brevetto e firma.`;
+  try {
+    const payload = { files: [file], title: `Contatto ${names.name}`, text };
+    if (navigator.canShare?.(payload) || navigator.share) {
+      await navigator.share(payload);
+      return { ok: true, how: "shared" };
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return { ok: false, how: "abort" };
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+  return { ok: true, how: "download" };
+}
+
 async function shareFollowCard() {
   const card = withMyFollow(personShareCard({
     name: state.profile.name || "",
@@ -2332,7 +2377,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 112</p>
+        <p class="hint">Versione 113</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4497,6 +4542,8 @@ function renderProfile() {
       <h3>La tua firma</h3>
       <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
+      <button class="btn primary btn-block" type="button" data-sharecontact>Condividi contatto su WhatsApp</button>
+      <p class="hint" data-sharehint>Nel file vanno nome, cognome, numero di brevetto e firma. Chi lo riceve, in Community, tocca Ricevi contatto.</p>
     </section>
     <section class="profile-block">
       <h3>Medico e assicurazione</h3>
@@ -4584,6 +4631,23 @@ function renderProfile() {
       ownerSign = v;
     });
   });
+  const shareHint = form.querySelector("[data-sharehint]");
+  form.querySelector("[data-sharecontact]").onclick = async () => {
+    const sent = await shareProfileContact(
+      {
+        name: form.querySelector("[name=name]").value,
+        certNumber: form.querySelector("[name=certNumber]").value,
+        certLevel: form.querySelector("[name=certLevel]").value,
+      },
+      ownerSign
+    );
+    if (!shareHint) return;
+    if (sent.error === "name") shareHint.textContent = "Scrivi nome e cognome, poi condividi il contatto.";
+    else if (sent.error === "cert") shareHint.textContent = "Scrivi il numero di brevetto, poi condividi il contatto.";
+    else if (sent.error === "sign") shareHint.textContent = "Firma nel riquadro, poi condividi il contatto.";
+    else if (sent.how === "download") shareHint.textContent = "Contatto scaricato. Su WhatsApp allegalo come documento. L'altro, in Community, tocca Ricevi contatto.";
+    else if (sent.ok) shareHint.textContent = "Scegli WhatsApp e invia il file. Chi lo riceve lo apre in Community con Ricevi contatto.";
+  };
   form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
