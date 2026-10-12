@@ -2870,6 +2870,7 @@ function setPageSkin() {
   document.body.classList.toggle("page-app", Boolean(loadSession()));
   document.body.classList.toggle("page-home", Boolean(loadSession()) && view.name === "home");
   document.body.classList.toggle("page-map", Boolean(loadSession()) && view.name === "map");
+  document.body.classList.toggle("page-profile", Boolean(loadSession()) && view.name === "profile");
 }
 
 async function finishAuth(user) {
@@ -2994,7 +2995,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 131</p>
+        <p class="hint">Versione 132</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3424,7 +3425,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=131")
+    divelogsPromise = fetch("./divelogs-sites.json?v=132")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5651,13 +5652,16 @@ function renderProfile() {
   const p = state.profile;
   let portrait = profilePortraitImage();
   form.innerHTML = `
-    <div class="profile-id">
-      <button class="profile-photo" type="button" data-pickphoto aria-label="Foto accanto al nome">
-        ${portrait ? `<img alt="" src="${escapeHtml(portrait)}" />` : `<span>Foto</span>`}
-      </button>
-      <div>
-        <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
-        <button class="btn ghost profile-photo-clear" type="button" data-clearphoto ${portrait ? "" : "hidden"}>Togli foto</button>
+    <div class="profile-hero">
+      <div class="profile-id">
+        <button class="profile-photo" type="button" data-pickphoto aria-label="Foto accanto al nome">
+          ${portrait ? `<img alt="" src="${escapeHtml(portrait)}" />` : `<span>Foto</span>`}
+        </button>
+        <div>
+          <p class="profile-kicker">In acqua</p>
+          <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
+          <button class="btn ghost profile-photo-clear" type="button" data-clearphoto ${portrait ? "" : "hidden"}>Togli foto</button>
+        </div>
       </div>
     </div>
     <input type="file" accept="image/*" data-photofile hidden />
