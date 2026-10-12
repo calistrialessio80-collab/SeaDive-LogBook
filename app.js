@@ -2503,7 +2503,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 115</p>
+        <p class="hint">Versione 116</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4228,17 +4228,25 @@ function renderPeople() {
     people.forEach((p) => {
       const n = divesForPerson(p).length;
       const row = document.createElement("article");
-      row.className = "people-row";
-      const extra = p.role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · ");
+      row.className = "people-card";
+      const names = personNames(p);
       const mine = samePersonName(p.name, state.profile.name);
       const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
+      const meta = [
+        roleLabel(p.role),
+        p.role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · "),
+        mine ? "il tuo profilo" : "",
+        p.following ? "seguito" : "",
+        `${n} ${n === 1 ? "scheda" : "schede"}`,
+      ].filter(Boolean).join(" · ");
+      const first = p.role === "center" ? p.name || "" : names.firstName || p.name || "";
+      const last = p.role === "center" ? "" : names.lastName || "";
       row.innerHTML = `
         <button type="button" class="people-open">
-          <strong>${escapeHtml(p.name)}</strong>
-          <small>${escapeHtml(roleLabel(p.role))}${extra ? " · " + escapeHtml(extra) : ""}${mine ? " · il tuo profilo" : ""}${p.following ? " · seguito" : ""}</small>
+          <span class="people-name"><strong>${escapeHtml(first)}</strong>${last ? `<strong>${escapeHtml(last)}</strong>` : ""}</span>
+          <small>${escapeHtml(meta)}</small>
         </button>
         ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
-        <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
         <div class="people-actions">
           ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
           <button class="btn danger people-del" type="button">Elimina</button>
