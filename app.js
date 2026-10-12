@@ -2911,7 +2911,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 124</p>
+        <p class="hint">Versione 127</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2953,7 +2953,7 @@ function renderNav() {
     ["log", "📒", "Diario"],
     ["people", "👥", "Community"],
     ["map", "🗺️", "Mappa"],
-    ["bio", "🌿", "Bio"],
+    ["bio", "🌿", "Biologia Marina"],
     ["computer", "⌚", "Computer"],
     ["profile", "👤", "Profilo"],
   ];
@@ -2961,6 +2961,7 @@ function renderNav() {
     const b = document.createElement("button");
     const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
     b.className = on ? "active" : "";
+    if (id === "bio") b.classList.add("bio-nav");
     if (id === "people") b.dataset.chatnav = "1";
     const badge = id === "people" && chatUnread > 0 ? " " + chatUnread : "";
     b.innerHTML = `<span>${icon}</span><small>${label}${badge}</small>`;
@@ -3340,7 +3341,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=124")
+    divelogsPromise = fetch("./divelogs-sites.json?v=127")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -4122,27 +4123,26 @@ function bioWhereOn() {
 function bioCardHtml(api, x) {
   const section = api.lifeSection(x.group);
   return `<article class="bio-card" data-bioid="${escapeHtml(x.id)}" role="button" tabindex="0">
-        <div class="bio-body">
-          <p class="meta">${escapeHtml(section?.label || x.group)} · ${escapeHtml(x.tag)} · ${escapeHtml(x.where)}</p>
-          <h3>${escapeHtml(x.it)}</h3>
-          <p class="bio-la">${escapeHtml(x.la)}</p>
-          <p class="bio-look">${escapeHtml(x.look)}</p>
-        </div>
         <div class="bio-pic">
           <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
           <img class="bio-shot" alt="" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         </div>
-        <div class="bio-actions"><span class="btn primary">Guida</span></div>
+        <div class="bio-body">
+          <p class="bio-kicker">${escapeHtml(section?.label || x.group)} · ${escapeHtml(x.where)}</p>
+          <h3>${escapeHtml(x.it)}</h3>
+          <p class="bio-la">${escapeHtml(x.la)}</p>
+          <p class="bio-look">${escapeHtml(x.look)}</p>
+        </div>
       </article>`;
 }
 
 function renderBiology() {
   const api = window.SeaDiveBiology;
   const frag = document.createDocumentFragment();
-  frag.append(topbar("Biologia marina"));
+  frag.append(topbar("Biologia Marina"));
   const sec = document.createElement("section");
   sec.className = "card bio-page";
-  const sections = [["all", "Tutti"], ...(api.LIFE_SECTIONS || []).map((s) => [s.id, s.label])];
+  const sections = [["all", "Tutti", ""], ...(api.LIFE_SECTIONS || []).map((s) => [s.id, s.label, s.emoji])];
   const seas = [
     ["all", "Tutti i mari"],
     ["med", "Mediterraneo"],
@@ -4150,8 +4150,11 @@ function renderBiology() {
     ["alien", "Invasive"],
   ];
   sec.innerHTML = `
-    <h2 class="serif" style="margin:0 0 6px">Guida alla vita marina</h2>
-    <p class="hint">Pesci, flora, coralli, nudibranchi e gli altri gruppi, in Mediterraneo e nel resto dei mari. Apri una specie per la guida: riconoscimento, habitat e note per l'immersione.</p>
+    <header class="bio-head">
+      <p class="bio-kicker">Guida da immersione</p>
+      <h2 class="serif">Biologia Marina</h2>
+      <p class="bio-lead">Pesci, coralli, nudibranchi e gli altri gruppi. Apri una specie per riconoscimento, habitat e note in acqua.</p>
+    </header>
     <div class="bio-search">
       <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nome, gruppo o ambiente" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
       <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
@@ -4180,7 +4183,7 @@ function renderBiology() {
     const rows = api.filterMarineLife(q, group, where);
     const section = group === "all" ? null : api.lifeSection(group);
     blurb.textContent = section?.blurb || "";
-    count.textContent = `${rows.length} specie`;
+    count.textContent = rows.length === 1 ? "1 specie" : `${rows.length} specie`;
     if (!rows.length) {
       list.innerHTML = `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
       return;
@@ -4190,7 +4193,7 @@ function renderBiology() {
         .map((s) => {
           const items = rows.filter((x) => x.group === s.id);
           if (!items.length) return "";
-          return `<h3 class="bio-sec">${s.emoji} ${escapeHtml(s.label)} <span>${items.length}</span></h3>${items.map((x) => bioCardHtml(api, x)).join("")}`;
+          return `<h3 class="bio-sec"><i>${s.emoji}</i><span>${escapeHtml(s.label)}</span><em>${items.length}</em></h3>${items.map((x) => bioCardHtml(api, x)).join("")}`;
         })
         .join("");
     } else {
@@ -4213,11 +4216,11 @@ function renderBiology() {
     e.preventDefault();
     openFromList(card.dataset.bioid);
   };
-  sections.forEach(([id, label]) => {
+  sections.forEach(([id, label, emoji]) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = `chip${bioGroupOn() === id ? " on" : ""}`;
-    b.textContent = label;
+    b.className = `chip bio-chip${bioGroupOn() === id ? " on" : ""}`;
+    b.innerHTML = `${emoji ? `<span class="bio-emoji">${emoji}</span>` : ""}${escapeHtml(label)}`;
     b.onclick = () => {
       view.bioFilter = id;
       groupChips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
@@ -4229,7 +4232,7 @@ function renderBiology() {
   seas.forEach(([id, label]) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = `chip${bioWhereOn() === id ? " on" : ""}`;
+    b.className = `chip bio-sea${bioWhereOn() === id ? " on" : ""}`;
     b.textContent = label;
     b.onclick = () => {
       view.bioWhere = id;
@@ -4264,7 +4267,7 @@ function renderBioGuide() {
   const api = window.SeaDiveBiology;
   const x = api.findMarineLife?.(view.bioId);
   const frag = document.createDocumentFragment();
-  frag.append(topbar("Biologia marina"));
+  frag.append(topbar("Biologia Marina"));
   const sec = document.createElement("section");
   sec.className = "card bio-page";
   if (!x) {
@@ -4272,13 +4275,15 @@ function renderBioGuide() {
   } else {
     const section = api.lifeSection(x.group);
     sec.innerHTML = `
-      <button class="btn ghost" type="button" data-bioback>Torna all'elenco</button>
-      <p class="meta">${escapeHtml(section?.label || "")} · ${escapeHtml(x.tag)} · ${escapeHtml(x.where)}</p>
-      <h2 class="serif">${escapeHtml(x.it)}</h2>
-      <p class="bio-la">${escapeHtml(x.la)}</p>
+      <button class="bio-back" type="button" data-bioback>Elenco</button>
       <div class="bio-hero">
         <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
         <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
+        <div class="bio-hero-caption">
+          <p>${escapeHtml(section?.emoji || "")} ${escapeHtml(section?.label || "")} · ${escapeHtml(x.where)}</p>
+          <h2 class="serif">${escapeHtml(x.it)}</h2>
+          <p class="bio-la">${escapeHtml(x.la)}</p>
+        </div>
       </div>
       <div class="kv">
         <div><b>Taglia</b>${escapeHtml(x.size)}</div>
@@ -4313,13 +4318,15 @@ function bindBioGuide(root, species) {
   api.lifePage(species.la, species.it).then((page) => {
     if (gen !== bioThumbGen || !root.isConnected) return;
     const img = root.querySelector("[data-bioimg]");
-    const src = String(page?.thumb || "").replace(/\/\d+px-/, "/800px-");
+    const src = String(page?.thumb || "");
     if (img && src) {
-      img.src = src;
-      img.onload = () => {
+      const show = () => {
         img.classList.add("on");
         img.closest(".bio-hero")?.classList.add("has-photo");
       };
+      img.onload = show;
+      img.src = src;
+      if (img.complete && img.naturalWidth) show();
     }
     const box = root.querySelector("[data-biowiki]");
     if (!box) return;
