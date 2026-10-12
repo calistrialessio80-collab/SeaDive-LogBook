@@ -601,6 +601,7 @@ body.page-home .section-head h3 { color: #1c2430; }
 .computer-fill { margin: 4px 0 16px; }
 .computer-fill h3 { margin: 0 0 4px; font-size: 22px; }
 .computer-fill .actions { margin-top: 10px; position: relative; }
+.people-block { margin: 16px 0 0; font-size: 18px; }
 .people-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
 .people-row {
   display: flex; justify-content: space-between; align-items: center; gap: 10px;

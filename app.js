@@ -1838,6 +1838,62 @@ async function loadOnlineProfiles() {
   }
 }
 
+let seaDirectory = { at: 0, list: [], error: "", loading: false };
+
+function seaQueryMatch(card, query) {
+  const words = communityWords(query);
+  if (!words.length) return true;
+  const hay = communityWords(`${card.firstName} ${card.lastName} ${card.level || ""} ${card.cert || ""}`);
+  return words.every((word) => hay.some((part) => part === word || part.startsWith(word)));
+}
+
+function localSeaPerson(card) {
+  const who = `${card.firstName || ""} ${card.lastName || ""}`.trim();
+  return (state.people || []).find(
+    (p) => p.role !== "center" && (card.owner && p.remoteOwner === card.owner || (who && samePersonName(p.name, who)))
+  );
+}
+
+async function refreshSeaDirectory() {
+  if (seaDirectory.loading) return seaDirectory;
+  seaDirectory.loading = true;
+  try {
+    const loaded = await loadOnlineProfiles();
+    const mine = await profileOwnerKey().catch(() => "");
+    if (loaded.error) {
+      seaDirectory.error = loaded.error;
+      if (!seaDirectory.at) seaDirectory.at = Date.now();
+    } else {
+      seaDirectory.list = loaded.list.filter((card) => card.owner && card.owner !== mine);
+      seaDirectory.error = "";
+      seaDirectory.at = Date.now();
+    }
+    return seaDirectory;
+  } finally {
+    seaDirectory.loading = false;
+  }
+}
+
+async function connectSeaPerson(cardHit, chat) {
+  const stored = insertOnlineProfile(cardHit);
+  const mine = await profileOwnerKey();
+  try {
+    await ensureCommunityLink(mine, cardHit);
+  } catch {
+    /* la chat riprova il collegamento */
+  }
+  save(state);
+  const person = stored.person;
+  if (chat && person) {
+    view.peopleHint = "";
+    await openPersonChat(person);
+    return;
+  }
+  view.personId = person?.id || null;
+  view.peopleHint = `Aggiunto ${stored.name}. Lo trovi nei contatti e potete scrivervi in chat.`;
+  render();
+}
+
 async function findOnlineProfiles(query) {
   const words = communityWords(query);
   if (words.join("").length < 3) return { error: "short" };
@@ -3175,7 +3231,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 138</p>
+        <p class="hint">Versione 139</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3605,7 +3661,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=138")
+    divelogsPromise = fetch("./divelogs-sites.json?v=139")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5302,11 +5358,13 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Scrivi nome o cognome. Se il profilo è in rete, entrate entrambi in Community e potete scrivervi in chat. Il diario non va in rete.</p>
-    <div class="chips" data-roles></div>
-    <input class="search" data-find placeholder="Nome e cognome" value="${escapeHtml(view.peopleQuery || "")}" />
-    <button class="btn primary btn-block" type="button" data-findremote>Cerca nominativo</button>
+    <p class="hint">Chi usa SeaDive è qui. Cerca nome o cognome, aggiungi e scrivetevi in chat. Niente WhatsApp. Il diario non va in rete.</p>
+    <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
+    <h3 class="serif people-block">Chi usa SeaDive</h3>
+    <div class="people-list" data-sea></div>
+    <h3 class="serif people-block">I tuoi contatti</h3>
+    <div class="chips" data-roles></div>
     <div class="people-list" data-list></div>
     <div class="actions">
       <button class="btn primary" type="button" data-addperson>Aggiungi persona</button>
@@ -5330,9 +5388,31 @@ function renderPeople() {
     roles.append(b);
   });
   const list = card.querySelector("[data-list]");
-  (view.onlineHits || []).forEach((cardHit) => {
+  const sea = card.querySelector("[data-sea]");
+  const seaQuery = String(view.peopleQuery || "").trim();
+  const seaPeople = (seaDirectory.list || []).filter((cardHit) => seaQueryMatch(cardHit, seaQuery));
+  if (!seaDirectory.at && seaDirectory.loading) {
+    const wait = document.createElement("p");
+    wait.className = "hint";
+    wait.textContent = "Carico chi usa SeaDive…";
+    sea.append(wait);
+  } else if (seaDirectory.error && !seaPeople.length) {
+    const wait = document.createElement("p");
+    wait.className = "hint";
+    wait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
+    sea.append(wait);
+  } else if (!seaPeople.length) {
+    const wait = document.createElement("p");
+    wait.className = "hint";
+    wait.textContent = seaQuery
+      ? "Nessuno con questo nome. L'altra persona deve avere nome e cognome nel profilo."
+      : "Ancora nessuno oltre a te. Appena un altro salva nome e cognome, compare qui.";
+    sea.append(wait);
+  }
+  seaPeople.forEach((cardHit) => {
     const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
     const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
+    const known = localSeaPerson(cardHit);
     const row = document.createElement("article");
     row.className = "people-row";
     row.innerHTML = `
@@ -5340,32 +5420,37 @@ function renderPeople() {
         ${avatarHtml(cardHit.portrait, who)}
         <span>
           <strong>${escapeHtml(who)}</strong>
-          <small>In rete${extra ? " · " + escapeHtml(extra) : ""}${cardHit.sign ? " · firma" : ""}</small>
+          <small>Su SeaDive${extra ? " · " + escapeHtml(extra) : ""}${known ? " · già con te" : ""}</small>
         </span>
       </button>
-      ${cardHit.sign ? `<img class="people-sign" alt="" src="${escapeHtml(cardHit.sign)}" />` : ""}
-      <button class="btn primary people-share" type="button">Inserisci</button>
+      <div class="people-actions">
+        <button class="btn ghost people-chat" type="button">Chat</button>
+        ${known ? "" : `<button class="btn primary people-share" type="button">Aggiungi</button>`}
+      </div>
     `;
-    const insert = () => {
-      const stored = insertOnlineProfile(cardHit);
-      save(state);
-      view.onlineHits = [];
-      view.peopleQuery = who;
-      view.personId = stored.person?.id || null;
-      view.peopleHint = cardHit.sign
-        ? `Inserito ${who}. Numero di brevetto e firma entrano nella nuova immersione.`
-        : `Inserito ${who}. Manca la firma sul profilo.`;
-      render();
+    row.querySelector(".people-open").onclick = () => {
+      if (known) {
+        view.personId = known.id;
+        view.peopleHint = "";
+        render();
+        return;
+      }
+      connectSeaPerson(cardHit, false);
     };
-    row.querySelector(".people-open").onclick = insert;
-    row.querySelector(".people-share").onclick = (e) => {
+    row.querySelector(".people-chat").onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      insert();
+      askChatNotice();
+      connectSeaPerson(cardHit, true);
     };
-    list.append(row);
+    row.querySelector(".people-share")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      connectSeaPerson(cardHit, false);
+    });
+    sea.append(row);
   });
-  if (!people.length && !(view.onlineHits || []).length) {
+  if (!people.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
     empty.textContent = q || role !== "all"
@@ -5448,38 +5533,7 @@ function renderPeople() {
     });
   }
   const find = card.querySelector("[data-find]");
-  const findRemote = async () => {
-    const q = find.value.trim();
-    view.peopleQuery = q;
-    view.onlineHits = [];
-    view.personId = null;
-    if (communityWords(q).join("").length < 3) {
-      view.peopleHint = "";
-      render();
-      queueMicrotask(() => document.querySelector("[data-find]")?.focus());
-      return;
-    }
-    view.peopleHint = "Cerco in rete…";
-    render();
-    const box = document.querySelector("[data-find]");
-    const result = await findOnlineProfiles(q);
-    if ((box?.value || "").trim() !== q) return;
-    if (result.hits?.length === 1) {
-      const cardHit = result.hits[0];
-      const stored = insertOnlineProfile(cardHit);
-      save(state);
-      const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
-      view.personId = stored.person?.id || null;
-      view.peopleHint = cardHit.sign
-        ? `Inserito ${who}. Numero di brevetto e firma entrano nella nuova immersione.`
-        : `Inserito ${who}. Manca la firma sul profilo.`;
-    } else if (result.hits?.length > 1) {
-      view.onlineHits = result.hits;
-      view.peopleHint = "Più profili in rete. Tocca Inserisci su quello giusto.";
-    } else {
-      view.peopleHint = communityMissText(result.error);
-    }
-    render();
+  const refocusFind = () => {
     queueMicrotask(() => {
       const again = document.querySelector("[data-find]");
       if (!again) return;
@@ -5491,18 +5545,21 @@ function renderPeople() {
   let peopleSearchTimer = 0;
   find.oninput = () => {
     clearTimeout(peopleSearchTimer);
-    peopleSearchTimer = setTimeout(() => findRemote(), 450);
+    peopleSearchTimer = setTimeout(() => {
+      view.peopleQuery = find.value;
+      view.onlineHits = [];
+      render();
+      refocusFind();
+    }, 180);
   };
   find.onkeydown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      clearTimeout(peopleSearchTimer);
-      findRemote();
-    }
-  };
-  card.querySelector("[data-findremote]").onclick = () => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
     clearTimeout(peopleSearchTimer);
-    findRemote();
+    view.peopleQuery = find.value;
+    view.onlineHits = [];
+    render();
+    refocusFind();
   };
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
@@ -5547,11 +5604,13 @@ function renderPeople() {
   frag.append(card);
   queueMicrotask(() => {
     const stamp = ++communitySyncStamp;
-    syncIncomingLinks()
-      .then((changed) => {
-        if (!changed || stamp !== communitySyncStamp) return;
-        if (view.name !== "people" || view.personId) return;
-        render();
+    const had = seaDirectory.at;
+    const before = (seaDirectory.list || []).map((c) => c.owner).join("|");
+    Promise.all([syncIncomingLinks().catch(() => false), refreshSeaDirectory().catch(() => null)])
+      .then(([changed]) => {
+        if (stamp !== communitySyncStamp || view.name !== "people" || view.personId) return;
+        const after = (seaDirectory.list || []).map((c) => c.owner).join("|");
+        if (changed || !had || before !== after) render();
       })
       .catch(() => {});
   });
@@ -5870,10 +5929,8 @@ function renderProfile() {
     </section>
     <section class="profile-block">
       <h3>La tua firma</h3>
-      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
+      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto, firma e foto si vedono in Community: gli altri ti cercano lì, senza WhatsApp. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
-      <button class="btn primary btn-block" type="button" data-sharecontact>Condividi contatto su WhatsApp</button>
-      <p class="hint" data-sharehint>Nel file vanno nome, cognome, numero di brevetto, firma e la foto. Chi lo riceve, in Community, tocca Ricevi contatto.</p>
     </section>
     <section class="profile-block">
       <h3>Medico e assicurazione</h3>
@@ -5996,24 +6053,6 @@ function renderProfile() {
       ownerSign = v;
     });
   });
-  const shareHint = form.querySelector("[data-sharehint]");
-  form.querySelector("[data-sharecontact]").onclick = async () => {
-    const sent = await shareProfileContact(
-      {
-        name: form.querySelector("[name=name]").value,
-        certNumber: form.querySelector("[name=certNumber]").value,
-        certLevel: form.querySelector("[name=certLevel]").value,
-        portrait,
-      },
-      ownerSign
-    );
-    if (!shareHint) return;
-    if (sent.error === "name") shareHint.textContent = "Scrivi nome e cognome, poi condividi il contatto.";
-    else if (sent.error === "cert") shareHint.textContent = "Scrivi il numero di brevetto, poi condividi il contatto.";
-    else if (sent.error === "sign") shareHint.textContent = "Firma nel riquadro, poi condividi il contatto.";
-    else if (sent.how === "download") shareHint.textContent = "Contatto scaricato. Su WhatsApp allegalo come documento. L'altro, in Community, tocca Ricevi contatto.";
-    else if (sent.ok) shareHint.textContent = "Scegli WhatsApp e invia il file. Chi lo riceve lo apre in Community con Ricevi contatto.";
-  };
   form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
