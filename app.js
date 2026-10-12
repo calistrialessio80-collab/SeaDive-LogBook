@@ -1235,28 +1235,110 @@ async function shareFollowCard() {
   return sharePayloadFile(card, contactFileName({ name: state.profile.name || "", cert: state.profile.certNumber || "" }));
 }
 
+function splitContactName(full) {
+  const name = String(full || "").trim().replace(/\s+/g, " ");
+  const parts = name.split(" ").filter(Boolean);
+  if (!parts.length) return { firstName: "", lastName: "", name: "" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "", name };
+  const particle = (token) => {
+    const raw = token.toLowerCase();
+    const bare = raw.replace(/['’]/g, "");
+    return (
+      bare === "di" || bare === "de" || bare === "del" || bare === "della" || bare === "dello" ||
+      bare === "dei" || bare === "degli" || bare === "delle" || bare === "da" || bare === "dal" ||
+      bare === "dallo" || bare === "dai" || bare === "dagli" || bare === "dalle" ||
+      bare === "van" || bare === "von" || bare === "der" || bare === "den" || bare === "du" ||
+      bare === "le" || bare === "la" || bare === "dos" || bare === "das" || bare === "ten" ||
+      bare === "ter" || bare === "mc" || bare === "mac" || raw.startsWith("d'") || raw.startsWith("d’")
+    );
+  };
+  for (let i = 1; i < parts.length; i++) {
+    if (particle(parts[i])) {
+      return { firstName: parts.slice(0, i).join(" "), lastName: parts.slice(i).join(" "), name };
+    }
+  }
+  if (parts.length === 2) return { firstName: parts[0], lastName: parts[1], name };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" "), name };
+}
+
+function contactImageSign(value) {
+  const sign = String(value || "").trim();
+  if (/^data:image\/(png|jpe?g)\b/i.test(sign)) return sign;
+  if (sign.startsWith("data:image/")) return sign;
+  return "";
+}
+
+function isLogbookExport(data) {
+  if (!data || typeof data !== "object") return false;
+  if (data.kind === "person-follow" || data.kind === "dive-share") return false;
+  if (data.app !== "seadive-logbook") return false;
+  if (!data.profile || typeof data.profile !== "object") return false;
+  if (data.dive && typeof data.dive === "object") return false;
+  return true;
+}
+
+function contactFromLogbook(data) {
+  const profile = data.profile;
+  const full = String(profile.name || "").trim().replace(/\s+/g, " ");
+  const hinted = Array.isArray(data.people)
+    ? data.people.find((p) => {
+        if (!p || p.role === "center") return false;
+        const joined = String(p.name || [p.firstName, p.lastName].filter(Boolean).join(" ")).trim();
+        return samePersonName(joined, full);
+      })
+    : null;
+  const hintFirst = String(hinted?.firstName || "").trim();
+  const hintLast = String(hinted?.lastName || "").trim();
+  const hintJoin = [hintFirst, hintLast].filter(Boolean).join(" ");
+  const trustHint = Boolean(hintJoin && samePersonName(hintJoin, full) && (hintLast.includes(" ") || !hintFirst.includes(" ")));
+  const names = trustHint ? { firstName: hintFirst, lastName: hintLast } : splitContactName(full);
+  if (!names.firstName && !names.lastName) return null;
+  const cert = String(profile.certNumber || profile.cert || "").trim();
+  const level = String(profile.certLevel || profile.level || "").trim();
+  const sign = contactImageSign(profile.sign) || contactImageSign(hinted?.sign);
+  const card = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert,
+  };
+  if (level) card.level = level;
+  if (sign) card.sign = sign;
+  return card;
+}
+
 function parseFollowPayload(text) {
   const clean = String(text || "").replace(/^\uFEFF/, "").trim();
+  const readOne = (raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const sign = contactImageSign(raw.sign);
+    let firstName = String(raw.firstName || "").trim();
+    let lastName = String(raw.lastName || "").trim();
+    if (!firstName && !lastName) {
+      const split = splitContactName(raw.name || "");
+      firstName = split.firstName;
+      lastName = split.lastName;
+    }
+    const one = {
+      firstName,
+      lastName,
+      cert: String(raw.cert || raw.certNumber || "").trim(),
+    };
+    const level = String(raw.level || raw.certLevel || "").trim();
+    if (level) one.level = level;
+    if (sign) one.sign = sign;
+    if (!one.firstName && !one.lastName && !one.cert) return null;
+    return one;
+  };
   const read = (raw) => {
-    const data = JSON.parse(raw);
-    if (data?.kind === "dive-share" || data?.dive) {
+    let data = JSON.parse(raw);
+    if (typeof data === "string") data = JSON.parse(data);
+    if (data?.kind === "dive-share" || (data?.dive && typeof data.dive === "object")) {
       const err = new Error("Questo file è un'immersione. Si riceve solo con Ricevi immersione. Qui passano nome, cognome, brevetto e firma.");
       err.code = "dive-share";
       throw err;
     }
+    if (isLogbookExport(data)) return contactFromLogbook(data);
     if (data?.kind !== "person-follow" || !data.person || typeof data.person !== "object") return null;
-    const readOne = (raw) => {
-      if (!raw || typeof raw !== "object") return null;
-      const sign = typeof raw.sign === "string" && raw.sign.startsWith("data:image") ? raw.sign : "";
-      const one = {
-        firstName: String(raw.firstName || "").trim(),
-        lastName: String(raw.lastName || "").trim(),
-        cert: String(raw.cert || "").trim(),
-      };
-      if (sign) one.sign = sign;
-      if (!one.firstName && !one.lastName && !one.cert) return null;
-      return one;
-    };
     const person = readOne(data.person);
     if (!person) return null;
     const me = readOne(data.me);
@@ -2377,7 +2459,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 113</p>
+        <p class="hint">Versione 114</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
