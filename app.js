@@ -31,6 +31,7 @@ const emptyProfile = () => ({
   recoverEmail: "",
   hrThreshold: "",
   certs: [],
+  sign: "",
 });
 
 const emptyDive = () => ({
@@ -246,13 +247,68 @@ const seed = () => ({
   ],
 });
 
+function personNames(p) {
+  const role = p?.role;
+  let first = String(p?.firstName || "").trim();
+  let last = String(p?.lastName || "").trim();
+  let name = String(p?.name || "").trim().replace(/\s+/g, " ");
+  if (role === "center") return { firstName: "", lastName: "", name };
+  if (!first && !last && name) {
+    const parts = name.split(" ").filter(Boolean);
+    if (parts.length === 1) first = parts[0];
+    else {
+      last = parts.pop();
+      first = parts.join(" ");
+    }
+  }
+  if (!name) name = [first, last].filter(Boolean).join(" ");
+  return { firstName: first, lastName: last, name };
+}
+
+function cleanPerson(p) {
+  if (!p) return null;
+  const role = p.role === "guide" || p.role === "center" ? p.role : "buddy";
+  const names = personNames({ ...p, role });
+  if (!names.name) return null;
+  return {
+    id: String(p.id || uid()),
+    role,
+    name: names.name,
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: String(p.cert || "").trim(),
+    level: String(p.level || "").trim(),
+    lead: String(p.lead || "").trim(),
+    note: String(p.note || "").trim(),
+    following: Boolean(p.following),
+    sign: typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : "",
+  };
+}
+
 function normalizeState(data) {
   const profile = { ...emptyProfile(), ...(data?.profile || {}) };
   if (!Array.isArray(profile.certs)) profile.certs = [];
   const deletedDiveIds = Array.isArray(data?.deletedDiveIds)
     ? data.deletedDiveIds.map(String).filter(Boolean)
     : [];
-  return { profile, dives: Array.isArray(data?.dives) ? data.dives : [], deletedDiveIds };
+  const people = [];
+  const seen = new Set();
+  (Array.isArray(data?.people) ? data.people : []).forEach((raw) => {
+    const p = cleanPerson(raw);
+    if (!p) return;
+    const key = `${p.role}|${p.name.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    people.push(p);
+  });
+  return {
+    profile,
+    dives: Array.isArray(data?.dives) ? data.dives : [],
+    deletedDiveIds,
+    people,
+    peopleSeeded: Boolean(data?.peopleSeeded),
+    peopleBackfilled: Boolean(data?.peopleBackfilled),
+  };
 }
 
 function load() {
@@ -287,6 +343,10 @@ function diveScore(d) {
 function diveTombstoneKeys(d) {
   const keys = [];
   if (d?.id) keys.push(String(d.id));
+  if (d?.shareId) {
+    keys.push("s:" + d.shareId);
+    return keys;
+  }
   const key = window.SeaDiveComputers?.diveKey?.(d) || `${d?.date || ""}|${d?.timeIn || ""}|${Number(d?.maxDepth) || 0}|${Number(d?.bottomTime) || 0}`;
   if (key && key !== "|||0|0" && key !== "||0|0") keys.push("k:" + key);
   return keys;
@@ -295,7 +355,11 @@ function diveTombstoneKeys(d) {
 function diveIsDeleted(d, tombs) {
   if (!d) return false;
   const set = new Set(tombs || []);
-  return diveTombstoneKeys(d).some((k) => set.has(k));
+  if (d.id && set.has(String(d.id))) return true;
+  if (d.shareId && set.has("s:" + d.shareId)) return true;
+  if (d.manual) return false;
+  const key = window.SeaDiveComputers?.diveKey?.(d) || `${d?.date || ""}|${d?.timeIn || ""}|${Number(d?.maxDepth) || 0}|${Number(d?.bottomTime) || 0}`;
+  return Boolean(key) && set.has("k:" + key);
 }
 
 function rememberDeletedDive(d) {
@@ -320,20 +384,35 @@ function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel =
         <p>${escapeHtml(message)}</p>
         <div class="confirm-actions">
           <button type="button" class="btn ghost" data-no>${escapeHtml(cancel)}</button>
-          <button type="button" class="btn danger" data-yes>${escapeHtml(ok)}</button>
+          <button type="button" class="btn danger" data-yes disabled>${escapeHtml(ok)}</button>
         </div>
       </div>
     `;
+    let armed = false;
+    const yes = veil.querySelector("[data-yes]");
     const done = (v) => {
+      if (v && !armed) return;
       veil.remove();
-      resolve(v);
+      resolve(Boolean(v));
     };
     veil.addEventListener("click", (e) => {
+      e.stopPropagation();
       if (e.target === veil) done(false);
     });
-    veil.querySelector("[data-no]").onclick = () => done(false);
-    veil.querySelector("[data-yes]").onclick = () => done(true);
+    veil.querySelector("[data-no]").onclick = (e) => {
+      e.stopPropagation();
+      done(false);
+    };
+    yes.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      done(true);
+    };
     document.body.append(veil);
+    setTimeout(() => {
+      armed = true;
+      yes.disabled = false;
+    }, 450);
   });
 }
 
@@ -348,11 +427,71 @@ function askDeleteDive(d) {
   });
 }
 
-function removeDive(d) {
-  if (!d) return;
+async function removePerson(person) {
+  if (!person) return false;
+  const ok = await askConfirm({
+    title: "Elimina contatto",
+    message: `Vuoi eliminare ${person.name || "questo contatto"} dalla Community? Il nome resta sulle schede già scritte.`,
+    ok: "Elimina",
+    cancel: "Annulla",
+  });
+  if (!ok) return false;
+  state.people = (state.people || []).filter((p) => p.id !== person.id);
+  save(state);
+  return true;
+}
+
+const DIVE_CONTACT = {
+  buddy: { title: "il buddy", name: "buddyName", extra: "buddyCert", id: "buddyId", sign: "buddySign", meta: "buddy" },
+  guide: { title: "la guida", name: "guideName", extra: "guideCert", id: "guideId", sign: "guideSign", meta: "guide" },
+  center: { title: "il diving", name: "centerName", extra: "centerLead", id: "centerId", sign: "centerSign", meta: "center" },
+};
+
+function diveContactPresent(dive, role) {
+  const spec = DIVE_CONTACT[role];
+  if (!spec || !dive) return false;
+  const sign = dive[spec.sign];
+  return Boolean(
+    String(dive[spec.name] || "").trim() ||
+      String(dive[spec.extra] || "").trim() ||
+      (typeof sign === "string" && sign.startsWith("data:image"))
+  );
+}
+
+function clearDiveContact(dive, role) {
+  const spec = DIVE_CONTACT[role];
+  if (!spec || !dive) return;
+  dive[spec.name] = "";
+  dive[spec.extra] = "";
+  dive[spec.id] = "";
+  dive[spec.sign] = "";
+  dive.signSkipped = { ...(dive.signSkipped || {}), [role]: true };
+  if (dive.sigMeta) dive.sigMeta[spec.meta] = null;
+}
+
+function dropContactButton(role, dive) {
+  const label = role === "buddy" ? "Togli buddy" : role === "guide" ? "Togli guida" : "Togli diving";
+  return `<button class="btn danger btn-block contact-drop" type="button" data-dropcontact="${role}" ${diveContactPresent(dive, role) ? "" : "hidden"}>${label}</button>`;
+}
+
+async function askDropDiveContact(dive, role) {
+  const spec = DIVE_CONTACT[role];
+  const who = String(dive?.[spec?.name] || "").trim() || spec?.title || "questo contatto";
+  return askConfirm({
+    title: "Togli contatto",
+    message: `Vuoi togliere ${who} da questa immersione? Resta in Community.`,
+    ok: "Togli",
+    cancel: "Annulla",
+  });
+}
+
+async function removeDive(d) {
+  if (!d) return false;
+  if (!(await askDeleteDive(d))) return false;
   rememberDeletedDive(d);
   state.dives = (state.dives || []).filter((x) => x.id !== d.id && !diveIsDeleted(x, state.deletedDiveIds));
   save(state);
+  return true;
 }
 
 function mergeDiveLists(a, b, tombs) {
@@ -365,9 +504,13 @@ function mergeDiveLists(a, b, tombs) {
   candidates.forEach((d) => {
     const key = api?.diveKey?.(d) || `${d.date}|${d.timeIn}|${d.maxDepth}`;
     const blank = key === "||0|0" || key === "|||0|0";
-    const i = groups.findIndex(
-      (x) => (d.id && x.id === d.id) || (!blank && (api?.diveKey?.(x) || "") === key)
-    );
+    const i = groups.findIndex((x) => {
+      if (d.id && x.id === d.id) return true;
+      const shareA = d.shareId || "";
+      const shareB = x.shareId || "";
+      if (shareA || shareB) return Boolean(shareA) && shareA === shareB;
+      return !blank && (api?.diveKey?.(x) || `${x.date}|${x.timeIn}|${x.maxDepth}`) === key;
+    });
     if (i < 0) groups.push(d);
     else if (diveScore(d) >= diveScore(groups[i])) groups[i] = d;
   });
@@ -402,7 +545,39 @@ function mergeVaults(local, cloud) {
   if (!localReal && !cloudReal) dives = L.dives.length ? L.dives : C.dives;
   else dives = mergeDiveLists(L.dives, C.dives, deletedDiveIds);
   dives = (dives || []).filter((d) => !diveIsDeleted(d, deletedDiveIds));
-  return { profile: mergeProfiles(L.profile, C.profile), dives, deletedDiveIds };
+  return {
+    profile: mergeProfiles(L.profile, C.profile),
+    dives,
+    deletedDiveIds,
+    people: mergePeople(L.people, C.people),
+    peopleSeeded: Boolean(L.peopleSeeded || C.peopleSeeded),
+    peopleBackfilled: Boolean(L.peopleBackfilled || C.peopleBackfilled),
+  };
+}
+
+function mergePeople(a, b) {
+  const out = [];
+  const index = new Map();
+  [...(a || []), ...(b || [])].forEach((raw) => {
+    const p = cleanPerson(raw);
+    if (!p) return;
+    const key = `${p.role}|${p.name.toLowerCase()}`;
+    const prev = index.get(key);
+    if (!prev) {
+      index.set(key, p);
+      out.push(p);
+      return;
+    }
+    if (!prev.cert && p.cert) prev.cert = p.cert;
+    if (!prev.level && p.level) prev.level = p.level;
+    if (!prev.lead && p.lead) prev.lead = p.lead;
+    if (!prev.note && p.note) prev.note = p.note;
+    if (!prev.sign && p.sign) prev.sign = p.sign;
+    if (!prev.firstName && p.firstName) prev.firstName = p.firstName;
+    if (!prev.lastName && p.lastName) prev.lastName = p.lastName;
+    if (p.following) prev.following = true;
+  });
+  return out;
 }
 
 function openVault() {
@@ -456,6 +631,9 @@ function persistLocal(data) {
       const slim = {
         profile: data.profile,
         deletedDiveIds: data.deletedDiveIds || [],
+        people: data.people || [],
+        peopleSeeded: Boolean(data.peopleSeeded),
+        peopleBackfilled: Boolean(data.peopleBackfilled),
         dives: (data.dives || []).map((d) => {
           const copy = { ...d };
           if (copy.photo && String(copy.photo).length > 8000) copy.photo = "";
@@ -613,6 +791,8 @@ function backupPayload() {
     profile: state.profile,
     dives: state.dives,
     deletedDiveIds: state.deletedDiveIds || [],
+    people: state.people || [],
+    peopleSeeded: Boolean(state.peopleSeeded),
     sites: window.SeaDiveSites?.loadCustomSites?.() || [],
     brand,
   };
@@ -621,6 +801,946 @@ function backupPayload() {
 function parseBackup(data) {
   if (!data || typeof data !== "object") throw new Error("invalid");
   return normalizeState(data);
+}
+
+function personKey(role, name) {
+  return `${role}|${String(name || "").trim().toLowerCase().replace(/\s+/g, " ")}`;
+}
+
+function roleLabel(role) {
+  if (role === "guide") return "Istruttore";
+  if (role === "center") return "Diving";
+  return "Buddy";
+}
+
+function upsertPerson(partial) {
+  const name = String(partial?.name || "").trim().replace(/\s+/g, " ");
+  if (!name) return null;
+  const role = partial.role === "guide" || partial.role === "center" ? partial.role : "buddy";
+  if (!Array.isArray(state.people)) state.people = [];
+  let found = partial.id ? state.people.find((p) => p.id === partial.id) : null;
+  const key = personKey(role, name);
+  if (!found) found = state.people.find((p) => personKey(p.role, p.name) === key);
+  if (!found) {
+    found = { id: partial.id || uid(), role, name, cert: "", lead: "", note: "" };
+    state.people.push(found);
+  }
+  const twin = state.people.find((p) => p !== found && personKey(p.role, p.name) === key);
+  found.role = role;
+  found.name = name;
+  const names = personNames({ ...found, ...partial, role, name });
+  found.firstName = names.firstName;
+  found.lastName = names.lastName;
+  found.name = names.name || name;
+  if (String(partial.cert || "").trim()) found.cert = String(partial.cert).trim();
+  if (typeof partial.level === "string") found.level = partial.level.trim();
+  if (String(partial.lead || "").trim()) found.lead = String(partial.lead).trim();
+  if (partial.note != null) found.note = String(partial.note).trim();
+  if (partial.following === true) found.following = true;
+  if (partial.following === false) found.following = false;
+  if (typeof partial.sign === "string") found.sign = partial.sign.startsWith("data:image") ? partial.sign : "";
+  if (twin) {
+    if (!found.cert && twin.cert) found.cert = twin.cert;
+    if (!found.level && twin.level) found.level = twin.level;
+    if (!found.lead && twin.lead) found.lead = twin.lead;
+    if (!found.note && twin.note) found.note = twin.note;
+    if (!found.sign && twin.sign) found.sign = twin.sign;
+    (state.dives || []).forEach((d) => {
+      if (d.buddyId === twin.id) d.buddyId = found.id;
+      if (d.guideId === twin.id) d.guideId = found.id;
+      if (d.centerId === twin.id) d.centerId = found.id;
+    });
+    state.people = state.people.filter((p) => p !== twin);
+  }
+  return found;
+}
+
+function linkPeopleOnDive(dive) {
+  const buddy = upsertPerson({ role: "buddy", name: dive.buddyName, cert: dive.buddyCert });
+  const guide = upsertPerson({ role: "guide", name: dive.guideName, cert: dive.guideCert });
+  const center = upsertPerson({ role: "center", name: dive.centerName, lead: dive.centerLead });
+  dive.buddyId = buddy?.id || "";
+  dive.guideId = guide?.id || "";
+  dive.centerId = center?.id || "";
+  if (buddy && !(typeof dive.buddySign === "string" && dive.buddySign.startsWith("data:image"))) {
+    const sign = personKnownSign(buddy);
+    if (sign) dive.buddySign = sign;
+  }
+  if (guide && !(typeof dive.guideSign === "string" && dive.guideSign.startsWith("data:image"))) {
+    const sign = personKnownSign(guide);
+    if (sign) dive.guideSign = sign;
+  }
+}
+
+function seedPeopleOnce() {
+  if (state.peopleSeeded) return false;
+  if (!Array.isArray(state.people)) state.people = [];
+  (state.dives || []).forEach((d) => {
+    upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert });
+    upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert });
+    upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead });
+  });
+  state.peopleSeeded = true;
+  return true;
+}
+
+function adoptSessionName() {
+  if (String(state.profile?.name || "").trim()) return false;
+  const sessionName = String(loadSession()?.name || "").trim().replace(/\s+/g, " ");
+  if (!sessionName) return false;
+  state.profile.name = sessionName;
+  return true;
+}
+
+function backfillPeopleOnce() {
+  if (state.peopleBackfilled) return ensureOwnerPerson();
+  if (!Array.isArray(state.people)) state.people = [];
+  (state.dives || []).forEach((d) => {
+    if (String(d.buddyName || "").trim() && !state.people.some((p) => p.role === "buddy" && samePersonName(p.name, d.buddyName))) {
+      upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert || "" });
+    }
+    if (String(d.guideName || "").trim() && !state.people.some((p) => p.role === "guide" && samePersonName(p.name, d.guideName))) {
+      upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert || "" });
+    }
+    if (String(d.centerName || "").trim() && !state.people.some((p) => p.role === "center" && samePersonName(p.name, d.centerName))) {
+      upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead || "" });
+    }
+  });
+  state.peopleBackfilled = true;
+  ensureOwnerPerson();
+  return true;
+}
+
+function ensureOwnerPerson() {
+  const name = String(state.profile?.name || "").trim().replace(/\s+/g, " ");
+  if (!name) return false;
+  if (!Array.isArray(state.people)) state.people = [];
+  const sign = profileSignImage();
+  const mine = state.people.find((p) => p.role !== "center" && samePersonName(p.name, name));
+  if (!mine) {
+    const names = personNames({ name });
+    upsertPerson({
+      role: "buddy",
+      name,
+      firstName: names.firstName,
+      lastName: names.lastName,
+      cert: state.profile.certNumber || "",
+      sign,
+    });
+    return true;
+  }
+  if (sign && mine.sign !== sign && !mine.sign) {
+    mine.sign = sign;
+    return true;
+  }
+  return false;
+}
+
+function divesForPerson(p) {
+  if (!p) return [];
+  const key = personKey(p.role, p.name);
+  return (state.dives || []).filter((d) => {
+    if (p.role === "buddy") return d.buddyId === p.id || personKey("buddy", d.buddyName) === key;
+    if (p.role === "guide") return d.guideId === p.id || personKey("guide", d.guideName) === key;
+    return d.centerId === p.id || personKey("center", d.centerName) === key;
+  });
+}
+
+function stampPersonSign(person) {
+  if (!person || person.role === "center") return;
+  const sign = personKnownSign(person);
+  if (!sign) return;
+  const signKey = person.role === "guide" ? "guideSign" : "buddySign";
+  const nameKey = person.role === "guide" ? "guideName" : "buddyName";
+  const idKey = person.role === "guide" ? "guideId" : "buddyId";
+  (state.dives || []).forEach((d) => {
+    if (d[idKey] !== person.id && !samePersonName(d[nameKey], person.name)) return;
+    if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
+    d[signKey] = sign;
+  });
+}
+
+function applyPersonOntoDives(before, person) {
+  if (!before || before.role !== person.role) return;
+  const oldKey = personKey(before.role, before.name);
+  (state.dives || []).forEach((d) => {
+    if (person.role === "buddy" && (d.buddyId === before.id || personKey("buddy", d.buddyName) === oldKey)) {
+      d.buddyId = person.id;
+      d.buddyName = person.name;
+      d.buddyCert = person.cert || "";
+      const sign = personKnownSign(person);
+      if (sign && !(typeof d.buddySign === "string" && d.buddySign.startsWith("data:image"))) d.buddySign = sign;
+    }
+    if (person.role === "guide" && (d.guideId === before.id || personKey("guide", d.guideName) === oldKey)) {
+      d.guideId = person.id;
+      d.guideName = person.name;
+      d.guideCert = person.cert || "";
+      const sign = personKnownSign(person);
+      if (sign && !(typeof d.guideSign === "string" && d.guideSign.startsWith("data:image"))) d.guideSign = sign;
+    }
+    if (person.role === "center" && (d.centerId === before.id || personKey("center", d.centerName) === oldKey)) {
+      d.centerId = person.id;
+      d.centerName = person.name;
+      d.centerLead = person.lead || "";
+    }
+  });
+}
+
+function shareDiveFilename(d) {
+  const site = String(d?.site || "immersione")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32) || "immersione";
+  return `seadive-${site}-${d?.date || "data"}.json`;
+}
+
+function sharedDiveCopy(d) {
+  const copy = { ...d };
+  ["id", "number", "photo", "buddyId", "guideId", "centerId", "signSkipped"].forEach((k) => delete copy[k]);
+  ["buddySign", "guideSign", "centerSign"].forEach((k) => {
+    if (typeof copy[k] !== "string" || !copy[k].startsWith("data:image")) delete copy[k];
+  });
+  if (copy.sigMeta && typeof copy.sigMeta === "object") {
+    copy.sigMeta = {
+      buddy: copy.sigMeta.buddy || null,
+      guide: copy.sigMeta.guide || null,
+      center: copy.sigMeta.center || null,
+    };
+  } else delete copy.sigMeta;
+  if (copy.computerLog && typeof copy.computerLog === "object") {
+    const log = { ...copy.computerLog };
+    delete log.all;
+    copy.computerLog = log;
+  }
+  return copy;
+}
+
+function keepSharedSigns(dive) {
+  const next = { ...dive };
+  ["buddySign", "guideSign", "centerSign"].forEach((k) => {
+    next[k] = typeof next[k] === "string" && next[k].startsWith("data:image") ? next[k] : "";
+  });
+  const meta = next.sigMeta && typeof next.sigMeta === "object" ? next.sigMeta : {};
+  next.sigMeta = {
+    buddy: meta.buddy || null,
+    guide: meta.guide || null,
+    center: meta.center || null,
+  };
+  return next;
+}
+
+async function shareOneDive(d) {
+  const shareId = uid();
+  const payload = {
+    app: "seadive-logbook",
+    kind: "dive-share",
+    version: 1,
+    shareId,
+    sharedAt: new Date().toISOString(),
+    from: {
+      name: state.profile.name || "",
+      cert: [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" "),
+    },
+    dive: { ...sharedDiveCopy(d), shareId },
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "text/plain" });
+  const file = new File([blob], shareDiveFilename(d), { type: "text/plain" });
+  try {
+    if (navigator.share) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+  }
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = shareDiveFilename(d);
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function parseSharedPayload(text) {
+  const clean = String(text || "").replace(/^\uFEFF/, "").trim();
+  const tryParse = (raw) => {
+    const data = JSON.parse(raw);
+    if (data?.kind === "person-follow") {
+      const err = new Error("Questo file è un contatto: contiene nome, cognome, brevetto e firma. Aprilo con Ricevi contatto.");
+      err.code = "person-follow";
+      throw err;
+    }
+    if (data?.kind === "dive-share" && data.dive && typeof data.dive === "object") return data;
+    if (data?.dive && typeof data.dive === "object" && (data.app === "seadive-logbook" || data.site || data.dive.site)) return data;
+    return null;
+  };
+  try {
+    const direct = tryParse(clean);
+    if (direct) return direct;
+  } catch (err) {
+    if (err?.code === "person-follow") throw err;
+    /* il telefono a volte aggiunge testo intorno al file */
+  }
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const wrapped = tryParse(clean.slice(start, end + 1));
+      if (wrapped) return wrapped;
+    } catch (err) {
+      if (err?.code === "person-follow") throw err;
+      /* testo intorno al file, ma il JSON interno non è una scheda */
+    }
+  }
+  throw new Error("Questo file non è un'immersione condivisa. Scegli il file SeaDive appena condiviso.");
+}
+
+async function readSharedText(file) {
+  try {
+    const text = await file.text();
+    if (String(text || "").trim()) return text;
+  } catch {
+    /* alcuni telefoni non espongono il testo diretto */
+  }
+  const buf = await file.arrayBuffer();
+  return new TextDecoder("utf-8", { fatal: false }).decode(buf);
+}
+
+async function importSharedFile(file) {
+  const data = parseSharedPayload(await readSharedText(file));
+  const shareId = String(data.shareId || data.dive.shareId || "");
+  const signed = keepSharedSigns(data.dive);
+  if (shareId) {
+    const already = (state.dives || []).find((d) => d.shareId === shareId);
+    if (already) {
+      already.buddySign = signed.buddySign;
+      already.guideSign = signed.guideSign;
+      already.centerSign = signed.centerSign;
+      already.sigMeta = signed.sigMeta;
+      save(state);
+      return already;
+    }
+  }
+  const dive = {
+    ...emptyDive(),
+    ...data.dive,
+    id: uid(),
+    shareId: shareId || uid(),
+    number: nextNumber(),
+    photo: "",
+    buddySign: signed.buddySign,
+    guideSign: signed.guideSign,
+    centerSign: signed.centerSign,
+    sigMeta: signed.sigMeta,
+  };
+  delete dive.hadDeco;
+  ensureCircuit(dive);
+  if (data.from?.name) upsertPerson({ role: "buddy", name: data.from.name, cert: data.from.cert || "" });
+  linkPeopleOnDive(dive);
+  state.dives.push(dive);
+  save(state);
+  return dive;
+}
+
+function personShareCard(person) {
+  const names = personNames(person || {});
+  const sign = personKnownSign(person);
+  const body = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: String(person?.cert || "").trim(),
+  };
+  if (sign) body.sign = sign;
+  return {
+    app: "seadive-logbook",
+    kind: "person-follow",
+    version: 1,
+    sharedAt: new Date().toISOString(),
+    person: body,
+  };
+}
+
+function myIdentityCard() {
+  const names = personNames({ name: state.profile.name || "" });
+  const sign = profileSignImage();
+  const body = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: String(state.profile.certNumber || "").trim(),
+  };
+  if (sign) body.sign = sign;
+  return body;
+}
+
+function withMyFollow(card) {
+  const me = myIdentityCard();
+  const mine = personNameKey([me.firstName, me.lastName].filter(Boolean).join(" "));
+  const theirs = personNameKey([card.person.firstName, card.person.lastName].filter(Boolean).join(" "));
+  if ((me.firstName || me.lastName) && mine !== theirs) card.me = me;
+  return card;
+}
+
+async function sharePayloadFile(card, filename) {
+  const blob = new Blob([JSON.stringify(card, null, 2)], { type: "text/plain" });
+  const file = new File([blob], filename, { type: "text/plain" });
+  try {
+    if (navigator.share) {
+      await navigator.share({ files: [file] });
+      return true;
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return false;
+  }
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return true;
+}
+
+function contactFileName(person) {
+  const names = personNames(person || {});
+  const who = (names.lastName || names.firstName || "contatto")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 24) || "contatto";
+  return `seadive-contatto-${who}.json`;
+}
+
+async function sharePersonCard(person) {
+  const card = withMyFollow(personShareCard(person));
+  if (!card.person.firstName && !card.person.lastName && !card.person.cert) {
+    alert("Scrivi nome e numero di brevetto, poi condividi.");
+    return false;
+  }
+  return sharePayloadFile(card, contactFileName(person));
+}
+
+async function shareProfileContact(profile, sign) {
+  const names = personNames({ name: profile?.name || "" });
+  if (!names.firstName || !names.lastName) return { error: "name" };
+  const cert = String(profile?.certNumber || "").trim();
+  if (!cert) return { error: "cert" };
+  const image = typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+  if (!image) return { error: "sign" };
+  const shrunk = await shrinkSign(image);
+  const body = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert,
+  };
+  const level = String(profile?.certLevel || "").trim();
+  if (level) body.level = level;
+  body.sign = shrunk || image;
+  const card = {
+    app: "seadive-logbook",
+    kind: "person-follow",
+    version: 1,
+    sharedAt: new Date().toISOString(),
+    person: body,
+  };
+  const filename = contactFileName({ name: names.name });
+  const blob = new Blob([JSON.stringify(card, null, 2)], { type: "text/plain" });
+  const file = new File([blob], filename, { type: "text/plain" });
+  const text = `Contatto SeaDive di ${names.name}. In Community tocca Ricevi contatto e scegli questo file: dentro ci sono nome, cognome, numero di brevetto e firma.`;
+  try {
+    const payload = { files: [file], title: `Contatto ${names.name}`, text };
+    if (navigator.canShare?.(payload) || navigator.share) {
+      await navigator.share(payload);
+      return { ok: true, how: "shared" };
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return { ok: false, how: "abort" };
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+  return { ok: true, how: "download" };
+}
+
+async function shareFollowCard() {
+  const card = withMyFollow(personShareCard({
+    name: state.profile.name || "",
+    cert: state.profile.certNumber || "",
+  }));
+  if (!card.person.firstName && !card.person.lastName) {
+    alert("Scrivi nome e cognome nel profilo, poi segui. Nel file vanno nome, cognome, brevetto e firma.");
+    return false;
+  }
+  return sharePayloadFile(card, contactFileName({ name: state.profile.name || "", cert: state.profile.certNumber || "" }));
+}
+
+function splitContactName(full) {
+  const name = String(full || "").trim().replace(/\s+/g, " ");
+  const parts = name.split(" ").filter(Boolean);
+  if (!parts.length) return { firstName: "", lastName: "", name: "" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "", name };
+  const particle = (token) => {
+    const raw = token.toLowerCase();
+    const bare = raw.replace(/['’]/g, "");
+    return (
+      bare === "di" || bare === "de" || bare === "del" || bare === "della" || bare === "dello" ||
+      bare === "dei" || bare === "degli" || bare === "delle" || bare === "da" || bare === "dal" ||
+      bare === "dallo" || bare === "dai" || bare === "dagli" || bare === "dalle" ||
+      bare === "van" || bare === "von" || bare === "der" || bare === "den" || bare === "du" ||
+      bare === "le" || bare === "la" || bare === "dos" || bare === "das" || bare === "ten" ||
+      bare === "ter" || bare === "mc" || bare === "mac" || raw.startsWith("d'") || raw.startsWith("d’")
+    );
+  };
+  for (let i = 1; i < parts.length; i++) {
+    if (particle(parts[i])) {
+      return { firstName: parts.slice(0, i).join(" "), lastName: parts.slice(i).join(" "), name };
+    }
+  }
+  if (parts.length === 2) return { firstName: parts[0], lastName: parts[1], name };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" "), name };
+}
+
+function contactImageSign(value) {
+  const sign = String(value || "").trim();
+  if (/^data:image\/(png|jpe?g)\b/i.test(sign)) return sign;
+  if (sign.startsWith("data:image/")) return sign;
+  return "";
+}
+
+function isLogbookExport(data) {
+  if (!data || typeof data !== "object") return false;
+  if (data.kind === "person-follow" || data.kind === "dive-share") return false;
+  if (data.app !== "seadive-logbook") return false;
+  if (!data.profile || typeof data.profile !== "object") return false;
+  if (data.dive && typeof data.dive === "object") return false;
+  return true;
+}
+
+function contactFromLogbook(data) {
+  const profile = data.profile;
+  const full = String(profile.name || "").trim().replace(/\s+/g, " ");
+  const hinted = Array.isArray(data.people)
+    ? data.people.find((p) => {
+        if (!p || p.role === "center") return false;
+        const joined = String(p.name || [p.firstName, p.lastName].filter(Boolean).join(" ")).trim();
+        return samePersonName(joined, full);
+      })
+    : null;
+  const hintFirst = String(hinted?.firstName || "").trim();
+  const hintLast = String(hinted?.lastName || "").trim();
+  const hintJoin = [hintFirst, hintLast].filter(Boolean).join(" ");
+  const trustHint = Boolean(hintJoin && samePersonName(hintJoin, full) && (hintLast.includes(" ") || !hintFirst.includes(" ")));
+  const names = trustHint ? { firstName: hintFirst, lastName: hintLast } : splitContactName(full);
+  if (!names.firstName && !names.lastName) return null;
+  const cert = String(profile.certNumber || profile.cert || "").trim();
+  const level = String(profile.certLevel || profile.level || "").trim();
+  const sign = contactImageSign(profile.sign) || contactImageSign(hinted?.sign);
+  const card = {
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert,
+  };
+  if (level) card.level = level;
+  if (sign) card.sign = sign;
+  return card;
+}
+
+function parseFollowPayload(text) {
+  const clean = String(text || "").replace(/^\uFEFF/, "").trim();
+  const readOne = (raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const sign = contactImageSign(raw.sign);
+    let firstName = String(raw.firstName || "").trim();
+    let lastName = String(raw.lastName || "").trim();
+    if (!firstName && !lastName) {
+      const split = splitContactName(raw.name || "");
+      firstName = split.firstName;
+      lastName = split.lastName;
+    }
+    const one = {
+      firstName,
+      lastName,
+      cert: String(raw.cert || raw.certNumber || "").trim(),
+    };
+    const level = String(raw.level || raw.certLevel || "").trim();
+    if (level) one.level = level;
+    if (sign) one.sign = sign;
+    if (!one.firstName && !one.lastName && !one.cert) return null;
+    return one;
+  };
+  const read = (raw) => {
+    let data = JSON.parse(raw);
+    if (typeof data === "string") data = JSON.parse(data);
+    if (data?.kind === "dive-share" || (data?.dive && typeof data.dive === "object")) {
+      const err = new Error("Questo file è un'immersione. Si riceve solo con Ricevi immersione. Qui passano nome, cognome, brevetto e firma.");
+      err.code = "dive-share";
+      throw err;
+    }
+    if (isLogbookExport(data)) return contactFromLogbook(data);
+    if (data?.kind !== "person-follow" || !data.person || typeof data.person !== "object") return null;
+    const person = readOne(data.person);
+    if (!person) return null;
+    const me = readOne(data.me);
+    if (me) person.me = me;
+    return person;
+  };
+  const tryRaw = (raw) => {
+    try {
+      return read(raw);
+    } catch (err) {
+      if (err?.code === "dive-share") throw err;
+      return null;
+    }
+  };
+  let card = tryRaw(clean);
+  if (!card) {
+    const start = clean.indexOf("{");
+    const end = clean.lastIndexOf("}");
+    if (start >= 0 && end > start) card = tryRaw(clean.slice(start, end + 1));
+  }
+  if (!card || (!card.firstName && !card.lastName)) {
+    throw new Error("Questo file non è un contatto SeaDive. Servono nome, cognome e numero di brevetto.");
+  }
+  return card;
+}
+
+function findFollowMatch(card) {
+  const full = [card.firstName, card.lastName].filter(Boolean).join(" ").toLowerCase();
+  return (state.people || []).find((p) => {
+    if (p.role === "center") return false;
+    if (card.cert && p.cert && p.cert.toLowerCase() === card.cert.toLowerCase()) return true;
+    return full && personNames(p).name.toLowerCase() === full;
+  }) || null;
+}
+
+async function importFollowFile(file) {
+  const card = parseFollowPayload(await readSharedText(file));
+  const main = storeFollowedPerson(card, "buddy");
+  if (card.me) storeFollowedPerson(card.me, "buddy");
+  save(state);
+  return main;
+}
+
+function storeFollowedPerson(card, role) {
+  const name = [card.firstName, card.lastName].filter(Boolean).join(" ");
+  const existing = findFollowMatch(card);
+  const payload = {
+    id: existing?.id,
+    role: existing?.role || role || "buddy",
+    name,
+    firstName: card.firstName,
+    lastName: card.lastName,
+    cert: card.cert,
+    following: true,
+  };
+  if (card.level) payload.level = card.level;
+  if (card.sign) payload.sign = card.sign;
+  const before = existing ? { ...existing } : null;
+  const person = upsertPerson(payload);
+  if (before && person) applyPersonOntoDives(before, person);
+  if (person) stampPersonSign(person);
+  return { person, created: !existing, name, card };
+}
+
+const COMMUNITY_API = "https://crudcrud.com/api/4323695fdbb14e2381719f8c374484fc/profiles";
+
+function communityWords(name) {
+  return personNameKey(name)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 2);
+}
+
+function communityKey(name) {
+  const words = communityWords(name).slice().sort();
+  if (words.length < 2) return "";
+  return words.join("-").slice(0, 80);
+}
+
+function communityCardFromRow(data) {
+  const firstName = String(data?.firstName || "").trim();
+  const lastName = String(data?.lastName || "").trim();
+  const cert = String(data?.cert || "").trim();
+  const level = String(data?.level || "").trim();
+  if (!firstName || !lastName) return null;
+  const card = {
+    firstName,
+    lastName,
+    cert,
+    owner: String(data?.owner || ""),
+    id: String(data?._id || ""),
+  };
+  if (level) card.level = level;
+  if (typeof data?.sign === "string" && data.sign.startsWith("data:image")) card.sign = data.sign;
+  return card;
+}
+
+async function profileOwnerKey() {
+  const sub = String(loadSession()?.sub || "");
+  if (sub && crypto?.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`seadive|${sub}`));
+    return Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  }
+  const stored = localStorage.getItem("seadive-community-owner");
+  if (stored) return stored;
+  const id = uid().replace(/-/g, "");
+  localStorage.setItem("seadive-community-owner", id);
+  return id;
+}
+
+function trimSign(dataUrl) {
+  return new Promise((resolve) => {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve(dataUrl || "");
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) return resolve(dataUrl);
+      const src = document.createElement("canvas");
+      src.width = w;
+      src.height = h;
+      const ctx = src.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      let pixels;
+      try {
+        pixels = ctx.getImageData(0, 0, w, h).data;
+      } catch {
+        return resolve(dataUrl);
+      }
+      let minX = w;
+      let minY = h;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (pixels[i + 3] < 24) continue;
+          if (pixels[i] > 242 && pixels[i + 1] > 242 && pixels[i + 2] > 242) continue;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+      if (maxX < 0) return resolve("");
+      const padX = Math.max(12, Math.round(w * 0.02));
+      const padY = Math.max(6, Math.round(h * 0.015));
+      minX = Math.max(0, minX - padX);
+      minY = Math.max(0, minY - padY);
+      maxX = Math.min(w - 1, maxX + padX);
+      maxY = Math.min(h - 1, maxY + padY);
+      const cw = maxX - minX + 1;
+      const ch = maxY - minY + 1;
+      if (cw > w * 0.92 && ch > h * 0.92) return resolve(dataUrl);
+      const out = document.createElement("canvas");
+      out.width = cw;
+      out.height = ch;
+      const octx = out.getContext("2d");
+      octx.drawImage(src, minX, minY, cw, ch, 0, 0, cw, ch);
+      const cut = octx.getImageData(0, 0, cw, ch);
+      for (let i = 0; i < cut.data.length; i += 4) {
+        if (cut.data[i] > 242 && cut.data[i + 1] > 242 && cut.data[i + 2] > 242) cut.data[i + 3] = 0;
+      }
+      octx.putImageData(cut, 0, 0);
+      resolve(out.toDataURL("image/png"));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+function shrinkSign(dataUrl) {
+  return new Promise((resolve) => {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve("");
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 420;
+      const maxH = 140;
+      const scale = Math.min(1, maxW / Math.max(img.width, 1), maxH / Math.max(img.height, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      let quality = 0.62;
+      let out = canvas.toDataURL("image/jpeg", quality);
+      while (out.length > 11000 && quality > 0.28) {
+        quality -= 0.08;
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out.startsWith("data:image") && out.length <= 12000 ? out : "");
+    };
+    img.onerror = () => resolve("");
+    img.src = dataUrl;
+  });
+}
+
+async function loadOnlineProfiles() {
+  let res;
+  try {
+    res = await fetch(COMMUNITY_API, { cache: "no-store" });
+  } catch {
+    return { error: "network" };
+  }
+  if (!res.ok) return { error: "network" };
+  try {
+    const list = await res.json();
+    if (!Array.isArray(list)) return { error: "network" };
+    return {
+      list: list
+        .map((row) => {
+          const card = communityCardFromRow(row);
+          if (!card) return null;
+          card.key = String(row?.key || "");
+          return card;
+        })
+        .filter(Boolean),
+    };
+  } catch {
+    return { error: "network" };
+  }
+}
+
+async function findOnlineProfiles(query) {
+  const words = communityWords(query);
+  if (words.join("").length < 3) return { error: "short" };
+  const loaded = await loadOnlineProfiles();
+  if (loaded.error) return loaded;
+  const hits = loaded.list.filter((card) => {
+    const hay = communityWords(`${card.firstName} ${card.lastName}`);
+    return words.every((word) => hay.some((part) => part === word || part.startsWith(word)));
+  });
+  if (!hits.length) return { error: "missing" };
+  return { hits };
+}
+
+async function readCommunityCard(name) {
+  const found = await findOnlineProfiles(name);
+  if (found.error) return found;
+  if (found.hits.length !== 1) return { error: "missing" };
+  return { card: found.hits[0] };
+}
+
+async function publishMyProfile() {
+  const names = personNames({ name: state.profile?.name || "" });
+  const key = communityKey(names.name);
+  if (!key || !names.firstName || !names.lastName) return { error: "short" };
+  const owner = await profileOwnerKey();
+  const loaded = await loadOnlineProfiles();
+  if (loaded.error) return loaded;
+  const current = loaded.list.find((card) => card.key === key) || null;
+  if (current?.owner && current.owner !== owner) return { error: "taken" };
+  const sign = await shrinkSign(profileSignImage());
+  const body = {
+    key,
+    firstName: names.firstName,
+    lastName: names.lastName,
+    cert: String(state.profile?.certNumber || "").trim(),
+    level: String(state.profile?.certLevel || "").trim(),
+    owner,
+    at: new Date().toISOString(),
+  };
+  if (sign) body.sign = sign;
+  if (JSON.stringify(body).length > 15000) delete body.sign;
+  try {
+    const url = current?.id ? `${COMMUNITY_API}/${current.id}` : COMMUNITY_API;
+    const res = await fetch(url, {
+      method: current?.id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return { error: "network" };
+    return { ok: true, name: names.name };
+  } catch {
+    return { error: "network" };
+  }
+}
+
+let profileOnlineStatus = "";
+
+function queueProfilePublish() {
+  if (queueProfilePublish.started) return;
+  queueProfilePublish.started = true;
+  publishMyProfile()
+    .then((res) => {
+      profileOnlineStatus = res?.ok ? "online" : res?.error || "";
+      if (view.name === "profile") render();
+    })
+    .catch(() => {});
+}
+
+function insertOnlineProfile(card) {
+  return storeFollowedPerson(card, "buddy");
+}
+
+function profileShareLine(person, sign) {
+  if (!person) return "";
+  return [person.name, person.level, person.cert ? "brevetto " + person.cert : "", sign ? "firma inserita" : "manca la firma"]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+async function adoptCommunityProfile(name) {
+  const found = await readCommunityCard(name);
+  if (!found.card) return found;
+  const stored = storeFollowedPerson(found.card, "buddy");
+  save(state);
+  return { ...found, stored };
+}
+
+function communityMissText(error) {
+  if (error === "short") return "Scrivi nome e cognome interi.";
+  if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
+  return "Nessun profilo in rete con questo nominativo. L'altra persona deve aprire l'app aggiornata: online vanno solo nome, cognome, numero di brevetto e firma.";
+}
+
+function scheduleCommunityPull(form) {
+  clearTimeout(form._communityTimer);
+  form._communityTimer = setTimeout(() => {
+    pullCommunitySigns(form).catch(() => {});
+  }, 700);
+}
+
+async function pullCommunitySigns(form) {
+  if (!form?.isConnected) return;
+  let changed = false;
+  for (const [nameKey, role] of [
+    ["buddyName", "buddy"],
+    ["guideName", "guide"],
+  ]) {
+    const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
+    if (communityWords(typed).join("").length < 3) continue;
+    const local = personByTypedName(role, typed);
+    if (local && personKnownSign(local)) continue;
+    const found = await findOnlineProfiles(typed);
+    if (found.hits?.length !== 1) continue;
+    const card = found.hits[0];
+    if (!form.isConnected) return;
+    if ((form.querySelector(`[name=${nameKey}]`)?.value || "") !== typed) continue;
+    const full = [card.firstName, card.lastName].filter(Boolean).join(" ");
+    const certKey = role === "guide" ? "guideCert" : "buddyCert";
+    storeFollowedPerson(card, role);
+    if (view.draft) {
+      view.draft[nameKey] = full;
+      view.draft[certKey] = card.cert || "";
+    }
+    const nameInput = form.querySelector(`[name=${nameKey}]`);
+    const certInput = form.querySelector(`[name=${certKey}]`);
+    if (nameInput) nameInput.value = full;
+    if (certInput) certInput.value = card.cert || "";
+    changed = true;
+  }
+  if (!changed || !form.isConnected) return;
+  save(state);
+  form._applyOwnerSign?.();
 }
 
 function backupFilename() {
@@ -760,6 +1880,14 @@ function fmtItDateLong(iso) {
   const d = new Date(`${iso}T12:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function dotNumber(v) {
+  const raw = String(v ?? "").trim();
+  const s = raw.replace(/\s/g, "").replace(",", ".");
+  if (!s) return "";
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return raw;
+  return String(Number(s));
 }
 
 function parseDecimal(v) {
@@ -1273,6 +2401,7 @@ async function finishAuth(user) {
 function render() {
   destroyDiveSiteMap();
   destroyGoogleWorldMap();
+  destroyWorldGlobe();
   if (leafletMap) {
     leafletMap.remove();
     leafletMap = null;
@@ -1285,13 +2414,19 @@ function render() {
     app.append(renderAuth());
     return;
   }
+  let changed = false;
+  if (adoptSessionName()) changed = true;
+  if (seedPeopleOnce()) changed = true;
+  if (backfillPeopleOnce()) changed = true;
+  if (changed) save(state);
   if (view.name === "home") app.append(renderHome());
   if (view.name === "log") app.append(renderLog());
   if (view.name === "stats") app.append(renderStats());
   if (view.name === "profile") app.append(renderProfile());
   if (view.name === "computer") app.append(renderComputer());
   if (view.name === "map") app.append(renderWorldMap());
-  if (view.name === "bio") app.append(renderBiology());
+  if (view.name === "bio") app.append(view.bioId ? renderBioGuide() : renderBiology());
+  if (view.name === "people") app.append(view.personId ? renderPerson() : renderPeople());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   document.body.append(renderNav());
@@ -1303,6 +2438,7 @@ function render() {
     fab.onclick = () => startNew();
     app.append(fab);
   }
+  queueProfilePublish();
 }
 
 function renderAuth() {
@@ -1320,7 +2456,7 @@ function renderAuth() {
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, didattica, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -1368,6 +2504,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
+        <p class="hint">Versione 119</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -1407,6 +2544,7 @@ function renderNav() {
   const items = [
     ["home", "🌊", "SeaDive"],
     ["log", "📒", "Diario"],
+    ["people", "👥", "Community"],
     ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Bio"],
     ["computer", "⌚", "Computer"],
@@ -1425,7 +2563,9 @@ function renderNav() {
         query: view.query || "",
         bioQuery: view.bioQuery || "",
         bioFilter: view.bioFilter || "all",
+        bioWhere: view.bioWhere || "all",
         computerHint: view.computerHint || "",
+        peopleRole: view.peopleRole || "all",
       };
       render();
     };
@@ -1438,9 +2578,23 @@ function renderNav() {
 let leafletMap = null;
 let googleWorldMap = null;
 let googleWorldMarkers = [];
+let worldGlobe = null;
+let worldMapGen = 0;
 let diveSiteMap = null;
 let diveSiteMarker = null;
 let mapPick = null;
+
+function destroyWorldGlobe() {
+  worldMapGen += 1;
+  if (worldGlobe) {
+    try {
+      worldGlobe.remove();
+    } catch {
+      /* già tolta */
+    }
+    worldGlobe = null;
+  }
+}
 
 function destroyGoogleWorldMap() {
   googleWorldMarkers.forEach((m) => {
@@ -1690,21 +2844,215 @@ function diveFlagIconUrl(kind) {
   return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(diveFlagSvg(kind));
 }
 
+function flagPixelSize(zoom) {
+  const z = Math.max(2, Math.min(18, Number(zoom) || 2));
+  const w = Math.round(8 + ((z - 2) / 16) * 16);
+  return { w, h: Math.round((w * 46) / 36) };
+}
+
+function flagIcon(kind, zoom) {
+  const { w, h } = flagPixelSize(zoom);
+  return {
+    url: diveFlagIconUrl(kind),
+    scaledSize: new google.maps.Size(w, h),
+    anchor: new google.maps.Point(Math.round(w / 2), h),
+  };
+}
+
+const DIVE_COUNTRY = {
+  IT: "Italia", FR: "Francia", ES: "Spagna", PT: "Portogallo", HR: "Croazia", GR: "Grecia", TR: "Turchia",
+  MT: "Malta", CY: "Cipro", EG: "Egitto", IL: "Israele", JO: "Giordania", TN: "Tunisia", MA: "Marocco",
+  DZ: "Algeria", AL: "Albania", ME: "Montenegro", SI: "Slovenia", DE: "Germania", GB: "Regno Unito",
+  IE: "Irlanda", NO: "Norvegia", SE: "Svezia", IS: "Islanda", NL: "Paesi Bassi", BE: "Belgio",
+  US: "USA", MX: "Messico", AU: "Australia", NZ: "Nuova Zelanda", ID: "Indonesia", MY: "Malaysia",
+  TH: "Thailandia", PH: "Filippine", JP: "Giappone", MV: "Maldive", ZA: "Sudafrica", BR: "Brasile",
+};
+
+function diveCountryName(code) {
+  const raw = String(code || "").trim();
+  if (!raw) return "";
+  return DIVE_COUNTRY[raw.toUpperCase()] || raw;
+}
+
+let diveCatalogPromise = null;
+
+function loadDiveCatalog() {
+  if (!diveCatalogPromise) {
+    diveCatalogPromise = fetch("./dive-sites.json?v=111", { cache: "force-cache" })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows) =>
+        (Array.isArray(rows) ? rows : [])
+          .map((row) => ({
+            name: String(row.n || "").trim(),
+            country: diveCountryName(row.c),
+            lat: Number(row.a),
+            lng: Number(row.o),
+            kind: row.k === "d" ? "diving" : "sito",
+            osm: true,
+          }))
+          .filter((row) => row.name && Number.isFinite(row.lat) && Number.isFinite(row.lng))
+      )
+      .catch(() => []);
+  }
+  return diveCatalogPromise;
+}
+
+function loadMapLibre() {
+  if (window.maplibregl?.Map) return Promise.resolve();
+  const cssHref = "https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.css";
+  const jsHref = [
+    "https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.js",
+    "https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.js",
+  ];
+  if (!document.querySelector("link[data-maplibre]")) {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = cssHref;
+    css.dataset.maplibre = "1";
+    document.head.appendChild(css);
+  }
+  return new Promise((resolve, reject) => {
+    let i = 0;
+    const tryJs = () => {
+      if (window.maplibregl?.Map) return resolve();
+      if (i >= jsHref.length) return reject(new Error("Mappa del mondo non disponibile."));
+      const s = document.createElement("script");
+      s.src = jsHref[i++];
+      s.crossOrigin = "anonymous";
+      s.onload = () => (window.maplibregl?.Map ? resolve() : tryJs());
+      s.onerror = tryJs;
+      document.body.appendChild(s);
+    };
+    tryJs();
+  });
+}
+
+let divelogsPromise = null;
+
+function loadDivelogsGeo() {
+  if (!divelogsPromise) {
+    divelogsPromise = fetch("./divelogs-sites.json?v=119")
+      .then((res) => {
+        if (!res.ok) throw new Error("catalogo");
+        return res.json();
+      })
+      .then((rows) => {
+        const features = [];
+        const list = Array.isArray(rows) ? rows : [];
+        for (let i = 0; i < list.length; i++) {
+          const row = list[i];
+          if (!row) continue;
+          const lat = Number(row[1]);
+          const lng = Number(row[2]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+          const c = Number(row[3]);
+          features.push({
+            type: "Feature",
+            properties: { n: String(row[0] || "Sito"), c: Number.isFinite(c) ? c : 1 },
+            geometry: { type: "Point", coordinates: [lng, lat] },
+          });
+        }
+        return { type: "FeatureCollection", features };
+      })
+      .catch(() => ({ type: "FeatureCollection", features: [] }));
+  }
+  return divelogsPromise;
+}
+
+function confidencePhrase(c) {
+  const n = Number(c) || 0;
+  const band = n >= 100 ? "Molto alta" : n >= 50 ? "Alta" : n >= 10 ? "Media" : "Bassa";
+  return band + " · " + n.toLocaleString("it-IT") + " schede";
+}
+
+function clusterIconSize(zoom) {
+  const z = Number(zoom) || 1;
+  if (z <= 1) return 0.82;
+  if (z >= 12) return 1;
+  if (z <= 6) return 0.82 + ((z - 1) / 5) * 0.1;
+  return 0.92 + ((z - 6) / 6) * 0.08;
+}
+
+function makeFlagImage(color, stripe) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 72;
+  canvas.height = 92;
+  const g = canvas.getContext("2d");
+  g.scale(2, 2);
+  g.fillStyle = "#3e4854";
+  g.fillRect(16.8, 23.2, 2.6, 20.4);
+  const drawCloth = () => {
+    const x = 1.6;
+    const y = 1.6;
+    const w = 32.8;
+    const h = 22.4;
+    const r = 3.2;
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  };
+  drawCloth();
+  g.fillStyle = color;
+  g.fill();
+  g.save();
+  g.clip();
+  g.strokeStyle = stripe || "rgba(255,255,255,0.95)";
+  g.lineWidth = 5.2;
+  g.beginPath();
+  g.moveTo(3.2, 22);
+  g.lineTo(32.6, 3.6);
+  g.stroke();
+  g.restore();
+  drawCloth();
+  g.lineWidth = 1.7;
+  g.strokeStyle = "#ffffff";
+  g.stroke();
+  const img = g.getImageData(0, 0, canvas.width, canvas.height);
+  return { width: img.width, height: img.height, data: img.data };
+}
+
+function personalDiveGeo() {
+  const sites = window.SeaDiveSites?.annotateSites(state.dives || [])?.sites || [];
+  return {
+    type: "FeatureCollection",
+    features: sites
+      .filter((s) => (s.custom || s.fromDive) && Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lng)))
+      .map((s) => ({
+        type: "Feature",
+        properties: {
+          n: s.name || "Sito tuo",
+          country: s.country || "",
+          done: s.done ? 1 : 0,
+          dives: s.dives || 0,
+        },
+        geometry: { type: "Point", coordinates: [Number(s.lng), Number(s.lat)] },
+      })),
+  };
+}
+
 function renderWorldMap() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("siti del mondo"));
   const api = window.SeaDiveSites;
-  const pack = api.annotateSites(state.dives || []);
-  const doneN = pack.sites.filter((s) => s.done).length;
   const hero = document.createElement("section");
   hero.className = "card hero map-head";
   hero.innerHTML = `
-    <h2>Mappa satellitare</h2>
-    <p class="tagline">Google Maps, bandierine rettangolari da diving. <strong>Rosso e bianco</strong> = già fatti. <strong>Grigio e bianco</strong> = siti e diving da scoprire. Avvicina per caricare tutti i diving della zona. Tocca per aggiungere un sito.</p>
+    <h2>Mondo delle immersioni</h2>
+    <p class="tagline">Trascina per girare il globo. Scorri o pizzica per avvicinarti alla zona: la bandierina con il numero conta i siti lì, e avvicinandoti si separano. I colori sono quelli di dive-sites.net.</p>
     <div class="map-legend">
-      <span><i class="flag-ico done"></i> Fatti ${doneN}</span>
-      <span><i class="flag-ico todo"></i> Catalogo e diving</span>
+      <span><i class="flag-ico vh"></i> Molto alta, 100+</span>
+      <span><i class="flag-ico hi"></i> Alta, 50–99</span>
+      <span><i class="flag-ico md"></i> Media, 10–49</span>
+      <span><i class="flag-ico lo"></i> Bassa, 1–9</span>
+      <span><i class="flag-ico grp">12</i> Zona</span>
+      <span><i class="flag-ico mine"></i> Il tuo sito</span>
     </div>
+    <p class="hint map-status" data-mapstatus>Carico i punti di immersione…</p>
+    <p class="hint">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a> (Divelogs). Tocca il mare per segnare un sito tuo.</p>
   `;
   const stack = document.createElement("div");
   stack.className = "map-stack";
@@ -1748,107 +3096,299 @@ function renderWorldMap() {
   stack.append(form);
   frag.append(stack);
   queueMicrotask(() => {
-    loadGoogleMaps()
+    const gen = worldMapGen;
+    const el = mapWrap.querySelector("[data-worldmap]");
+    const status = hero.querySelector("[data-mapstatus]");
+    loadMapLibre()
       .then(() => {
-        const el = mapWrap.querySelector("[data-worldmap]");
-        if (!el || !window.google?.maps) return;
-        destroyGoogleWorldMap();
-        const gmap = new google.maps.Map(el, {
-          center: { lat: 20, lng: 12 },
-          zoom: 2,
-          mapTypeId: "hybrid",
-          gestureHandling: "greedy",
-          streetViewControl: false,
-          mapTypeControl: false,
-          fullscreenControl: false,
-          zoomControl: true,
+        if (gen !== worldMapGen || !el?.isConnected || view.name !== "map" || !window.maplibregl) return;
+        const map = new maplibregl.Map({
+          container: el,
+          style: {
+            version: 8,
+            projection: { type: "globe" },
+            sources: {
+              sat: {
+                type: "raster",
+                tiles: [
+                  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                ],
+                tileSize: 256,
+                maxzoom: 19,
+                attribution: "Immagini © Esri",
+              },
+              labels: {
+                type: "raster",
+                tiles: [
+                  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+                ],
+                tileSize: 256,
+                maxzoom: 19,
+              },
+            },
+            layers: [
+              { id: "bg", type: "background", paint: { "background-color": "#061018" } },
+              { id: "sat", type: "raster", source: "sat" },
+              { id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": 0.88 } },
+            ],
+          },
+          center: [12, 18],
+          zoom: 0.6,
+          minZoom: 0,
+          maxZoom: 18,
+          projection: "globe",
+          attributionControl: true,
+          dragRotate: true,
+          pitchWithRotate: true,
+          touchPitch: true,
+          maxPitch: 60,
+          renderWorldCopies: false,
+          locale: {
+            "NavigationControl.ZoomIn": "Avvicina",
+            "NavigationControl.ZoomOut": "Allontana",
+            "NavigationControl.ResetBearing": "Nord in alto",
+          },
         });
-        googleWorldMap = gmap;
-        const info = new google.maps.InfoWindow();
-        const osmMarkers = [];
-        const iconDone = {
-          url: diveFlagIconUrl("done"),
-          scaledSize: new google.maps.Size(32, 42),
-          anchor: new google.maps.Point(17, 42),
+        worldGlobe = map;
+        map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: true }), "top-right");
+        map.scrollZoom.setWheelZoomRate(1 / 200);
+        try {
+          map.touchZoomRotate.enableRotation();
+        } catch {
+          /* rotazione già attiva */
+        }
+        const badges = document.createElement("div");
+        badges.className = "cluster-badges";
+        el.appendChild(badges);
+        let popup = null;
+        const openPopup = (lngLat, html) => {
+          popup?.remove();
+          popup = new maplibregl.Popup({ offset: 18, closeButton: true, maxWidth: "280px" })
+            .setLngLat(lngLat)
+            .setHTML(html)
+            .addTo(map);
         };
-        const iconTodo = {
-          url: diveFlagIconUrl("todo"),
-          scaledSize: new google.maps.Size(32, 42),
-          anchor: new google.maps.Point(17, 42),
-        };
-        const putFlag = (site, bucket) => {
-          const m = new google.maps.Marker({
-            position: { lat: Number(site.lat), lng: Number(site.lng) },
-            map: gmap,
-            icon: site.done ? iconDone : iconTodo,
-            title: site.name,
-            optimized: true,
-          });
-          m.addListener("click", () => {
-            const kind = site.kind === "diving" ? "Diving" : site.fromDive ? "Dal diario" : "Sito";
-            info.setContent(
-              `<div class="gmap-pop"><strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(
-                site.country || ""
-              )}<br>${kind} · ${site.done ? "già immerso" : "da fare"}${
-                site.dives ? " · " + site.dives + " nel diario" : ""
-              }</div>`
+        const syncBadges = () => {
+          if (worldGlobe !== map || !map.getLayer("clusters")) return;
+          const feats = map.queryRenderedFeatures({ layers: ["clusters"] });
+          const seen = new Set();
+          const parts = [];
+          const lift = 46 * clusterIconSize(map.getZoom()) * 0.7;
+          feats.forEach((f) => {
+            const id = f.properties.cluster_id;
+            if (seen.has(id)) return;
+            seen.add(id);
+            const pt = map.project(f.geometry.coordinates);
+            const n = Number(f.properties.point_count) || 0;
+            let label = String(n);
+            if (n >= 10000) label = Math.round(n / 1000) + "k";
+            else if (n >= 1000) label = (n / 1000).toFixed(1).replace(".", ",") + "k";
+            parts.push(
+              `<b style="transform:translate(${pt.x}px,${pt.y - lift}px) translate(-50%,-50%)">${label}</b>`
             );
-            info.open({ map: gmap, anchor: m });
           });
-          bucket.push(m);
-          googleWorldMarkers.push(m);
+          badges.innerHTML = parts.join("");
         };
-        pack.sites.forEach((site) => putFlag(site, googleWorldMarkers));
-        let osmTimer = 0;
-        const loadOsm = () => {
-          if (!api.fetchOsmDivePlaces || gmap.getZoom() < 5) {
-            osmMarkers.forEach((m) => m.setMap(null));
-            osmMarkers.length = 0;
-            return;
+        let badgeFrame = 0;
+        const queueBadges = () => {
+          if (badgeFrame) return;
+          badgeFrame = requestAnimationFrame(() => {
+            badgeFrame = 0;
+            syncBadges();
+          });
+        };
+        const hitLayers = () => ["clusters", "sites", "mine"].filter((id) => map.getLayer(id));
+        const flyIn = (center, zoom) => {
+          map.easeTo({
+            center,
+            zoom: Math.min(Math.max(zoom, map.getZoom() + 0.6), 16.5),
+            pitch: zoom >= 6 ? 30 : 12,
+            duration: 950,
+            essential: true,
+          });
+        };
+        const armGlobe = () => {
+          if (worldGlobe !== map || map.getSource("dives")) return;
+          if (status) status.textContent = "Preparo le bandierine…";
+          try {
+            map.setProjection({ type: "globe" });
+          } catch {
+            try {
+              map.setProjection("globe");
+            } catch {
+              /* resta la proiezione dello stile */
+            }
           }
-          clearTimeout(osmTimer);
-          osmTimer = setTimeout(() => {
-            const b = gmap.getBounds();
-            if (!b) return;
-            const ne = b.getNorthEast();
-            const sw = b.getSouthWest();
-            api
-              .fetchOsmDivePlaces({
-                getSouth: () => sw.lat(),
-                getWest: () => sw.lng(),
-                getNorth: () => ne.lat(),
-                getEast: () => ne.lng(),
-              })
-              .then((rows) => {
-                osmMarkers.forEach((m) => m.setMap(null));
-                osmMarkers.length = 0;
-                const marked = api.markDoneAgainstDives?.(rows, state.dives) || rows;
-                marked.forEach((site) => {
-                  const near = pack.sites.some((s) => haversineMapKm(s, site) < 1.2);
-                  if (near) return;
-                  putFlag(site, osmMarkers);
-                });
-              })
-              .catch(() => {});
-          }, 400);
+          try {
+            map.setFog({
+              range: [0.8, 8],
+              color: "rgba(186, 210, 235, 0.45)",
+              "high-color": "rgba(36, 92, 180, 0.35)",
+              "space-color": "#061018",
+              "horizon-blend": 0.08,
+              "star-intensity": 0.2,
+            });
+          } catch {
+            /* il globo resta visibile anche senza atmosfera */
+          }
+          try {
+          [
+            ["flag-vh", "#00AA00", "rgba(255,255,255,0.95)"],
+            ["flag-hi", "#FFD700", "rgba(255,255,255,0.95)"],
+            ["flag-md", "#FF8C00", "rgba(255,255,255,0.95)"],
+            ["flag-lo", "#DC143C", "rgba(255,255,255,0.95)"],
+            ["flag-mine", "#f4f7fb", "#8b95a1"],
+          ].forEach(([id, color, stripe]) => {
+            if (!map.hasImage(id)) map.addImage(id, makeFlagImage(color, stripe), { pixelRatio: 2 });
+          });
+          const iconSize = ["interpolate", ["linear"], ["zoom"], 1, 0.82, 6, 0.92, 12, 1];
+          map.addSource("dives", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+            cluster: true,
+            clusterRadius: 58,
+            clusterMaxZoom: 14,
+            clusterProperties: { maxc: ["max", ["get", "c"]] },
+          });
+          map.addSource("mine", { type: "geojson", data: personalDiveGeo() });
+          map.addLayer({
+            id: "clusters",
+            type: "symbol",
+            source: "dives",
+            filter: ["has", "point_count"],
+            layout: {
+              "icon-image": ["step", ["get", "maxc"], "flag-lo", 10, "flag-md", 50, "flag-hi", 100, "flag-vh"],
+              "icon-size": iconSize,
+              "icon-anchor": "bottom",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          });
+          map.addLayer({
+            id: "sites",
+            type: "symbol",
+            source: "dives",
+            filter: ["!", ["has", "point_count"]],
+            layout: {
+              "icon-image": ["step", ["get", "c"], "flag-lo", 10, "flag-md", 50, "flag-hi", 100, "flag-vh"],
+              "icon-size": iconSize,
+              "icon-anchor": "bottom",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          });
+          map.addLayer({
+            id: "mine",
+            type: "symbol",
+            source: "mine",
+            layout: {
+              "icon-image": "flag-mine",
+              "icon-size": 0.9,
+              "icon-anchor": "bottom",
+              "icon-allow-overlap": true,
+            },
+          });
+          ["clusters", "sites", "mine"].forEach((id) => {
+            map.on("mouseenter", id, () => {
+              map.getCanvas().style.cursor = "pointer";
+            });
+            map.on("mouseleave", id, () => {
+              map.getCanvas().style.cursor = "";
+            });
+          });
+          map.on("click", "clusters", async (e) => {
+            const feat = e.features?.[0];
+            if (!feat) return;
+            popup?.remove();
+            let zoom = map.getZoom() + 1.8;
+            try {
+              const expanded = await map.getSource("dives").getClusterExpansionZoom(feat.properties.cluster_id);
+              zoom = Math.max(Number(expanded) || zoom, map.getZoom() + 0.8);
+            } catch {
+              /* avvicina comunque */
+            }
+            flyIn(feat.geometry.coordinates, zoom);
+          });
+          map.on("click", "sites", (e) => {
+            const feat = e.features?.[0];
+            if (!feat) return;
+            const coords = feat.geometry.coordinates.slice();
+            const lat = Number(coords[1]);
+            const lng = Number(coords[0]);
+            const dived = (state.dives || []).some((d) => {
+              const p = api?.divePoint?.(d);
+              return p && haversineMapKm(p, { lat, lng }) <= 3;
+            });
+            openPopup(
+              coords,
+              `<div class="globe-pop"><strong>${escapeHtml(feat.properties.n || "Sito")}</strong>${escapeHtml(
+                confidencePhrase(feat.properties.c)
+              )}${dived ? "<br>Già nel diario" : ""}<br>${lat.toFixed(4)}, ${lng.toFixed(
+                4
+              )}<br><a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a></div>`
+            );
+            if (map.getZoom() < 15) flyIn(coords, Math.max(map.getZoom(), 15));
+          });
+          map.on("click", "mine", (e) => {
+            const feat = e.features?.[0];
+            if (!feat) return;
+            const coords = feat.geometry.coordinates.slice();
+            const where = feat.properties.country ? escapeHtml(feat.properties.country) + "<br>" : "";
+            const note = Number(feat.properties.done) ? "Già nel diario" : "Sito aggiunto da te";
+            openPopup(
+              coords,
+              `<div class="globe-pop"><strong>${escapeHtml(feat.properties.n || "Sito tuo")}</strong>${where}${note}</div>`
+            );
+            if (map.getZoom() < 13) flyIn(coords, 13.5);
+          });
+          map.on("click", (e) => {
+            if (map.queryRenderedFeatures(e.point, { layers: hitLayers() }).length) return;
+            const lat = e.lngLat.lat.toFixed(5);
+            const lng = e.lngLat.lng.toFixed(5);
+            mapPick = { lat, lng, name: "", country: "" };
+            const latEl = form.querySelector("[name=lat]");
+            const lngEl = form.querySelector("[name=lng]");
+            if (latEl) latEl.value = lat;
+            if (lngEl) lngEl.value = lng;
+            const hint = form.querySelector("[data-maphint]");
+            if (hint) hint.textContent = "Punto preso. Dai un nome e salva.";
+          });
+          map.on("render", queueBadges);
+          loadDivelogsGeo().then((geo) => {
+            if (worldGlobe !== map) return;
+            const src = map.getSource("dives");
+            if (src) src.setData(geo);
+            const n = geo.features.length;
+            if (status) {
+              status.textContent = n
+                ? n.toLocaleString("it-IT") +
+                  " siti sul globo. Trascina per girarlo, scorri per avvicinarti: i gruppi si separano in bandierine."
+                : "Punti non caricati. Controlla la connessione e aggiorna la pagina.";
+            }
+          });
+          [80, 300, 700].forEach((ms) => setTimeout(() => worldGlobe === map && map.resize(), ms));
+          } catch (err) {
+            if (status) status.textContent = err && err.message ? err.message : "Mappa non pronta.";
+          }
         };
-        gmap.addListener("idle", loadOsm);
-        gmap.addListener("click", (ev) => {
-          if (!ev.latLng) return;
-          mapPick = {
-            lat: ev.latLng.lat().toFixed(5),
-            lng: ev.latLng.lng().toFixed(5),
-            name: "",
-            country: "",
-          };
-          form.querySelector("[name=lat]").value = mapPick.lat;
-          form.querySelector("[name=lng]").value = mapPick.lng;
-          form.querySelector("[data-maphint]").textContent = "Punto preso. Dai un nome e salva.";
+        map.on("error", (ev) => {
+          const message = ev?.error?.message || "";
+          if (!status || !message) return;
+          const current = status.textContent || "";
+          if (current.includes("siti sul globo") || current.includes("Preparo")) return;
+          status.textContent = message;
         });
+        try {
+          map.setProjection({ type: "globe" });
+        } catch {
+          /* proiezione impostata dallo stile */
+        }
+        if (map.isStyleLoaded()) armGlobe();
+        else map.on("load", armGlobe);
+        map.on("idle", armGlobe);
       })
       .catch((err) => {
-        const box = mapWrap.querySelector("[data-worldmap]");
-        if (box) box.innerHTML = `<p class="hint" style="padding:14px">${escapeHtml(err.message || "Mappa non disponibile.")}</p>`;
+        if (el) el.innerHTML = `<p class="hint" style="padding:14px">${escapeHtml(err.message || "Mappa non disponibile.")}</p>`;
       });
   });
   return frag;
@@ -1984,8 +3524,7 @@ function diveCard(d) {
   art.querySelector("[data-deldive]").onclick = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!(await askDeleteDive(d))) return;
-    removeDive(d);
+    if (!(await removeDive(d))) return;
     render();
   };
   art.onclick = () => {
@@ -2152,93 +3691,238 @@ function openLifePage(q) {
   if (url) window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function openBioGuide(id) {
+  view = { ...view, name: "bio", bioId: id };
+  render();
+  window.scrollTo(0, 0);
+}
+
+function bioGroupOn() {
+  const id = view.bioFilter || "all";
+  if (id === "all") return "all";
+  return window.SeaDiveBiology?.lifeSection?.(id) ? id : "all";
+}
+
+function bioWhereOn() {
+  const id = view.bioWhere || "all";
+  if (id === "med" || id === "world" || id === "alien") return id;
+  if (view.bioFilter === "med" || view.bioFilter === "world" || view.bioFilter === "alien") return view.bioFilter;
+  return "all";
+}
+
+function bioCardHtml(api, x) {
+  const section = api.lifeSection(x.group);
+  return `<article class="bio-card" data-bioid="${escapeHtml(x.id)}" role="button" tabindex="0">
+        <div class="bio-body">
+          <p class="meta">${escapeHtml(section?.label || x.group)} · ${escapeHtml(x.tag)} · ${escapeHtml(x.where)}</p>
+          <h3>${escapeHtml(x.it)}</h3>
+          <p class="bio-la">${escapeHtml(x.la)}</p>
+          <p class="bio-look">${escapeHtml(x.look)}</p>
+        </div>
+        <div class="bio-pic">
+          <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+          <img class="bio-shot" alt="" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
+        </div>
+        <div class="bio-actions"><span class="btn primary">Guida</span></div>
+      </article>`;
+}
+
 function renderBiology() {
   const api = window.SeaDiveBiology;
   const frag = document.createDocumentFragment();
   frag.append(topbar("Biologia marina"));
   const sec = document.createElement("section");
   sec.className = "card bio-page";
-  const filters = [
-    ["all", "Tutti"],
+  const sections = [["all", "Tutti"], ...(api.LIFE_SECTIONS || []).map((s) => [s.id, s.label])];
+  const seas = [
+    ["all", "Tutti i mari"],
     ["med", "Mediterraneo"],
-    ["flora", "Flora"],
-    ["fauna", "Fauna"],
+    ["world", "Altri mari"],
     ["alien", "Invasive"],
-    ["world", "Mondo"],
   ];
   sec.innerHTML = `
-    <h2 class="serif" style="margin:0 0 6px">Flora e fauna</h2>
-    <p class="hint">Elenco soprattutto mediterraneo, con specie di tutti i mari. Il tasto Cerca apre la descrizione su Wikipedia.</p>
+    <h2 class="serif" style="margin:0 0 6px">Guida alla vita marina</h2>
+    <p class="hint">Pesci, flora, coralli, nudibranchi e gli altri gruppi, in Mediterraneo e nel resto dei mari. Apri una specie per la guida: riconoscimento, habitat e note per l'immersione.</p>
     <div class="bio-search">
-      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nome italiano o scientifico" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
-      <button class="btn primary" type="button" data-bioweb>Cerca in rete</button>
+      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nome, gruppo o ambiente" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
+      <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
     </div>
-    <div class="chips" data-biofilters></div>
+    <div class="bio-filters">
+      <div class="chips" data-biofilters></div>
+      <div class="chips" data-biowheres></div>
+    </div>
+    <p class="hint" data-bioblurb></p>
     <p class="meta" data-biocount></p>
     <div class="bio-list" data-biolist></div>
   `;
   const input = sec.querySelector("[data-bioq]");
   const list = sec.querySelector("[data-biolist]");
   const count = sec.querySelector("[data-biocount]");
-  const chips = sec.querySelector("[data-biofilters]");
+  const blurb = sec.querySelector("[data-bioblurb]");
+  const groupChips = sec.querySelector("[data-biofilters]");
+  const whereChips = sec.querySelector("[data-biowheres]");
   const paint = () => {
     const q = input.value;
     view.bioQuery = q;
-    const rows = api.filterMarineLife(q, view.bioFilter || "all");
+    const group = bioGroupOn();
+    const where = bioWhereOn();
+    view.bioFilter = group;
+    view.bioWhere = where;
+    const rows = api.filterMarineLife(q, group, where);
+    const section = group === "all" ? null : api.lifeSection(group);
+    blurb.textContent = section?.blurb || "";
     count.textContent = `${rows.length} specie`;
-    list.innerHTML = rows
-      .map(
-        (x) => `<article class="bio-card">
-        <div class="bio-body">
-          <p class="meta">${escapeHtml(x.kind === "flora" ? "Flora" : "Fauna")} · ${escapeHtml(x.where)} · ${escapeHtml(x.group)}</p>
-          <h3>${escapeHtml(x.it)}</h3>
-          <p class="bio-la">${escapeHtml(x.la)}</p>
-        </div>
-        <div class="bio-pic">
-          <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
-          <img class="bio-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
-        </div>
-        <div class="bio-actions">
-          <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Descrizione</a>
-          <a class="btn ghost" href="${api.lifeWorms(x.la)}" target="_blank" rel="noopener noreferrer">WoRMS</a>
-        </div>
-      </article>`
-      )
-      .join("");
     if (!rows.length) {
       list.innerHTML = `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
+      return;
+    }
+    if (group === "all") {
+      list.innerHTML = (api.LIFE_SECTIONS || [])
+        .map((s) => {
+          const items = rows.filter((x) => x.group === s.id);
+          if (!items.length) return "";
+          return `<h3 class="bio-sec">${s.emoji} ${escapeHtml(s.label)} <span>${items.length}</span></h3>${items.map((x) => bioCardHtml(api, x)).join("")}`;
+        })
+        .join("");
+    } else {
+      list.innerHTML = rows.map((x) => bioCardHtml(api, x)).join("");
     }
     bindBioThumbs(list);
   };
-  filters.forEach(([id, label]) => {
+  const openFromList = (id) => {
+    if (id) openBioGuide(id);
+  };
+  list.onclick = (e) => {
+    const card = e.target.closest("[data-bioid]");
+    if (!card || !list.contains(card)) return;
+    openFromList(card.dataset.bioid);
+  };
+  list.onkeydown = (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest("[data-bioid]");
+    if (!card) return;
+    e.preventDefault();
+    openFromList(card.dataset.bioid);
+  };
+  sections.forEach(([id, label]) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = `chip${(view.bioFilter || "all") === id ? " on" : ""}`;
+    b.className = `chip${bioGroupOn() === id ? " on" : ""}`;
     b.textContent = label;
     b.onclick = () => {
       view.bioFilter = id;
-      chips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
+      groupChips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
       b.classList.add("on");
       paint();
     };
-    chips.append(b);
+    groupChips.append(b);
+  });
+  seas.forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${bioWhereOn() === id ? " on" : ""}`;
+    b.textContent = label;
+    b.onclick = () => {
+      view.bioWhere = id;
+      whereChips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
+      b.classList.add("on");
+      paint();
+    };
+    whereChips.append(b);
   });
   input.oninput = paint;
   input.onkeydown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      sec.querySelector("[data-bioweb]").click();
-    }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const q = input.value.trim();
+    const rows = api.filterMarineLife(q, bioGroupOn(), bioWhereOn());
+    const hit = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q)) || rows[0];
+    if (hit) openBioGuide(hit.id);
+    else openLifePage(q);
   };
   sec.querySelector("[data-bioweb]").onclick = () => {
     const q = (input.value || "").trim();
-    const rows = api.filterMarineLife(q, view.bioFilter || "all");
+    const rows = api.filterMarineLife(q, bioGroupOn(), bioWhereOn());
     const hit = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q)) || rows[0];
     openLifePage(hit ? `${hit.it} ${hit.la}` : q);
   };
   paint();
   frag.append(sec);
   return frag;
+}
+
+function renderBioGuide() {
+  const api = window.SeaDiveBiology;
+  const x = api.findMarineLife?.(view.bioId);
+  const frag = document.createDocumentFragment();
+  frag.append(topbar("Biologia marina"));
+  const sec = document.createElement("section");
+  sec.className = "card bio-page";
+  if (!x) {
+    sec.innerHTML = `<p class="hint">Specie non trovata.</p><button class="btn ghost" type="button" data-bioback>Torna all'elenco</button>`;
+  } else {
+    const section = api.lifeSection(x.group);
+    sec.innerHTML = `
+      <button class="btn ghost" type="button" data-bioback>Torna all'elenco</button>
+      <p class="meta">${escapeHtml(section?.label || "")} · ${escapeHtml(x.tag)} · ${escapeHtml(x.where)}</p>
+      <h2 class="serif">${escapeHtml(x.it)}</h2>
+      <p class="bio-la">${escapeHtml(x.la)}</p>
+      <div class="bio-hero">
+        <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+        <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
+      </div>
+      <div class="kv">
+        <div><b>Taglia</b>${escapeHtml(x.size)}</div>
+        <div><b>Profondità</b>${escapeHtml(x.depth)}</div>
+        <div><b>Tipo</b>${escapeHtml(x.tag)}</div>
+        <div><b>Mari</b>${escapeHtml(x.where)}</div>
+      </div>
+      <div class="bio-block"><h3>Dove vive</h3><p>${escapeHtml(x.habitat)}</p></div>
+      <div class="bio-block"><h3>Come riconoscerlo</h3><p>${escapeHtml(x.look)}</p></div>
+      <div class="bio-block"><h3>Vita</h3><p>${escapeHtml(x.life)}</p></div>
+      <div class="bio-block"><h3>In immersione</h3><p>${escapeHtml(x.dive)}</p></div>
+      <div class="bio-block" data-biowiki><p class="hint">Caricamento della scheda enciclopedica…</p></div>
+      <div class="bio-actions">
+        <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>
+        <a class="btn ghost" href="${api.lifeWorms(x.la)}" target="_blank" rel="noopener noreferrer">Scheda WoRMS</a>
+      </div>
+    `;
+  }
+  sec.querySelector("[data-bioback]").onclick = () => {
+    view = { ...view, name: "bio", bioId: "" };
+    render();
+    window.scrollTo(0, 0);
+  };
+  if (x) bindBioGuide(sec, x);
+  frag.append(sec);
+  return frag;
+}
+
+function bindBioGuide(root, species) {
+  const api = window.SeaDiveBiology;
+  const gen = ++bioThumbGen;
+  api.lifePage(species.la, species.it).then((page) => {
+    if (gen !== bioThumbGen || !root.isConnected) return;
+    const img = root.querySelector("[data-bioimg]");
+    const src = String(page?.thumb || "").replace(/\/\d+px-/, "/800px-");
+    if (img && src) {
+      img.src = src;
+      img.onload = () => {
+        img.classList.add("on");
+        img.closest(".bio-hero")?.classList.add("has-photo");
+      };
+    }
+    const box = root.querySelector("[data-biowiki]");
+    if (!box) return;
+    if (page?.extract) {
+      const more = page.url
+        ? `<p><a href="${escapeHtml(page.url)}" target="_blank" rel="noopener noreferrer">Apri la voce</a></p>`
+        : "";
+      box.innerHTML = `<h3>Scheda enciclopedica</h3><p>${escapeHtml(page.extract)}</p>${more}<p class="hint">Testo da Wikipedia, licenza CC BY-SA.</p>`;
+    } else {
+      box.innerHTML = `<p class="hint">La scheda enciclopedica si carica quando c'è rete. Riconoscimento, habitat e note restano nella guida anche offline.</p>`;
+    }
+  });
 }
 
 function lifeNorm(s) {
@@ -2303,7 +3987,7 @@ function renderComputer() {
     <p class="tagline">Carica il file: le immersioni vanno <strong>subito nel diario</strong>, con profilo, luogo e mappa. Formati: UDDF, FIT, JSON, XML, CSV, GPX. Bluetooth sperimentale solo EON su Chrome Android.</p>
     <div class="actions">
       <label class="btn primary">Carica file
-        <input type="file" accept=".uddf,.xml,.csv,.txt,.json,.fit,.gpx,.log,.sml,.ssrf,.zxu,.divelog,application/json,application/xml,application/gpx+xml,*/*" multiple hidden data-files />
+        <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple hidden data-files />
       </label>
       <button class="btn ghost" type="button" data-ble>Prova Bluetooth (EON)</button>
     </div>
@@ -2345,10 +4029,12 @@ function renderComputer() {
   return frag;
 }
 
-async function ingestFiles(fileList) {
+const COMPUTER_FILE_ACCEPT =
+  ".uddf,.xml,.csv,.txt,.json,.fit,.gpx,.log,.sml,.ssrf,.zxu,.divelog,application/json,application/xml,application/gpx+xml,*/*";
+
+async function collectImported(fileList) {
   const api = window.SeaDiveComputers;
   const files = [...fileList];
-  const found = [];
   const notes = [];
   const parsed = [];
   for (const file of files) {
@@ -2362,6 +4048,7 @@ async function ingestFiles(fileList) {
     }
   }
   const used = new Set();
+  const found = [];
   const stem = (n) =>
     String(n || "")
       .replace(/\.[^.]+$/, "")
@@ -2389,6 +4076,11 @@ async function ingestFiles(fileList) {
     found.push(...a.dives);
     used.add(i);
   });
+  return { found, notes };
+}
+
+async function ingestFiles(fileList) {
+  const { found, notes } = await collectImported(fileList);
   if (found.length) {
     const { added, last } = await mergeImported(found);
     view.computerHint = `${notes.join(" · ")} → ${added} immersioni nel diario.`;
@@ -2474,6 +4166,327 @@ async function mergeImported(dives) {
   return { added, last };
 }
 
+function hasText(v) {
+  return String(v ?? "").trim() !== "";
+}
+
+function genericComputerSite(s) {
+  return /^(punto gps|import |suunto|garmin|computer)/i.test(String(s || "").trim());
+}
+
+function applyComputerOnto(target, incoming) {
+  const next = cloneObj(target);
+  [
+    "date",
+    "timeIn",
+    "timeOut",
+    "maxDepth",
+    "avgDepth",
+    "bottomTime",
+    "totalTime",
+    "waterTemp",
+    "airTemp",
+    "bottomTemp",
+    "cns",
+    "otu",
+    "ascentRate",
+    "ascentMax",
+    "gf",
+    "ndl",
+    "surfaceInterval",
+    "instruments",
+    "lat",
+    "lng",
+    "safetyStop",
+  ].forEach((k) => {
+    if (hasText(incoming[k])) next[k] = incoming[k];
+  });
+  if ((incoming.profilePoints || []).length >= 3) {
+    next.profilePoints = incoming.profilePoints;
+    next.profileFromComputer = true;
+  }
+  if (incoming.computerLog) next.computerLog = incoming.computerLog;
+  if (incoming.sourceComputer) next.sourceComputer = incoming.sourceComputer;
+  next.imported = true;
+  if (incoming.deco != null) {
+    next.deco = Boolean(incoming.deco);
+    next.noDeco = incoming.noDeco != null ? Boolean(incoming.noDeco) : !next.deco;
+  }
+  if (incoming.circuitOpen != null || incoming.circuitClosed != null) {
+    next.circuitOpen = Boolean(incoming.circuitOpen);
+    next.circuitClosed = Boolean(incoming.circuitClosed);
+    if (hasText(incoming.regulator)) next.regulator = incoming.regulator;
+  }
+  ["visibility", "current", "seaConditions", "wetsuit", "ballast", "plannedDepth"].forEach((k) => {
+    if (!hasText(next[k]) && hasText(incoming[k])) next[k] = incoming[k];
+  });
+  if (hasText(incoming.pressureEnd)) next.pressureEnd = incoming.pressureEnd;
+  if (hasText(incoming.sac) && !target.sacManual) next.sac = incoming.sac;
+  if (hasText(incoming.tss) && target.tssKind !== "manual") {
+    next.tss = incoming.tss;
+    if (incoming.tssKind) next.tssKind = incoming.tssKind;
+    if (incoming.tssLabel) next.tssLabel = incoming.tssLabel;
+  }
+  if (!hasText(next.site) || genericComputerSite(next.site)) {
+    if (hasText(incoming.site)) next.site = incoming.site;
+  }
+  if (!hasText(next.location) && hasText(incoming.location)) next.location = incoming.location;
+  if (!hasText(next.notes) && hasText(incoming.notes)) next.notes = incoming.notes;
+  if (!hasText(next.tank) || (hasText(incoming.tank) && incoming.tank !== "15" && String(target.tank) === "15")) {
+    next.tank = incoming.tank || next.tank;
+  }
+  if (!hasText(next.mix) || (hasText(incoming.mix) && incoming.mix !== "21" && String(target.mix) === "21")) {
+    next.mix = incoming.mix || next.mix;
+  }
+  if (
+    !hasText(next.pressureStart) ||
+    (hasText(incoming.pressureStart) && incoming.pressureStart !== "200" && String(target.pressureStart) === "200")
+  ) {
+    next.pressureStart = incoming.pressureStart || next.pressureStart;
+  }
+  if (Array.isArray(incoming.types) && incoming.types.length) {
+    next.types = [...new Set([...(next.types || []), ...incoming.types])];
+  }
+  ["buddyName", "buddyCert", "guideName", "guideCert", "centerName", "centerLead"].forEach((k) => {
+    if (!hasText(next[k]) && hasText(incoming[k])) next[k] = incoming[k];
+  });
+  next.id = target.id;
+  next.number = target.number;
+  next.photo = target.photo;
+  next.feeling = target.feeling;
+  next.buddySign = target.buddySign;
+  next.guideSign = target.guideSign;
+  next.centerSign = target.centerSign;
+  next.sigMeta = target.sigMeta;
+  next.certOnDive = hasText(target.certOnDive) ? target.certOnDive : next.certOnDive;
+  next.sacManual = target.sacManual;
+  return next;
+}
+
+function divePickLabel(d) {
+  const when = [fmtItDateLong(d.date), d.timeIn].filter(Boolean).join(" · ");
+  const where = d.site || d.location || "";
+  const depth = hasText(d.maxDepth) ? `${d.maxDepth} m` : "";
+  const mins = hasText(d.bottomTime) ? `${d.bottomTime} min` : hasText(d.totalTime) ? `${d.totalTime} min` : "";
+  return [when || "Senza data", where, depth, mins].filter(Boolean).join(" · ");
+}
+
+function divesByTime(dives) {
+  return [...dives].sort((a, b) => `${a.date || ""}T${a.timeIn || ""}`.localeCompare(`${b.date || ""}T${b.timeIn || ""}`));
+}
+
+function askPickDive(dives, base) {
+  if (!dives || dives.length <= 1) return Promise.resolve(dives?.[0] || null);
+  const ordered = divesByTime(dives);
+  const latest = ordered[ordered.length - 1];
+  const cardDate = String(base?.date || "");
+  return new Promise((resolve) => {
+    document.querySelector(".confirm-veil")?.remove();
+    const veil = document.createElement("div");
+    veil.className = "confirm-veil";
+    const done = (v) => {
+      veil.remove();
+      resolve(v);
+    };
+    const paintChoices = () => {
+      const onCard = cardDate ? ordered.filter((d) => d.date === cardDate) : [];
+      veil.innerHTML = `
+        <div class="confirm-card pick-card" role="dialog" aria-modal="true" aria-labelledby="pick-title">
+          <h3 id="pick-title">Quale immersione va in questa scheda?</h3>
+          <p>Il file ne contiene ${ordered.length}. Puoi mettere solo l’ultima, oppure quella di una data. Le altre restano fuori dal diario.</p>
+          <div class="pick-list">
+            <button type="button" class="btn primary" data-last>Solo l’ultima<br><small>${escapeHtml(divePickLabel(latest))}</small></button>
+            ${
+              onCard.length
+                ? `<button type="button" class="btn ghost" data-card>Data di questa scheda<br><small>${escapeHtml(fmtItDateLong(cardDate))}${onCard.length > 1 ? " · " + onCard.length + " immersioni" : " · " + escapeHtml(onCard[0].timeIn || "")}</small></button>`
+                : ""
+            }
+          </div>
+          <label class="pick-date">Oppure scegli la data
+            <input type="date" data-day value="${escapeHtml(cardDate || latest.date || "")}" />
+          </label>
+          <p class="hint" data-pickmsg></p>
+          <div class="confirm-actions">
+            <button type="button" class="btn ghost" data-no>Annulla</button>
+            <button type="button" class="btn primary" data-daygo>Carica questa data</button>
+          </div>
+        </div>
+      `;
+      veil.querySelector("[data-no]").onclick = () => done(null);
+      veil.querySelector("[data-last]").onclick = () => done(latest);
+      veil.querySelector("[data-card]")?.addEventListener("click", () => chooseDay(onCard));
+      veil.querySelector("[data-daygo]").onclick = () => {
+        const day = veil.querySelector("[data-day]").value;
+        chooseDay(ordered.filter((d) => d.date === day), day);
+      };
+    };
+    const chooseDay = (hits, day) => {
+      if (!hits.length) {
+        const msg = veil.querySelector("[data-pickmsg]");
+        if (msg) msg.textContent = day ? `Nessuna immersione il ${fmtItDateLong(day)}.` : "Scegli una data.";
+        return;
+      }
+      if (hits.length === 1) {
+        done(hits[0]);
+        return;
+      }
+      veil.innerHTML = `
+        <div class="confirm-card pick-card" role="dialog" aria-modal="true">
+          <h3>Immersioni del ${escapeHtml(fmtItDateLong(hits[0].date))}</h3>
+          <p>In questa data ce ne sono ${hits.length}. Scegline una.</p>
+          <div class="pick-list">
+            ${hits.map((d, i) => `<button type="button" class="btn ghost" data-i="${i}">${escapeHtml(divePickLabel(d))}</button>`).join("")}
+          </div>
+          <div class="confirm-actions">
+            <button type="button" class="btn ghost" data-back>Indietro</button>
+            <button type="button" class="btn ghost" data-no>Annulla</button>
+          </div>
+        </div>
+      `;
+      veil.querySelector("[data-no]").onclick = () => done(null);
+      veil.querySelector("[data-back]").onclick = () => paintChoices();
+      veil.querySelectorAll("[data-i]").forEach((btn) => {
+        btn.onclick = () => done(hits[Number(btn.getAttribute("data-i"))]);
+      });
+    };
+    veil.addEventListener("click", (e) => {
+      if (e.target === veil) done(null);
+    });
+    paintChoices();
+    document.body.append(veil);
+  });
+}
+
+function snapshotEditForm(form, d) {
+  const fd = new FormData(form);
+  ["photoFile", "buddySignOk", "guideSignOk", "centerSignOk"].forEach((k) => fd.delete(k));
+  const next = {
+    ...d,
+    ...Object.fromEntries(fd.entries()),
+    types: d.types,
+    photo: d.photo,
+    feeling: d.feeling,
+    tssKind: d.tssKind,
+    tssLabel: d.tssKind === "manual" ? "TSS(Manuale)" : d.tssLabel,
+    buddySign: d.buddySign,
+    guideSign: d.guideSign,
+    centerSign: d.centerSign,
+    sigMeta: d.sigMeta,
+    profileFromComputer: d.profileFromComputer,
+    profilePoints: d.profilePoints,
+    computerLog: d.computerLog || null,
+    sacManual: d.sacManual,
+    id: d.id,
+  };
+  next.circuitOpen = fd.has("circuitOpen");
+  next.circuitClosed = fd.has("circuitClosed");
+  next.noDeco = fd.has("noDeco");
+  next.deco = fd.has("hadDeco");
+  delete next.hadDeco;
+  return next;
+}
+
+function currentDiveBase() {
+  if (view.name === "edit" && view.draft) {
+    const form = document.querySelector("form.dive-edit");
+    return form ? snapshotEditForm(form, view.draft) : cloneObj(view.draft);
+  }
+  const live = state.dives.find((x) => x.id === view.diveId);
+  return live ? cloneObj(live) : null;
+}
+
+async function fillExistingFromFound(base, { found, notes }) {
+  if (!found.length) {
+    view.computerHint = notes.join(" · ") || "Nessuna immersione nel file.";
+    render();
+    return;
+  }
+  const chosen = await askPickDive(found, base);
+  if (!chosen) {
+    view.computerHint = "Scelta annullata. La scheda non è cambiata.";
+    render();
+    return;
+  }
+  const api = window.SeaDiveComputers;
+  const raw = cloneObj(chosen);
+  if (!(Number(raw.surfaceInterval) > 0) && api.surfaceFromPrevDives) {
+    const si = api.surfaceFromPrevDives(raw, state.dives);
+    if (si) {
+      raw.surfaceInterval = si;
+      if (raw.computerLog) raw.computerLog.surfaceInterval = si;
+    }
+  }
+  let filled = applyComputerOnto(base, raw);
+  await reverseImportedPlace(filled);
+  filled = enrichImported(filled);
+  filled.id = base.id;
+  filled.number = base.number;
+  view = {
+    name: "edit",
+    diveId: filled.id,
+    draft: filled,
+    query: view.query || "",
+    computerHint: "Dati del computer messi in questa scheda. Controlla e premi Salva. Foto, firme e note già scritti restano.",
+  };
+  render();
+}
+
+function computerFillHtml() {
+  return `
+    <div class="computer-fill">
+      <h3 class="serif">Dal file</h3>
+      <p class="hint">Carica il file dentro questa scheda. Se ci sono più immersioni, metti solo l’ultima oppure quella di una data. Foto, firme e note già scritti restano.</p>
+      <div class="actions">
+        <button class="btn primary" type="button" data-fillpick>Carica file</button>
+        <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple data-fillfiles />
+        <button class="btn ghost" type="button" data-fillble>Bluetooth (EON)</button>
+      </div>
+      <p class="hint" data-fillhint ${view.computerHint ? "" : "hidden"}>${escapeHtml(view.computerHint || "")}</p>
+    </div>
+  `;
+}
+
+function bindComputerFill(root) {
+  const input = root.querySelector("[data-fillfiles]");
+  if (!input) return;
+  root.querySelector("[data-fillpick]").onclick = () => input.click();
+  input.onchange = async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    const base = currentDiveBase();
+    if (!base || !files.length) return;
+    try {
+      await fillExistingFromFound(base, await collectImported(files));
+    } catch (err) {
+      view.computerHint = err.message || String(err);
+      render();
+    }
+  };
+  root.querySelector("[data-fillble]").onclick = async () => {
+    const base = currentDiveBase();
+    if (!base) return;
+    const hint = root.querySelector("[data-fillhint]");
+    const say = (m) => {
+      view.computerHint = m;
+      if (hint) {
+        hint.hidden = !m;
+        hint.textContent = m;
+      }
+    };
+    try {
+      say("Apri il selettore Bluetooth…");
+      const { name, dives } = await window.SeaDiveBle.downloadEonDives(say);
+      await fillExistingFromFound(base, {
+        found: dives || [],
+        notes: [`${name}: ${(dives || []).length} immersioni`],
+      });
+    } catch (err) {
+      view.computerHint = err.message || String(err);
+      render();
+    }
+  };
+}
+
 function renderStats() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("il tuo mare"));
@@ -2536,6 +4549,522 @@ function renderStats() {
   return frag;
 }
 
+function renderPeople() {
+  const frag = document.createDocumentFragment();
+  frag.append(topbar("Community"));
+  const card = document.createElement("section");
+  card.className = "card";
+  const role = view.peopleRole || "all";
+  const q = String(view.peopleQuery || "").trim().toLowerCase();
+  const people = [...(state.people || [])]
+    .filter((p) => role === "all" || p.role === role)
+    .filter((p) => {
+      if (!q) return true;
+      return [p.name, p.firstName, p.lastName, p.cert, p.lead, p.note, roleLabel(p.role)].join(" ").toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      const ao = samePersonName(a.name, state.profile.name) ? 0 : 1;
+      const bo = samePersonName(b.name, state.profile.name) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it");
+    });
+  card.innerHTML = `
+    <h2 class="serif" style="margin:0 0 6px">Community</h2>
+    <p class="hint">Scrivi nome o cognome. Se il profilo è in rete, entrano da soli nome, cognome, numero di brevetto e firma. In rete non va il diario.</p>
+    <div class="chips" data-roles></div>
+    <input class="search" data-find placeholder="Nome e cognome" value="${escapeHtml(view.peopleQuery || "")}" />
+    <button class="btn primary btn-block" type="button" data-findremote>Cerca nominativo</button>
+    <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
+    <div class="people-list" data-list></div>
+    <div class="actions">
+      <button class="btn primary" type="button" data-addperson>Aggiungi persona</button>
+      <button class="btn ghost" type="button" data-receivecontact>Ricevi contatto</button>
+      <button class="btn ghost" type="button" data-receive>Ricevi immersione</button>
+      <input type="file" data-receivefile />
+      <input type="file" data-receivecontactfile />
+    </div>
+  `;
+  const roles = card.querySelector("[data-roles]");
+  [["all", "Tutti"], ["buddy", "Buddy"], ["guide", "Istruttori"], ["center", "Diving"]].forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${role === id ? " on" : ""}`;
+    b.textContent = label;
+    b.onclick = () => {
+      view.peopleRole = id;
+      view.personId = null;
+      render();
+    };
+    roles.append(b);
+  });
+  const list = card.querySelector("[data-list]");
+  (view.onlineHits || []).forEach((cardHit) => {
+    const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+    const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
+    const row = document.createElement("article");
+    row.className = "people-row";
+    row.innerHTML = `
+      <button type="button" class="people-open">
+        <strong>${escapeHtml(who)}</strong>
+        <small>In rete${extra ? " · " + escapeHtml(extra) : ""}${cardHit.sign ? " · firma" : ""}</small>
+      </button>
+      ${cardHit.sign ? `<img class="people-sign" alt="" src="${escapeHtml(cardHit.sign)}" />` : ""}
+      <button class="btn primary people-share" type="button">Inserisci</button>
+    `;
+    const insert = () => {
+      const stored = insertOnlineProfile(cardHit);
+      save(state);
+      view.onlineHits = [];
+      view.peopleQuery = who;
+      view.personId = stored.person?.id || null;
+      view.peopleHint = cardHit.sign
+        ? `Inserito ${who}. Numero di brevetto e firma entrano nella nuova immersione.`
+        : `Inserito ${who}. Manca la firma sul profilo.`;
+      render();
+    };
+    row.querySelector(".people-open").onclick = insert;
+    row.querySelector(".people-share").onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      insert();
+    };
+    list.append(row);
+  });
+  if (!people.length && !(view.onlineHits || []).length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = q || role !== "all"
+      ? "Nessuno con questo filtro."
+      : "Nessuno ancora. Aggiungi un buddy, un istruttore o un diving, oppure salva un'immersione con il loro nome.";
+    list.append(empty);
+  } else {
+    people.forEach((p) => {
+      const n = divesForPerson(p).length;
+      const row = document.createElement("article");
+      row.className = "people-card";
+      const names = personNames(p);
+      const mine = samePersonName(p.name, state.profile.name);
+      const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
+      const meta = [
+        roleLabel(p.role),
+        p.role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · "),
+        mine ? "il tuo profilo" : "",
+        p.following ? "seguito" : "",
+        `${n} ${n === 1 ? "scheda" : "schede"}`,
+      ].filter(Boolean).join(" · ");
+      const first = p.role === "center" ? p.name || "" : names.firstName || p.name || "";
+      const last = p.role === "center" ? "" : names.lastName || "";
+      row.innerHTML = `
+        <button type="button" class="people-open">
+          <span class="people-name"><strong>${escapeHtml(first)}</strong>${last ? `<strong>${escapeHtml(last)}</strong>` : ""}</span>
+          <small>${escapeHtml(meta)}</small>
+        </button>
+        ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
+        <div class="people-actions">
+          ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
+          <button class="btn danger people-del" type="button">Elimina</button>
+        </div>
+      `;
+      row.querySelector(".people-open").onclick = () => {
+        view.personId = p.id;
+        view.peopleHint = "";
+        render();
+      };
+      row.querySelector(".people-share")?.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (p.role !== "center") {
+          upsertPerson({
+            id: p.id,
+            role: p.role,
+            name: p.name,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            cert: p.cert,
+            following: true,
+          });
+          p.following = true;
+          save(state);
+        }
+        const sent = await sharePersonCard(p);
+        if (!sent) return;
+        view.peopleHint = `Vi seguite con ${p.name}. Scambiati nome, cognome, brevetto e firma.`;
+        render();
+      });
+      row.querySelector(".people-del").onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!(await removePerson(p))) return;
+        if (view.personId === p.id) view.personId = null;
+        render();
+      };
+      list.append(row);
+    });
+  }
+  const find = card.querySelector("[data-find]");
+  const findRemote = async () => {
+    const q = find.value.trim();
+    view.peopleQuery = q;
+    view.onlineHits = [];
+    view.personId = null;
+    if (communityWords(q).join("").length < 3) {
+      view.peopleHint = "";
+      render();
+      queueMicrotask(() => document.querySelector("[data-find]")?.focus());
+      return;
+    }
+    view.peopleHint = "Cerco in rete…";
+    render();
+    const box = document.querySelector("[data-find]");
+    const result = await findOnlineProfiles(q);
+    if ((box?.value || "").trim() !== q) return;
+    if (result.hits?.length === 1) {
+      const cardHit = result.hits[0];
+      const stored = insertOnlineProfile(cardHit);
+      save(state);
+      const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+      view.personId = stored.person?.id || null;
+      view.peopleHint = cardHit.sign
+        ? `Inserito ${who}. Numero di brevetto e firma entrano nella nuova immersione.`
+        : `Inserito ${who}. Manca la firma sul profilo.`;
+    } else if (result.hits?.length > 1) {
+      view.onlineHits = result.hits;
+      view.peopleHint = "Più profili in rete. Tocca Inserisci su quello giusto.";
+    } else {
+      view.peopleHint = communityMissText(result.error);
+    }
+    render();
+    queueMicrotask(() => {
+      const again = document.querySelector("[data-find]");
+      if (!again) return;
+      again.focus();
+      const end = again.value.length;
+      again.setSelectionRange?.(end, end);
+    });
+  };
+  let peopleSearchTimer = 0;
+  find.oninput = () => {
+    clearTimeout(peopleSearchTimer);
+    peopleSearchTimer = setTimeout(() => findRemote(), 450);
+  };
+  find.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(peopleSearchTimer);
+      findRemote();
+    }
+  };
+  card.querySelector("[data-findremote]").onclick = () => {
+    clearTimeout(peopleSearchTimer);
+    findRemote();
+  };
+  card.querySelector("[data-addperson]").onclick = () => {
+    view.personId = "new";
+    view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
+    view.peopleHint = "";
+    render();
+  };
+  const input = card.querySelector("[data-receivefile]");
+  card.querySelector("[data-receive]").onclick = () => input.click();
+  input.onchange = async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    if (!files.length) return;
+    try {
+      const dive = await importSharedFile(files[0]);
+      view = { name: "detail", diveId: dive.id, query: view.query || "", peopleRole: view.peopleRole || "all" };
+      render();
+    } catch (err) {
+      view.peopleHint = err.message || String(err);
+      render();
+    }
+  };
+  const contactInput = card.querySelector("[data-receivecontactfile]");
+  card.querySelector("[data-receivecontact]").onclick = () => contactInput.click();
+  contactInput.onchange = async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    if (!files.length) return;
+    try {
+      const res = await importFollowFile(files[0]);
+      view.personId = res.person?.id || null;
+      view.personDraft = null;
+      view.peopleHint = res.person
+        ? `Segui ${res.person.name}. Nome, cognome, brevetto e firma sono pronti: se lo scegli come buddy, entrano nella nuova immersione.`
+        : "";
+      render();
+    } catch (err) {
+      view.peopleHint = err.message || String(err);
+      render();
+    }
+  };
+  frag.append(card);
+  return frag;
+}
+
+function renderPerson() {
+  const creating = view.personId === "new";
+  const current = creating ? view.personDraft : (state.people || []).find((p) => p.id === view.personId);
+  if (!current) {
+    view.personId = null;
+    return renderPeople();
+  }
+  const frag = document.createDocumentFragment();
+  frag.append(topbar(creating ? "nuova persona" : roleLabel(current.role)));
+  const form = document.createElement("form");
+  form.className = "card";
+  const dives = creating ? [] : divesForPerson(current);
+  const names = personNames(current);
+  form.innerHTML = `
+    <h2 class="serif" style="margin:0 0 6px">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
+    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Nome, cognome e brevetto restano pronti sulla scheda." : "Nome, cognome e brevetto si aggiornano anche sulle schede in cui compare già."}</p>
+    <p class="hint" style="margin-top:12px">Ruolo</p>
+    <div class="chips" data-roles></div>
+    <input type="hidden" name="role" value="${escapeHtml(current.role || "buddy")}" />
+    <div class="form-grid" style="margin-top:12px">
+      ${field("firstName", "Nome", names.firstName, true)}
+      ${field("lastName", "Cognome", names.lastName, true)}
+      ${field("cert", "N° brevetto", current.cert, true)}
+      ${field("name", "Denominazione diving", current.role === "center" ? current.name : "", true)}
+      ${field("lead", "Responsabile del diving", current.lead, true)}
+      ${field("note", "Note", current.note, true)}
+    </div>
+    <p class="hint">Appena salvi un buddy o un istruttore lo segui. Nella nuova immersione basta scrivere nome e cognome: brevetto e firma entrano da soli, insieme al tuo profilo.</p>
+    <div data-personsign ${current.role === "center" ? "hidden" : ""}>
+      <p class="hint">Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma.</p>
+      ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
+      ${signPreviewHtml(personKnownSign(current))}
+    </div>
+    ${current.following ? `<p class="hint">Seguito. I dati che arrivano da questa persona aggiornano solo nome, cognome e brevetto.</p>` : ""}
+    ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
+    <div class="actions">
+      <button class="btn primary" type="submit">Salva</button>
+      ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-shareperson>Condividi nome e brevetto</button>`}
+      ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-follow>${current.following ? "Invia i miei dati" : "Segui"}</button>`}
+      ${!creating && current.following && current.role !== "center" ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
+      <button class="btn ghost" type="button" data-back>Torna a Community</button>
+      ${creating ? "" : `<button class="btn danger" type="button" data-del>Elimina contatto</button>`}
+    </div>
+  `;
+  const roleInput = form.querySelector("[name=role]");
+  const roles = form.querySelector("[data-roles]");
+  [["buddy", "Buddy"], ["guide", "Istruttore"], ["center", "Diving"]].forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `chip${(current.role || "buddy") === id ? " on" : ""}`;
+    b.textContent = label;
+    if (creating) {
+      b.onclick = () => {
+        current.role = id;
+        roleInput.value = id;
+        roles.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+        const signBox = form.querySelector("[data-personsign]");
+        if (signBox) signBox.hidden = id === "center";
+      };
+    } else if (id !== (current.role || "buddy")) {
+      b.disabled = true;
+    }
+    roles.append(b);
+  });
+  const diveBox = form.querySelector("[data-dives]");
+  dives
+    .slice()
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+    .forEach((d) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "people-row";
+      b.innerHTML = `<span><strong>${escapeHtml(d.site || "Senza nome")}</strong><small>${escapeHtml(d.date || "")}${d.maxDepth ? " · " + escapeHtml(d.maxDepth) + " m" : ""}</small></span>`;
+      b.onclick = () => {
+        view = { name: "detail", diveId: d.id, query: view.query || "" };
+        render();
+      };
+      diveBox.append(b);
+    });
+  let personSign = personKnownSign(current);
+  queueMicrotask(() => {
+    bindSign(form.querySelector('[data-sign="personSign"]'), personSign, (v) => {
+      personSign = v;
+    });
+  });
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const firstName = String(fd.get("firstName") || "").trim();
+    const lastName = String(fd.get("lastName") || "").trim();
+    const denom = String(fd.get("name") || "").trim();
+    const role = fd.get("role") || current.role;
+    const name = role === "center" ? denom : [firstName, lastName].filter(Boolean).join(" ");
+    if (!name) {
+      alert(role === "center" ? "Scrivi la denominazione del diving." : "Scrivi nome e cognome.");
+      return;
+    }
+    const before = creating ? null : { ...current };
+    const person = upsertPerson({
+      id: current.id,
+      role,
+      name,
+      firstName: role === "center" ? "" : firstName,
+      lastName: role === "center" ? "" : lastName,
+      cert: fd.get("cert") || "",
+      lead: fd.get("lead") || "",
+      note: fd.get("note") || "",
+      following: role === "center" ? false : current.following !== false,
+      sign: role === "center" ? "" : personSign,
+    });
+    if (before && person) applyPersonOntoDives(before, person);
+    if (person) stampPersonSign(person);
+    state.peopleSeeded = true;
+    save(state);
+    view.personId = null;
+    view.personDraft = null;
+    view.peopleHint = "";
+    render();
+  };
+  form.querySelector("[data-shareperson]")?.addEventListener("click", async () => {
+    const names = personNames({
+      ...current,
+      firstName: form.querySelector("[name=firstName]")?.value || current.firstName,
+      lastName: form.querySelector("[name=lastName]")?.value || current.lastName,
+      name: current.role === "center" ? current.name : "",
+    });
+    const sent = await sharePersonCard({
+      ...current,
+      firstName: names.firstName,
+      lastName: names.lastName,
+      name: names.name || current.name,
+      cert: form.querySelector("[name=cert]")?.value || current.cert,
+    });
+    if (!sent) return;
+    view.peopleHint = "Condivisi nome, cognome, brevetto e firma. Vi seguite in automatico.";
+  });
+  form.querySelector("[data-back]").onclick = () => {
+    view.personId = null;
+    view.personDraft = null;
+    render();
+  };
+  form.querySelector("[data-follow]")?.addEventListener("click", async () => {
+    const me = myIdentityCard();
+    if (!me.firstName && !me.lastName) {
+      alert("Scrivi nome e cognome nel profilo. Al seguito si scambiano nome, cognome, brevetto e firma.");
+      return;
+    }
+    if (!creating && current.id) {
+      const payload = {
+        id: current.id,
+        role: current.role,
+        name: current.name,
+        firstName: current.firstName,
+        lastName: current.lastName,
+        cert: current.cert,
+        following: true,
+      };
+      const sign = personKnownSign(current);
+      if (sign) payload.sign = sign;
+      upsertPerson(payload);
+      current.following = true;
+      save(state);
+      await sharePersonCard(current);
+    } else {
+      await shareFollowCard();
+    }
+    view.peopleHint = "Vi seguite. Scambiati nome, cognome, brevetto e firma. L'immersione resta sul tasto Condividi.";
+    render();
+  });
+  form.querySelector("[data-unfollow]")?.addEventListener("click", () => {
+    upsertPerson({
+      id: current.id,
+      role: current.role,
+      name: current.name,
+      firstName: current.firstName,
+      lastName: current.lastName,
+      cert: current.cert,
+      following: false,
+    });
+    save(state);
+    view.personId = current.id;
+    render();
+  });
+  form.querySelector("[data-del]")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!(await removePerson(current))) return;
+    view.personId = null;
+    view.personDraft = null;
+    render();
+  });
+  frag.append(form);
+  return frag;
+}
+
+function peoplePicksHtml() {
+  return `<div class="people-picks" data-peoplepicks></div>`;
+}
+
+function bindPeoplePicks(form, d) {
+  const box = form.querySelector("[data-peoplepicks]");
+  if (!box) return;
+  const groups = [
+    ["buddy", "Buddy in community", "buddyName", "buddyCert", "buddyId"],
+    ["guide", "Istruttori in community", "guideName", "guideCert", "guideId"],
+    ["center", "Diving in community", "centerName", "centerLead", "centerId"],
+  ];
+  groups.forEach(([role, title, nameKey, extraKey, idKey]) => {
+    const list = (state.people || []).filter((p) => p.role === role);
+    if (!list.length) return;
+    const wrap = document.createElement("div");
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = title;
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    chips.dataset.pickrole = role;
+    list
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, "it"))
+      .forEach((p) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        const extra = role === "center" ? p.lead : p.cert;
+        const selected = d[idKey] === p.id || personKey(role, d[nameKey]) === personKey(role, p.name);
+        b.className = `chip${selected ? " on" : ""}`;
+        b.textContent = extra ? `${p.name} · ${extra}` : p.name;
+        b.onclick = async () => {
+          if (b.classList.contains("on")) {
+            if (form._dropContact) await form._dropContact(role);
+            return;
+          }
+          d[nameKey] = p.name;
+          d[idKey] = p.id;
+          d[extraKey] = role === "center" ? p.lead || "" : p.cert || "";
+          const nameInput = form.querySelector(`[name=${nameKey}]`);
+          const extraInput = form.querySelector(`[name=${extraKey}]`);
+          if (nameInput) nameInput.value = d[nameKey];
+          if (extraInput) extraInput.value = d[extraKey];
+          chips.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
+          b.classList.add("on");
+          if (role === "buddy" || role === "guide") {
+            const signKey = role === "buddy" ? "buddySign" : "guideSign";
+            const sign = personKnownSign(p);
+            if (sign) d[signKey] = sign;
+            form._applyOwnerSign?.({ forceBuddy: role === "buddy", forceGuide: role === "guide" });
+            const line = form.querySelector("[data-pickedperson]");
+            if (line) {
+              line.hidden = false;
+              line.textContent = profileShareLine(p, sign);
+            }
+            save(state);
+          }
+          const dropBtn = form.querySelector(`[data-dropcontact="${role}"]`);
+          if (dropBtn) dropBtn.hidden = false;
+        };
+        chips.append(b);
+      });
+    wrap.append(hint, chips);
+    box.append(wrap);
+  });
+}
+
 function renderProfile() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("profilo"));
@@ -2543,9 +5072,10 @@ function renderProfile() {
   form.className = "card profile-form";
   const p = state.profile;
   form.innerHTML = `
-    <h2 class="serif profile-title">Il tuo profilo</h2>
+    <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
     <section class="profile-block">
       <h3>Anagrafica</h3>
+      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. Gli altri trovano nome, cognome, numero di brevetto e firma." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "Online vanno solo nome, cognome, numero di brevetto e firma. Il diario resta sul telefono."}</p>
       <div class="form-grid">
         ${field("name", "Nome e cognome", p.name, true)}
       </div>
@@ -2557,6 +5087,19 @@ function renderProfile() {
         ${field("certNumber", "N° brevetto", p.certNumber, true)}
         ${field("certDate", "Conseguito il", p.certDate, true, "date")}
       </div>
+    </section>
+    <section class="profile-block certs-box">
+      <h3>Altri brevetti</h3>
+      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
+      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
+      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
+    </section>
+    <section class="profile-block">
+      <h3>La tua firma</h3>
+      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
+      ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
+      <button class="btn primary btn-block" type="button" data-sharecontact>Condividi contatto su WhatsApp</button>
+      <p class="hint" data-sharehint>Nel file vanno nome, cognome, numero di brevetto e firma. Chi lo riceve, in Community, tocca Ricevi contatto.</p>
     </section>
     <section class="profile-block">
       <h3>Medico e assicurazione</h3>
@@ -2589,12 +5132,6 @@ function renderProfile() {
           ${field("recoverEmail", "Email", p.recoverEmail, false, "email")}
         </div>
       </div>
-    </section>
-    <section class="profile-block certs-box">
-      <h3>Altri brevetti</h3>
-      <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
-      <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
-      <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
     </section>
     <section class="profile-block vault-box">
       <h3>Copia di sicurezza</h3>
@@ -2644,7 +5181,30 @@ function renderProfile() {
     certsBox.insertAdjacentHTML("beforeend", certRowHtml());
     bindDel(certsBox.querySelector("[data-certrow]:last-child"));
   };
-  form.onsubmit = (e) => {
+  let ownerSign = profileSignImage();
+  queueMicrotask(() => {
+    bindSign(form.querySelector('[data-sign="ownerSign"]'), ownerSign, (v) => {
+      ownerSign = v;
+    });
+  });
+  const shareHint = form.querySelector("[data-sharehint]");
+  form.querySelector("[data-sharecontact]").onclick = async () => {
+    const sent = await shareProfileContact(
+      {
+        name: form.querySelector("[name=name]").value,
+        certNumber: form.querySelector("[name=certNumber]").value,
+        certLevel: form.querySelector("[name=certLevel]").value,
+      },
+      ownerSign
+    );
+    if (!shareHint) return;
+    if (sent.error === "name") shareHint.textContent = "Scrivi nome e cognome, poi condividi il contatto.";
+    else if (sent.error === "cert") shareHint.textContent = "Scrivi il numero di brevetto, poi condividi il contatto.";
+    else if (sent.error === "sign") shareHint.textContent = "Firma nel riquadro, poi condividi il contatto.";
+    else if (sent.how === "download") shareHint.textContent = "Contatto scaricato. Su WhatsApp allegalo come documento. L'altro, in Community, tocca Ricevi contatto.";
+    else if (sent.ok) shareHint.textContent = "Scegli WhatsApp e invia il file. Chi lo riceve lo apre in Community con Ricevi contatto.";
+  };
+  form.onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     fd.delete("certName");
@@ -2656,8 +5216,14 @@ function renderProfile() {
         number: row.querySelector("[name=certNo]").value.trim(),
       }))
       .filter((c) => c.name || c.number);
-    state.profile = { ...state.profile, ...Object.fromEntries(fd.entries()), certs };
+    state.profile = {
+      ...state.profile,
+      ...Object.fromEntries(fd.entries()),
+      certs,
+      sign: typeof ownerSign === "string" && ownerSign.startsWith("data:image") ? ownerSign : "",
+    };
     save(state);
+    publishMyProfile().catch(() => {});
     render();
   };
   form.querySelector("[data-out]").onclick = () => {
@@ -2680,7 +5246,7 @@ function field(name, label, value, full = false, type = "text") {
   if (type === "time") {
     return `<label class="${cls}">${escapeHtml(label)}<span class="time-box"><input name="${name}" type="time" value="${escapeHtml(value)}" /></span></label>`;
   }
-  if (type === "decimal") {
+  if (type === "decimal" || type === "number") {
     return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="text" inputmode="decimal" lang="it" enterkeyhint="done" value="${escapeHtml(value)}" /></label>`;
   }
   return `<label class="${cls}">${escapeHtml(label)}<input name="${name}" type="${type}" value="${escapeHtml(value)}" /></label>`;
@@ -2707,6 +5273,7 @@ function renderDetail() {
     return renderLog();
   }
   applyDiveMetrics(d);
+  if (fillMissingSigns(d)) save(state);
   frag.append(topbar(`immersione n° ${d.number}`));
   const card = document.createElement("section");
   card.className = "card";
@@ -2721,6 +5288,7 @@ function renderDetail() {
       </div>
       <div class="num">${escapeHtml(d.number)}</div>
     </div>
+    ${computerFillHtml()}
     ${d.photo ? `<img class="cover" alt="" src="${d.photo}" />` : ""}
     ${satMapHtml(d, "sat-place")}
     <div class="kv">
@@ -2767,47 +5335,67 @@ function renderDetail() {
     <h3 class="serif">Firme — L. 70/2026</h3>
     <p class="hint">${LEGAL_L70}</p>
     <div class="sign-board">
+      ${ownerSignCard()}
       ${signEvidence("buddy", "Buddy", d.buddyName, d.buddyCert, d.buddySign, d.sigMeta?.buddy)}
       ${signEvidence("guide", "Guida / istruttore", d.guideName, d.guideCert, d.guideSign, d.sigMeta?.guide)}
       ${signEvidence("center", "Diving center", d.centerName, d.centerLead, d.centerSign, d.sigMeta?.center)}
     </div>
     <div class="actions">
       <button class="btn primary" type="button" data-act="edit">Modifica</button>
+      <button class="btn ghost" type="button" data-act="share">Condividi</button>
       <button class="btn ghost" type="button" data-act="back">Torna al diario</button>
       <button class="btn danger" type="button" data-act="del">Elimina</button>
     </div>
+    <p class="hint">Condividi porta anche la firma del buddy, della guida e del diving. Chi la riceve con Ricevi immersione la ritrova già firmata.</p>
   `;
+  bindComputerFill(card);
   card.querySelector("[data-act=edit]").onclick = () => {
     view = { name: "edit", diveId: d.id, draft: cloneObj(d), query: view.query };
     render();
   };
+  card.querySelector("[data-act=share]").onclick = () => shareOneDive(d);
   card.querySelector("[data-act=back]").onclick = () => {
     view = { name: "log", query: view.query };
     render();
   };
   card.querySelector("[data-act=del]").onclick = async () => {
-    if (!(await askDeleteDive(d))) return;
-    removeDive(d);
+    if (!(await removeDive(d))) return;
     view = { name: "log", query: view.query };
     render();
   };
   card.querySelectorAll("[data-clearsign]").forEach((btn) => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const who = btn.getAttribute("data-clearsign");
-      const map = {
-        buddy: ["buddySign", "buddy"],
-        guide: ["guideSign", "guide"],
-        center: ["centerSign", "center"],
-      };
-      const spec = map[who];
+      const spec = DIVE_CONTACT[who];
       if (!spec) return;
       const live = state.dives.find((x) => x.id === d.id);
       if (!live) return;
-      if (live[spec[0]] && !confirm("Cancellare questa firma e rifarla?")) return;
-      live[spec[0]] = "";
-      if (live.sigMeta) live.sigMeta[spec[1]] = null;
+      if (live[spec.sign]) {
+        const ok = await askConfirm({
+          title: "Cancella firma",
+          message: "Vuoi cancellare questa firma e rifarla?",
+          ok: "Cancella",
+          cancel: "Annulla",
+        });
+        if (!ok) return;
+        live.signSkipped = { ...(live.signSkipped || {}), [who]: true };
+      }
+      live[spec.sign] = "";
+      if (live.sigMeta) live.sigMeta[spec.meta] = null;
       save(state);
-      view = { name: "edit", diveId: live.id, draft: cloneObj(live), query: view.query, focusSign: spec[0] };
+      view = { name: "edit", diveId: live.id, draft: cloneObj(live), query: view.query, focusSign: spec.sign };
+      render();
+    };
+  });
+  card.querySelectorAll("[data-dropcontact]").forEach((btn) => {
+    btn.onclick = async () => {
+      const role = btn.getAttribute("data-dropcontact");
+      if (!DIVE_CONTACT[role]) return;
+      const live = state.dives.find((x) => x.id === d.id);
+      if (!live || !diveContactPresent(live, role)) return;
+      if (!(await askDropDiveContact(live, role))) return;
+      clearDiveContact(live, role);
+      save(state);
       render();
     };
   });
@@ -2823,6 +5411,7 @@ function renderDetail() {
 
 function startNew() {
   const draft = emptyDive();
+  draft.manual = true;
   draft.number = nextNumber();
   draft.certOnDive = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
   const prev = [...(state.dives || [])].sort((a, b) => {
@@ -2832,6 +5421,9 @@ function startNew() {
   }).pop();
   draft.tank = "15";
   draft.pressureStart = Number(prev?.pressureStart) >= 150 ? String(prev.pressureStart) : "200";
+  forgetDeletedDive(draft);
+  state.dives.push(draft);
+  save(state);
   view = { name: "edit", diveId: draft.id, draft, query: view.query };
   render();
 }
@@ -2840,13 +5432,21 @@ function renderEdit() {
   const d = view.draft;
   ensureCircuit(d);
   applyDiveMetrics(d);
+  if (fillMissingSigns(d)) {
+    const live = (state.dives || []).find((x) => x.id === d.id);
+    if (live) {
+      if (!live.buddySign) live.buddySign = d.buddySign;
+      if (!live.guideSign) live.guideSign = d.guideSign;
+      save(state);
+    }
+  }
   const frag = document.createDocumentFragment();
   frag.append(topbar(d.number ? `scheda n° ${d.number}` : "nuova scheda"));
   const form = document.createElement("form");
   form.className = "card dive-edit";
   const log = d.computerLog || {};
   form.innerHTML = `
-    ${view.computerHint ? `<p class="hint">${escapeHtml(view.computerHint)}</p>` : ""}
+    ${computerFillHtml()}
     <div class="form-grid">
       ${field("number", "Immersione n°", d.number, false, "number")}
       ${field("date", "Data", d.date, false, "date")}
@@ -2960,13 +5560,20 @@ function renderEdit() {
     <div class="sign-legal" id="firme">
       <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
       <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
+      ${ownerOnDiveHtml()}
+      ${peoplePicksHtml()}
+      <p class="hint" data-pickedperson hidden></p>
+      <p class="hint">Scrivi nome e cognome di un buddy già in Community: brevetto e firma entrano da soli, insieme al tuo profilo.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
+        ${dropContactButton("buddy", d)}
         ${field("guideName", "Guida / istruttore — generalità", d.guideName)}
         ${field("guideCert", "N° brevetto guida / istruttore", d.guideCert)}
+        ${dropContactButton("guide", d)}
         ${field("centerName", "Denominazione diving center", d.centerName, true)}
         ${field("centerLead", "Responsabile del centro", d.centerLead, true)}
+        ${dropContactButton("center", d)}
       </div>
       ${signPad("buddySign", "Firma buddy", "Compagno di immersione")}
       ${signPad("guideSign", "Firma guida / istruttore", "Obbligatoria per legge sulla scheda")}
@@ -2978,6 +5585,15 @@ function renderEdit() {
       ${state.dives.some((x) => x.id === d.id) ? `<button class="btn danger" type="button" data-deldive>Elimina</button>` : ""}
     </div>
   `;
+  bindComputerFill(form);
+  bindPeoplePicks(form, d);
+  form.querySelectorAll("[data-dropcontact]").forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.preventDefault();
+      const role = btn.getAttribute("data-dropcontact");
+      if (form._dropContact) await form._dropContact(role);
+    };
+  });
   const certInput = form.querySelector("[name=certOnDive]");
   const picks = form.querySelector("[data-certpicks]");
   profileCerts().forEach((c) => {
@@ -3138,16 +5754,123 @@ function renderEdit() {
     applyPlaceToDive(d);
     bindDiveSiteMap(form, d);
     refreshProfile();
-    bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => (d.buddySign = v));
-    bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => (d.guideSign = v));
-    bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    const applied = { buddy: "", guide: "" };
+    const buddyPad = bindSign(form.querySelector('[data-sign="buddySign"]'), d.buddySign, (v) => {
+      d.buddySign = v;
+      if (v !== applied.buddy) applied.buddy = "";
+    });
+    const guidePad = bindSign(form.querySelector('[data-sign="guideSign"]'), d.guideSign, (v) => {
+      d.guideSign = v;
+      if (v !== applied.guide) applied.guide = "";
+    });
+    const centerPad = bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    const stamped = { buddy: null, guide: null };
+    form._applyOwnerSign = (opts = {}) => {
+      [
+        ["buddyName", "buddyCert", "buddySign", buddyPad, "buddy", "buddyId"],
+        ["guideName", "guideCert", "guideSign", guidePad, "guide", "guideId"],
+      ].forEach(([nameKey, certKey, signKey, pad, role, idKey]) => {
+        const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
+        const force = role === "buddy" ? opts.forceBuddy : opts.forceGuide;
+        if (d.signSkipped?.[role] && !force && opts.initial) return;
+        if (force && d.signSkipped) delete d.signSkipped[role];
+        const named = personByTypedName(role, typed);
+        const certInput = form.querySelector(`[name=${certKey}]`);
+        const prev = stamped[role];
+        if (named) {
+          d[idKey] = named.id;
+          d[certKey] = named.cert || "";
+          if (certInput) certInput.value = named.cert || "";
+          stamped[role] = { id: named.id, cert: named.cert || "" };
+          if (named.role !== "center" && named.following !== true) {
+            named.following = true;
+            save(state);
+          }
+        } else if (prev && certInput && certInput.value === prev.cert) {
+          d[idKey] = "";
+          d[certKey] = "";
+          certInput.value = "";
+          stamped[role] = null;
+        }
+        const sign = (named && personKnownSign(named)) || signForInsertedPerson(role, typed);
+        const current = d[signKey] || "";
+        if (sign && (force || !current || applied[role] || current === sign)) {
+          applied[role] = sign;
+          pad?.set(sign);
+          showAppliedSign(form.querySelector(`[data-pad="${signKey}"]`), sign);
+        } else if (!sign && applied[role]) {
+          applied[role] = "";
+          pad?.clear();
+          showAppliedSign(form.querySelector(`[data-pad="${signKey}"]`), "");
+        }
+      });
+      const line = form.querySelector("[data-pickedperson]");
+      const buddyNamed = personByTypedName("buddy", form.querySelector("[name=buddyName]")?.value || "");
+      const guideNamed = personByTypedName("guide", form.querySelector("[name=guideName]")?.value || "");
+      const shown = buddyNamed || guideNamed;
+      if (line && shown) {
+        const sign = personKnownSign(shown);
+        line.hidden = false;
+        line.textContent = profileShareLine(shown, sign);
+      } else if (line && !opts.forceBuddy && !opts.forceGuide) {
+        line.hidden = true;
+        line.textContent = "";
+      }
+    };
+    form._dropContact = async (role) => {
+      const spec = DIVE_CONTACT[role];
+      if (!spec) return;
+      const nameInput = form.querySelector(`[name=${spec.name}]`);
+      const extraInput = form.querySelector(`[name=${spec.extra}]`);
+      const typed = String(nameInput?.value || d[spec.name] || "").trim();
+      if (!typed && !diveContactPresent(d, role)) return;
+      if (!(await askDropDiveContact({ ...d, [spec.name]: typed || d[spec.name] }, role))) return;
+      clearDiveContact(d, role);
+      const live = (state.dives || []).find((x) => x.id === d.id);
+      if (live && live !== d) clearDiveContact(live, role);
+      save(state);
+      if (nameInput) nameInput.value = "";
+      if (extraInput) extraInput.value = "";
+      const okBox = form.querySelector(`[name=${spec.sign}Ok]`);
+      if (okBox) okBox.checked = false;
+      if (role === "buddy" || role === "guide") applied[role] = "";
+      stamped[role] = null;
+      const pad = role === "buddy" ? buddyPad : role === "guide" ? guidePad : centerPad;
+      pad?.clear();
+      showAppliedSign(form.querySelector(`[data-pad="${spec.sign}"]`), "");
+      form.querySelectorAll(`[data-pickrole="${role}"] .chip`).forEach((x) => x.classList.remove("on"));
+      const dropBtn = form.querySelector(`[data-dropcontact="${role}"]`);
+      if (dropBtn) dropBtn.hidden = true;
+      const picked = form.querySelector("[data-pickedperson]");
+      const stillBuddy = personByTypedName("buddy", form.querySelector("[name=buddyName]")?.value || "");
+      const stillGuide = personByTypedName("guide", form.querySelector("[name=guideName]")?.value || "");
+      const still = stillBuddy || stillGuide;
+      if (picked) {
+        if (still) {
+          picked.hidden = false;
+          picked.textContent = profileShareLine(still, personKnownSign(still));
+        } else {
+          picked.hidden = true;
+          picked.textContent = "";
+        }
+      }
+    };
+    form._applyOwnerSign({ initial: true });
+    ["buddyName", "guideName"].forEach((name) => {
+      form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
+        form._applyOwnerSign();
+        scheduleCommunityPull(form);
+      });
+    });
     if (view.focusSign) {
       form.querySelector(`[data-sign="${view.focusSign}"]`)?.closest(".sign-pad")?.scrollIntoView({ behavior: "smooth", block: "center" });
       view.focusSign = "";
     }
   });
+  form.noValidate = true;
   form.onsubmit = async (e) => {
     e.preventDefault();
+    try {
     const fd = new FormData(form);
     fd.delete("photoFile");
     fd.delete("buddySignOk");
@@ -3194,8 +5917,14 @@ function renderEdit() {
     next.deco = fd.has("hadDeco");
     delete next.hadDeco;
     ensureCircuit(next);
+    ["number", "maxDepth", "avgDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "surfaceInterval", "visibility", "waterTemp", "bottomTemp", "airTemp", "cns", "otu", "tss", "ascentRate", "ascentMax", "sac", "ndl", "pressureStart", "pressureEnd"].forEach((k) => {
+      if (next[k] != null && next[k] !== "") next[k] = dotNumber(next[k]);
+    });
+    if (!next.computerLog && !next.profileFromComputer) next.manual = true;
     next.profilePoints = ensureThermoProfile(next);
     applyDiveMetrics(next);
+    linkPeopleOnDive(next);
+    state.peopleSeeded = true;
     if (next.guideSign && !String(next.guideName || "").trim()) {
       alert("Per la firma legale della guida indica le generalità (L. 70/2026).");
       return;
@@ -3220,14 +5949,18 @@ function renderEdit() {
     save(state);
     view = { name: "detail", diveId: next.id, query: view.query };
     render();
+    } catch (err) {
+      alert(err.message || String(err));
+    }
   };
   form.querySelector("[data-cancel]").onclick = () => {
     view = { name: "log", query: view.query };
     render();
   };
-  form.querySelector("[data-deldive]")?.addEventListener("click", async () => {
-    if (!(await askDeleteDive(d))) return;
-    removeDive(d);
+  form.querySelector("[data-deldive]")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!(await removeDive(d))) return;
     view = { name: "log", query: view.query };
     render();
   });
@@ -3250,27 +5983,145 @@ function legalMeta(role, name, cert, at, hash) {
   };
 }
 
-function signPad(key, title, note) {
+function personNameKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function samePersonName(a, b) {
+  const x = personNameKey(a);
+  const y = personNameKey(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const sort = (s) => s.split(" ").filter(Boolean).sort().join(" ");
+  return sort(x) === sort(y);
+}
+
+function profileSignImage() {
+  const sign = state.profile?.sign;
+  return typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+}
+
+function personKnownSign(person) {
+  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
+  if (person && person.role !== "center" && samePersonName(person.name, state.profile?.name)) return profileSignImage();
+  return "";
+}
+
+function showAppliedSign(padRoot, sign) {
+  const img = padRoot?.querySelector("[data-appliedsign]");
+  if (!img) return;
+  const ghost = padRoot.querySelector(".sign-ghost");
+  if (typeof sign === "string" && sign.startsWith("data:image")) {
+    img.src = sign;
+    img.hidden = false;
+    if (ghost) ghost.hidden = true;
+  } else {
+    img.hidden = true;
+    img.removeAttribute("src");
+  }
+}
+
+function signPreviewHtml(sign) {
+  return typeof sign === "string" && sign.startsWith("data:image")
+    ? `<img class="sign-preview" alt="Firma salvata" src="${escapeHtml(sign)}" />`
+    : "";
+}
+
+function signForInsertedPerson(role, typedName) {
+  const key = personNameKey(typedName);
+  if (!key || role === "center") return "";
+  const people = state.people || [];
+  const exact = people.find((p) => p.role === role && samePersonName(p.name, typedName));
+  const person = exact || people.find((p) => p.role !== "center" && samePersonName(p.name, typedName));
+  const fromPerson = personKnownSign(person);
+  if (fromPerson) return fromPerson;
+  if (samePersonName(state.profile.name, typedName)) return profileSignImage();
+  return "";
+}
+
+function fillMissingSigns(d) {
+  if (!d) return false;
+  let changed = false;
+  [
+    ["buddy", "buddyName", "buddySign"],
+    ["guide", "guideName", "guideSign"],
+  ].forEach(([role, nameKey, signKey]) => {
+    if (d.signSkipped?.[role]) return;
+    if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
+    const sign = signForInsertedPerson(role, d[nameKey]);
+    if (!sign) return;
+    d[signKey] = sign;
+    changed = true;
+  });
+  return changed;
+}
+
+function personByTypedName(role, typedName) {
+  const key = personNameKey(typedName);
+  if (!key || role === "center") return null;
+  const people = state.people || [];
+  return (
+    people.find((p) => p.role === role && samePersonName(p.name, typedName)) ||
+    people.find((p) => p.role !== "center" && samePersonName(p.name, typedName)) ||
+    null
+  );
+}
+
+function ownerOnDiveHtml() {
+  const name = String(state.profile?.name || "").trim();
+  const cert = String(state.profile?.certNumber || "").trim();
+  const sign = profileSignImage();
+  if (!name && !sign) {
+    return `<p class="hint">Il tuo profilo entra in ogni scheda: scrivi nome e firma in Profilo.</p>`;
+  }
+  return `<p class="hint">Il tuo profilo in scheda: ${escapeHtml(name || "—")}${cert ? " · brevetto " + escapeHtml(cert) : ""}${sign ? " · firma inserita" : " · manca la firma in Profilo"}</p>${signPreviewHtml(sign)}`;
+}
+
+function ownerSignCard() {
+  const name = String(state.profile?.name || "").trim();
+  if (!name) return "";
+  const cert = [state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" ");
+  return signEvidence("owner", "Subacqueo", name, cert, profileSignImage(), null, true);
+}
+
+function signPad(key, title, note, withConfirm = true) {
+  const profile = key === "ownerSign";
   return `
-    <div class="sign-pad" data-pad="${key}">
+    <div class="sign-pad${profile ? " sign-pad-profile" : ""}" data-pad="${key}">
       <div class="sign-pad-top">
         <div>
           <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(note)}</span>
         </div>
+        ${profile ? `<button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>` : ""}
       </div>
       <div class="sign-stage">
         <canvas class="sign" data-sign="${key}"></canvas>
-        <p class="sign-ghost">Firma qui con il dito o il pennino</p>
-        <button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>
+        <img class="sign-applied" data-appliedsign="${key}" alt="" hidden />
+        <p class="sign-ghost">${profile ? "Firma sulla riga" : "Firma qui con il dito o il pennino"}</p>
+        ${profile ? "" : `<button class="btn btn-wipe" type="button" data-clearsign="${key}">Cancella</button>`}
       </div>
-      <label class="sign-ok"><input type="checkbox" name="${key}Ok" /> Confermo di firmare questa scheda del libretto immersioni, in questa qualità, ai sensi della L. 70/2026 art. 12 c. 8. Restano allegate data, ora e impronta della scheda.</label>
+      ${
+        withConfirm
+          ? `<label class="sign-ok"><input type="checkbox" name="${key}Ok" /> Confermo di firmare questa scheda del libretto immersioni, in questa qualità, ai sensi della L. 70/2026 art. 12 c. 8. Restano allegate data, ora e impronta della scheda.</label>`
+          : ""
+      }
     </div>`;
 }
 
-function signEvidence(who, title, name, cert, image, meta) {
+function signEvidence(who, title, name, cert, image, meta, locked = false) {
   const when = meta?.at ? new Date(meta.at).toLocaleString("it-IT") : "";
   const signed = Boolean(image);
+  const hasContact = Boolean(String(name || "").trim() || String(cert || "").trim() || signed);
+  const actions = locked
+    ? `<span class="sign-lock">${signed ? "Firmata" : "Non firmata"}</span>`
+    : `<div class="sign-card-actions">
+        <button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>
+        ${hasContact ? `<button class="btn danger" type="button" data-dropcontact="${escapeHtml(who)}">Togli</button>` : ""}
+      </div>`;
   return `<article class="sign-card">
       <div class="sign-card-top">
         <div>
@@ -3278,7 +6129,7 @@ function signEvidence(who, title, name, cert, image, meta) {
           <span>${escapeHtml(name || "—")}</span>
           <small>${escapeHtml(cert || "")}${when ? " · " + escapeHtml(when) : ""}</small>
         </div>
-        <button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>
+        ${actions}
       </div>
       ${signed ? `<img alt="firma" src="${image}" />` : `<p class="sign-empty">Non firmata</p>`}
       ${
@@ -3339,10 +6190,31 @@ function compressImage(file) {
   });
 }
 
+function drawSignFrame(ctx, img, canvas, onBaseline) {
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  if (!onBaseline || !iw || !ih) {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return;
+  }
+  const dpr = devicePixelRatio || 1;
+  const padX = 16 * dpr;
+  const padTop = 6 * dpr;
+  const padBottom = 18 * dpr;
+  const boxW = Math.max(1, canvas.width - padX * 2);
+  const boxH = Math.max(1, canvas.height - padTop - padBottom);
+  const scale = Math.min(boxW / iw, boxH / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  ctx.drawImage(img, padX + (boxW - dw) / 2, padTop + boxH - dh, dw, dh);
+}
+
 function bindSign(canvas, existing, onChange) {
   if (!canvas) return;
   let current = existing || "";
   const pad = canvas.closest(".sign-pad");
+  const profilePad = canvas.dataset.sign === "ownerSign";
+  let frameCapture = false;
   const ghost = pad?.querySelector(".sign-ghost");
   const ok = pad?.querySelector('input[type="checkbox"]');
   const showGhost = () => {
@@ -3356,27 +6228,51 @@ function bindSign(canvas, existing, onChange) {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
   };
+  const paintImage = (dataUrl, onBaseline) => {
+    if (!dataUrl) return;
+    const im = new Image();
+    im.onload = () => {
+      if (!canvas.isConnected) return;
+      drawSignFrame(ctx, im, canvas, onBaseline);
+    };
+    im.src = dataUrl;
+  };
   const fit = () => {
     const r = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.floor(r.width * devicePixelRatio));
     canvas.height = Math.max(1, Math.floor(r.height * devicePixelRatio));
     stylePen();
-    if (current) {
-      const im = new Image();
-      im.onload = () => ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
-      im.src = current;
-    }
+    if (current) paintImage(current, profilePad && !frameCapture);
     showGhost();
+    reveal(current, false);
   };
-  const clear = () => {
-    current = "";
+  const reveal = (value, notify) => {
+    if (!profilePad || !value) {
+      showAppliedSign(pad, value);
+      if (notify) onChange(value || "");
+      return;
+    }
+    showAppliedSign(pad, "");
+    trimSign(value).then((trimmed) => {
+      if (!pad.isConnected) return;
+      const shown = trimmed || value;
+      if (current !== value && current !== shown) return;
+      if (notify || shown !== value) onChange(shown);
+    });
+  };
+  const paint = (value, notify) => {
+    current = value || "";
+    frameCapture = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     stylePen();
-    if (ok) ok.checked = false;
+    if (current) paintImage(current, profilePad);
+    if (ok) ok.checked = Boolean(current);
     showGhost();
-    onChange("");
+    reveal(current, notify);
   };
+  const clear = () => paint("", true);
   fit();
+  requestAnimationFrame(fit);
   let drawing = false;
   const pos = (ev) => {
     const r = canvas.getBoundingClientRect();
@@ -3384,6 +6280,8 @@ function bindSign(canvas, existing, onChange) {
     return { x: (t.clientX - r.left) * (canvas.width / r.width), y: (t.clientY - r.top) * (canvas.height / r.height) };
   };
   const start = (ev) => {
+    const appliedImg = pad?.querySelector("[data-appliedsign]");
+    if (appliedImg) appliedImg.hidden = true;
     drawing = true;
     const p = pos(ev);
     ctx.beginPath();
@@ -3401,8 +6299,9 @@ function bindSign(canvas, existing, onChange) {
     if (!drawing) return;
     drawing = false;
     current = canvas.toDataURL("image/png");
+    if (profilePad) frameCapture = true;
     showGhost();
-    onChange(current);
+    reveal(current, true);
   };
   canvas.onmousedown = start;
   canvas.onmousemove = move;
@@ -3423,6 +6322,12 @@ function bindSign(canvas, existing, onChange) {
     };
   }
   showGhost();
+  return {
+    set(value) {
+      paint(value || "", true);
+    },
+    clear,
+  };
 }
 
 function drawProfile(canvas, points, editable, onChange, deco) {
