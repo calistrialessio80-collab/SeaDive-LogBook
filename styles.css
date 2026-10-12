@@ -170,6 +170,8 @@ body.page-auth #app { max-width: none; padding: 0; }
   box-shadow: var(--shadow);
 }
 .sign-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.sign-card-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.sign-card-actions .btn { padding: 8px 12px; font-size: 13px; }
 .sign-card-top b { display: block; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
 .sign-card-top span { display: block; font-weight: 700; margin-top: 2px; }
 .sign-card-top small { display: block; opacity: 0.65; margin-top: 2px; }
@@ -573,9 +575,11 @@ body.page-home .section-head h3 { color: #1c2430; }
 .people-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
 .people-row {
   display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  flex-wrap: wrap;
   width: 100%; text-align: left; border: 1px solid var(--line); background: #fff;
   border-radius: 16px; padding: 12px 14px; color: inherit;
 }
+.people-actions { display: flex; gap: 8px; flex: 1 0 100%; justify-content: flex-end; }
 button.people-row { cursor: pointer; }
 .people-open {
   flex: 1; min-width: 0; border: 0; background: transparent; padding: 0;
@@ -593,6 +597,7 @@ button.people-row { cursor: pointer; }
 }
 .people-share { flex: none; padding: 8px 10px; font-size: 12px; }
 .sign-lock { font-size: 12px; font-weight: 700; color: var(--teal, #0b4d5e); white-space: nowrap; }
+.contact-drop { grid-column: 1 / -1; }
 .people-picks { margin: 8px 0 4px; }
 .people-picks .hint { margin-top: 10px; }
 .card .actions input[type="file"],

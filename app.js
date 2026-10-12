@@ -441,6 +441,50 @@ async function removePerson(person) {
   return true;
 }
 
+const DIVE_CONTACT = {
+  buddy: { title: "il buddy", name: "buddyName", extra: "buddyCert", id: "buddyId", sign: "buddySign", meta: "buddy" },
+  guide: { title: "la guida", name: "guideName", extra: "guideCert", id: "guideId", sign: "guideSign", meta: "guide" },
+  center: { title: "il diving", name: "centerName", extra: "centerLead", id: "centerId", sign: "centerSign", meta: "center" },
+};
+
+function diveContactPresent(dive, role) {
+  const spec = DIVE_CONTACT[role];
+  if (!spec || !dive) return false;
+  const sign = dive[spec.sign];
+  return Boolean(
+    String(dive[spec.name] || "").trim() ||
+      String(dive[spec.extra] || "").trim() ||
+      (typeof sign === "string" && sign.startsWith("data:image"))
+  );
+}
+
+function clearDiveContact(dive, role) {
+  const spec = DIVE_CONTACT[role];
+  if (!spec || !dive) return;
+  dive[spec.name] = "";
+  dive[spec.extra] = "";
+  dive[spec.id] = "";
+  dive[spec.sign] = "";
+  dive.signSkipped = { ...(dive.signSkipped || {}), [role]: true };
+  if (dive.sigMeta) dive.sigMeta[spec.meta] = null;
+}
+
+function dropContactButton(role, dive) {
+  const label = role === "buddy" ? "Togli buddy" : role === "guide" ? "Togli guida" : "Togli diving";
+  return `<button class="btn danger btn-block contact-drop" type="button" data-dropcontact="${role}" ${diveContactPresent(dive, role) ? "" : "hidden"}>${label}</button>`;
+}
+
+async function askDropDiveContact(dive, role) {
+  const spec = DIVE_CONTACT[role];
+  const who = String(dive?.[spec?.name] || "").trim() || spec?.title || "questo contatto";
+  return askConfirm({
+    title: "Togli contatto",
+    message: `Vuoi togliere ${who} da questa immersione? Resta in Community.`,
+    ok: "Togli",
+    cancel: "Annulla",
+  });
+}
+
 async function removeDive(d) {
   if (!d) return false;
   if (!(await askDeleteDive(d))) return false;
@@ -954,7 +998,7 @@ function shareDiveFilename(d) {
 
 function sharedDiveCopy(d) {
   const copy = { ...d };
-  ["id", "number", "photo", "buddyId", "guideId", "centerId"].forEach((k) => delete copy[k]);
+  ["id", "number", "photo", "buddyId", "guideId", "centerId", "signSkipped"].forEach((k) => delete copy[k]);
   ["buddySign", "guideSign", "centerSign"].forEach((k) => {
     if (typeof copy[k] !== "string" || !copy[k].startsWith("data:image")) delete copy[k];
   });
@@ -2459,7 +2503,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 114</p>
+        <p class="hint">Versione 115</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4195,8 +4239,10 @@ function renderPeople() {
         </button>
         ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
         <em>${n} ${n === 1 ? "scheda" : "schede"}</em>
-        ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
-        <button class="btn danger people-del" type="button">Elimina</button>
+        <div class="people-actions">
+          ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
+          <button class="btn danger people-del" type="button">Elimina</button>
+        </div>
       `;
       row.querySelector(".people-open").onclick = () => {
         view.personId = p.id;
@@ -4551,6 +4597,7 @@ function bindPeoplePicks(form, d) {
     hint.textContent = title;
     const chips = document.createElement("div");
     chips.className = "chips";
+    chips.dataset.pickrole = role;
     list
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name, "it"))
@@ -4561,7 +4608,11 @@ function bindPeoplePicks(form, d) {
         const selected = d[idKey] === p.id || personKey(role, d[nameKey]) === personKey(role, p.name);
         b.className = `chip${selected ? " on" : ""}`;
         b.textContent = extra ? `${p.name} · ${extra}` : p.name;
-        b.onclick = () => {
+        b.onclick = async () => {
+          if (b.classList.contains("on")) {
+            if (form._dropContact) await form._dropContact(role);
+            return;
+          }
           d[nameKey] = p.name;
           d[idKey] = p.id;
           d[extraKey] = role === "center" ? p.lead || "" : p.cert || "";
@@ -4583,6 +4634,8 @@ function bindPeoplePicks(form, d) {
             }
             save(state);
           }
+          const dropBtn = form.querySelector(`[data-dropcontact="${role}"]`);
+          if (dropBtn) dropBtn.hidden = false;
         };
         chips.append(b);
       });
@@ -4890,22 +4943,38 @@ function renderDetail() {
     render();
   };
   card.querySelectorAll("[data-clearsign]").forEach((btn) => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const who = btn.getAttribute("data-clearsign");
-      const map = {
-        buddy: ["buddySign", "buddy"],
-        guide: ["guideSign", "guide"],
-        center: ["centerSign", "center"],
-      };
-      const spec = map[who];
+      const spec = DIVE_CONTACT[who];
       if (!spec) return;
       const live = state.dives.find((x) => x.id === d.id);
       if (!live) return;
-      if (live[spec[0]] && !confirm("Cancellare questa firma e rifarla?")) return;
-      live[spec[0]] = "";
-      if (live.sigMeta) live.sigMeta[spec[1]] = null;
+      if (live[spec.sign]) {
+        const ok = await askConfirm({
+          title: "Cancella firma",
+          message: "Vuoi cancellare questa firma e rifarla?",
+          ok: "Cancella",
+          cancel: "Annulla",
+        });
+        if (!ok) return;
+        live.signSkipped = { ...(live.signSkipped || {}), [who]: true };
+      }
+      live[spec.sign] = "";
+      if (live.sigMeta) live.sigMeta[spec.meta] = null;
       save(state);
-      view = { name: "edit", diveId: live.id, draft: cloneObj(live), query: view.query, focusSign: spec[0] };
+      view = { name: "edit", diveId: live.id, draft: cloneObj(live), query: view.query, focusSign: spec.sign };
+      render();
+    };
+  });
+  card.querySelectorAll("[data-dropcontact]").forEach((btn) => {
+    btn.onclick = async () => {
+      const role = btn.getAttribute("data-dropcontact");
+      if (!DIVE_CONTACT[role]) return;
+      const live = state.dives.find((x) => x.id === d.id);
+      if (!live || !diveContactPresent(live, role)) return;
+      if (!(await askDropDiveContact(live, role))) return;
+      clearDiveContact(live, role);
+      save(state);
       render();
     };
   });
@@ -5077,10 +5146,13 @@ function renderEdit() {
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
+        ${dropContactButton("buddy", d)}
         ${field("guideName", "Guida / istruttore — generalità", d.guideName)}
         ${field("guideCert", "N° brevetto guida / istruttore", d.guideCert)}
+        ${dropContactButton("guide", d)}
         ${field("centerName", "Denominazione diving center", d.centerName, true)}
         ${field("centerLead", "Responsabile del centro", d.centerLead, true)}
+        ${dropContactButton("center", d)}
       </div>
       ${signPad("buddySign", "Firma buddy", "Compagno di immersione")}
       ${signPad("guideSign", "Firma guida / istruttore", "Obbligatoria per legge sulla scheda")}
@@ -5094,6 +5166,13 @@ function renderEdit() {
   `;
   bindComputerFill(form);
   bindPeoplePicks(form, d);
+  form.querySelectorAll("[data-dropcontact]").forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.preventDefault();
+      const role = btn.getAttribute("data-dropcontact");
+      if (form._dropContact) await form._dropContact(role);
+    };
+  });
   const certInput = form.querySelector("[name=certOnDive]");
   const picks = form.querySelector("[data-certpicks]");
   profileCerts().forEach((c) => {
@@ -5263,7 +5342,7 @@ function renderEdit() {
       d.guideSign = v;
       if (v !== applied.guide) applied.guide = "";
     });
-    bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    const centerPad = bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
     const stamped = { buddy: null, guide: null };
     form._applyOwnerSign = (opts = {}) => {
       [
@@ -5271,6 +5350,9 @@ function renderEdit() {
         ["guideName", "guideCert", "guideSign", guidePad, "guide", "guideId"],
       ].forEach(([nameKey, certKey, signKey, pad, role, idKey]) => {
         const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
+        const force = role === "buddy" ? opts.forceBuddy : opts.forceGuide;
+        if (d.signSkipped?.[role] && !force && opts.initial) return;
+        if (force && d.signSkipped) delete d.signSkipped[role];
         const named = personByTypedName(role, typed);
         const certInput = form.querySelector(`[name=${certKey}]`);
         const prev = stamped[role];
@@ -5291,7 +5373,6 @@ function renderEdit() {
         }
         const sign = (named && personKnownSign(named)) || signForInsertedPerson(role, typed);
         const current = d[signKey] || "";
-        const force = role === "buddy" ? opts.forceBuddy : opts.forceGuide;
         if (sign && (force || !current || applied[role] || current === sign)) {
           applied[role] = sign;
           pad?.set(sign);
@@ -5315,7 +5396,45 @@ function renderEdit() {
         line.textContent = "";
       }
     };
-    form._applyOwnerSign();
+    form._dropContact = async (role) => {
+      const spec = DIVE_CONTACT[role];
+      if (!spec) return;
+      const nameInput = form.querySelector(`[name=${spec.name}]`);
+      const extraInput = form.querySelector(`[name=${spec.extra}]`);
+      const typed = String(nameInput?.value || d[spec.name] || "").trim();
+      if (!typed && !diveContactPresent(d, role)) return;
+      if (!(await askDropDiveContact({ ...d, [spec.name]: typed || d[spec.name] }, role))) return;
+      clearDiveContact(d, role);
+      const live = (state.dives || []).find((x) => x.id === d.id);
+      if (live && live !== d) clearDiveContact(live, role);
+      save(state);
+      if (nameInput) nameInput.value = "";
+      if (extraInput) extraInput.value = "";
+      const okBox = form.querySelector(`[name=${spec.sign}Ok]`);
+      if (okBox) okBox.checked = false;
+      if (role === "buddy" || role === "guide") applied[role] = "";
+      stamped[role] = null;
+      const pad = role === "buddy" ? buddyPad : role === "guide" ? guidePad : centerPad;
+      pad?.clear();
+      showAppliedSign(form.querySelector(`[data-pad="${spec.sign}"]`), "");
+      form.querySelectorAll(`[data-pickrole="${role}"] .chip`).forEach((x) => x.classList.remove("on"));
+      const dropBtn = form.querySelector(`[data-dropcontact="${role}"]`);
+      if (dropBtn) dropBtn.hidden = true;
+      const picked = form.querySelector("[data-pickedperson]");
+      const stillBuddy = personByTypedName("buddy", form.querySelector("[name=buddyName]")?.value || "");
+      const stillGuide = personByTypedName("guide", form.querySelector("[name=guideName]")?.value || "");
+      const still = stillBuddy || stillGuide;
+      if (picked) {
+        if (still) {
+          picked.hidden = false;
+          picked.textContent = profileShareLine(still, personKnownSign(still));
+        } else {
+          picked.hidden = true;
+          picked.textContent = "";
+        }
+      }
+    };
+    form._applyOwnerSign({ initial: true });
     ["buddyName", "guideName"].forEach((name) => {
       form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
         form._applyOwnerSign();
@@ -5509,6 +5628,7 @@ function fillMissingSigns(d) {
     ["buddy", "buddyName", "buddySign"],
     ["guide", "guideName", "guideSign"],
   ].forEach(([role, nameKey, signKey]) => {
+    if (d.signSkipped?.[role]) return;
     if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
     const sign = signForInsertedPerson(role, d[nameKey]);
     if (!sign) return;
@@ -5574,6 +5694,13 @@ function signPad(key, title, note, withConfirm = true) {
 function signEvidence(who, title, name, cert, image, meta, locked = false) {
   const when = meta?.at ? new Date(meta.at).toLocaleString("it-IT") : "";
   const signed = Boolean(image);
+  const hasContact = Boolean(String(name || "").trim() || String(cert || "").trim() || signed);
+  const actions = locked
+    ? `<span class="sign-lock">${signed ? "Firmata" : "Non firmata"}</span>`
+    : `<div class="sign-card-actions">
+        <button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>
+        ${hasContact ? `<button class="btn danger" type="button" data-dropcontact="${escapeHtml(who)}">Togli</button>` : ""}
+      </div>`;
   return `<article class="sign-card">
       <div class="sign-card-top">
         <div>
@@ -5581,11 +5708,7 @@ function signEvidence(who, title, name, cert, image, meta, locked = false) {
           <span>${escapeHtml(name || "—")}</span>
           <small>${escapeHtml(cert || "")}${when ? " · " + escapeHtml(when) : ""}</small>
         </div>
-        ${
-          locked
-            ? `<span class="sign-lock">${signed ? "Firmata" : "Non firmata"}</span>`
-            : `<button class="btn btn-wipe" type="button" data-clearsign="${escapeHtml(who)}">${signed ? "Cancella" : "Firma"}</button>`
-        }
+        ${actions}
       </div>
       ${signed ? `<img alt="firma" src="${image}" />` : `<p class="sign-empty">Non firmata</p>`}
       ${
