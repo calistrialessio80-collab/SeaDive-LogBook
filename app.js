@@ -2937,7 +2937,7 @@ function renderAuth() {
   wrap.className = "gate";
   wrap.innerHTML = `
     <div class="gate-card card">
-      <img class="gate-shot" alt="SeaDive LogBook" src="./brand.jpg?v=10" />
+      <img class="gate-shot" alt="Nudibranco, foto di Alessio Calistri" src="./register.jpg?v=1" />
       <p class="eyebrow">SeaDive LogBook</p>
       <h1>Registrati</h1>
       <p class="meta">Crea l’account con Google. Le immersioni restano tue e si copiano sul Drive, così non si perdono.</p>
@@ -2996,7 +2996,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 133</p>
+        <p class="hint">Versione 134</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3426,7 +3426,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=133")
+    divelogsPromise = fetch("./divelogs-sites.json?v=134")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();

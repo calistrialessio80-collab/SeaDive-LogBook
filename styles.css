@@ -79,7 +79,7 @@ body.page-home .ocean,
 body.page-app .ocean,
 body.page-auth .ocean { display: none; }
 body.page-auth {
-  background: #9ee8f0 url("./brand.jpg?v=10") center 32% / cover no-repeat fixed;
+  background: #0c3a42 url("./register.jpg?v=1") center 58% / cover no-repeat fixed;
 }
 body.page-auth::before {
   content: "";
@@ -106,8 +106,8 @@ body.page-auth #app { max-width: none; padding: 0; }
 }
 .gate-card { width: min(400px, 100%); text-align: center; padding: 0 20px 24px; overflow: hidden; }
 .gate-shot {
-  width: calc(100% + 40px); margin: 0 -20px 14px; height: 200px;
-  object-fit: cover; object-position: center 30%; display: block;
+  width: calc(100% + 40px); margin: 0 -20px 14px; height: 240px;
+  object-fit: cover; object-position: center 72%; display: block;
 }
 .gate-card h1 { font-family: Fraunces, serif; font-size: 30px; margin: 8px 0 8px; }
 .gate-mark { margin: 0 auto 8px; }
