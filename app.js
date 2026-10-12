@@ -294,11 +294,12 @@ function normalizeState(data) {
   const deletedDiveIds = Array.isArray(data?.deletedDiveIds)
     ? data.deletedDiveIds.map(String).filter(Boolean)
     : [];
+  const deletedPeople = cleanPersonMarks(data?.deletedPeople);
   const people = [];
   const seen = new Set();
   (Array.isArray(data?.people) ? data.people : []).forEach((raw) => {
     const p = cleanPerson(raw);
-    if (!p) return;
+    if (!p || personIsGone(p, deletedPeople)) return;
     const key = `${p.role}|${p.name.toLowerCase()}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -308,6 +309,8 @@ function normalizeState(data) {
     profile,
     dives: Array.isArray(data?.dives) ? data.dives : [],
     deletedDiveIds,
+    deletedPeople,
+    peopleClock: Number(data?.peopleClock) || 0,
     people,
     peopleSeeded: Boolean(data?.peopleSeeded),
     peopleBackfilled: Boolean(data?.peopleBackfilled),
@@ -434,12 +437,13 @@ async function removePerson(person) {
   if (!person) return false;
   const ok = await askConfirm({
     title: "Elimina contatto",
-    message: `Vuoi eliminare ${person.name || "questo contatto"} dalla Community? Il nome resta sulle schede già scritte.`,
+    message: `Vuoi eliminare ${person.name || "questo contatto"} dalla Community e dalla copia su Drive? Il nome resta sulle schede già scritte.`,
     ok: "Elimina",
     cancel: "Annulla",
   });
   if (!ok) return false;
-  state.people = (state.people || []).filter((p) => p.id !== person.id);
+  rememberDeletedPerson(person);
+  state.people = (state.people || []).filter((p) => p.id !== person.id && !personIsGone(p, state.deletedPeople));
   save(state);
   return true;
 }
@@ -470,6 +474,29 @@ function clearDiveContact(dive, role) {
   dive[spec.sign] = "";
   dive.signSkipped = { ...(dive.signSkipped || {}), [role]: true };
   if (dive.sigMeta) dive.sigMeta[spec.meta] = null;
+  bumpContactGen(dive, role);
+}
+
+function settleDiveContacts(next, before) {
+  ["buddy", "guide", "center"].forEach((role) => {
+    const spec = DIVE_CONTACT[role];
+    const now = String(next?.[spec.name] || "").trim();
+    const prev = String(before?.[spec.name] || "").trim();
+    if (now) {
+      if (now !== prev) {
+        if (next.signSkipped) delete next.signSkipped[role];
+        bumpContactGen(next, role);
+      }
+      return;
+    }
+    if (!prev) return;
+    next.signSkipped = { ...(next.signSkipped || {}), [role]: true };
+    next[spec.extra] = "";
+    next[spec.id] = "";
+    next[spec.sign] = "";
+    if (next.sigMeta) next.sigMeta[spec.meta] = null;
+    bumpContactGen(next, role);
+  });
 }
 
 function dropContactButton(role, dive) {
@@ -482,7 +509,7 @@ async function askDropDiveContact(dive, role) {
   const who = String(dive?.[spec?.name] || "").trim() || spec?.title || "questo contatto";
   return askConfirm({
     title: "Togli contatto",
-    message: `Vuoi togliere ${who} da questa immersione? Resta in Community.`,
+    message: `Vuoi togliere ${who} da questa immersione e dalla copia su Drive? Resta in Community.`,
     ok: "Togli",
     cancel: "Annulla",
   });
@@ -495,6 +522,49 @@ async function removeDive(d) {
   state.dives = (state.dives || []).filter((x) => x.id !== d.id && !diveIsDeleted(x, state.deletedDiveIds));
   save(state);
   return true;
+}
+
+function contactRank(dive, role) {
+  const gen = Number(dive?.contactGen?.[role]) || 0;
+  const spec = DIVE_CONTACT[role];
+  const empty = !String(dive?.[spec?.name] || "").trim();
+  const inferred = empty && dive?.signSkipped?.[role] ? 1 : 0;
+  return Math.max(gen, inferred);
+}
+
+function bumpContactGen(dive, role) {
+  if (!dive) return;
+  dive.contactGen = { ...(dive.contactGen || {}), [role]: contactRank(dive, role) + 1 };
+}
+
+function copyDiveContact(target, source, role) {
+  const spec = DIVE_CONTACT[role];
+  target[spec.name] = source?.[spec.name] || "";
+  target[spec.extra] = source?.[spec.extra] || "";
+  target[spec.id] = source?.[spec.id] || "";
+  target[spec.sign] = source?.[spec.sign] || "";
+  target.signSkipped = { ...(target.signSkipped || {}) };
+  if (source?.signSkipped?.[role]) target.signSkipped[role] = true;
+  else delete target.signSkipped[role];
+  const rank = contactRank(source, role);
+  target.contactGen = { ...(target.contactGen || {}), [role]: rank };
+  target.sigMeta = { ...(target.sigMeta || {}) };
+  target.sigMeta[spec.meta] = source?.sigMeta?.[spec.meta] || null;
+}
+
+function mergeDivePair(a, b) {
+  const primary = diveScore(a) >= diveScore(b) ? a : b;
+  const base = { ...primary };
+  if (primary.signSkipped) base.signSkipped = { ...primary.signSkipped };
+  if (primary.contactGen) base.contactGen = { ...primary.contactGen };
+  if (primary.sigMeta) base.sigMeta = { ...primary.sigMeta };
+  ["buddy", "guide", "center"].forEach((role) => {
+    const ra = contactRank(a, role);
+    const rb = contactRank(b, role);
+    if (ra === rb) return;
+    copyDiveContact(base, ra > rb ? a : b, role);
+  });
+  return base;
 }
 
 function mergeDiveLists(a, b, tombs) {
@@ -515,7 +585,7 @@ function mergeDiveLists(a, b, tombs) {
       return !blank && (api?.diveKey?.(x) || `${x.date}|${x.timeIn}|${x.maxDepth}`) === key;
     });
     if (i < 0) groups.push(d);
-    else if (diveScore(d) >= diveScore(groups[i])) groups[i] = d;
+    else groups[i] = mergeDivePair(groups[i], d);
   });
   return groups;
 }
@@ -542,6 +612,12 @@ function mergeVaults(local, cloud) {
   const L = normalizeState(local);
   const C = normalizeState(cloud);
   const deletedDiveIds = [...new Set([...(L.deletedDiveIds || []), ...(C.deletedDiveIds || [])])].slice(-800);
+  const deletedPeople = mergePersonMarks(L.deletedPeople, C.deletedPeople);
+  const peopleClock = Math.max(
+    Number(L.peopleClock) || 0,
+    Number(C.peopleClock) || 0,
+    ...deletedPeople.map((e) => Number(e.t) || 0)
+  );
   const localReal = realDiveCount(L.dives);
   const cloudReal = realDiveCount(C.dives);
   let dives;
@@ -552,18 +628,20 @@ function mergeVaults(local, cloud) {
     profile: mergeProfiles(L.profile, C.profile),
     dives,
     deletedDiveIds,
-    people: mergePeople(L.people, C.people),
+    deletedPeople,
+    peopleClock,
+    people: mergePeople(L.people, C.people, deletedPeople),
     peopleSeeded: Boolean(L.peopleSeeded || C.peopleSeeded),
     peopleBackfilled: Boolean(L.peopleBackfilled || C.peopleBackfilled),
   };
 }
 
-function mergePeople(a, b) {
+function mergePeople(a, b, marks) {
   const out = [];
   const index = new Map();
   [...(a || []), ...(b || [])].forEach((raw) => {
     const p = cleanPerson(raw);
-    if (!p) return;
+    if (!p || personIsGone(p, marks)) return;
     const key = `${p.role}|${p.name.toLowerCase()}`;
     const prev = index.get(key);
     if (!prev) {
@@ -636,6 +714,8 @@ function persistLocal(data) {
       const slim = {
         profile: data.profile,
         deletedDiveIds: data.deletedDiveIds || [],
+        deletedPeople: data.deletedPeople || [],
+        peopleClock: Number(data.peopleClock) || 0,
         people: data.people || [],
         peopleSeeded: Boolean(data.peopleSeeded),
         peopleBackfilled: Boolean(data.peopleBackfilled),
@@ -796,6 +876,8 @@ function backupPayload() {
     profile: state.profile,
     dives: state.dives,
     deletedDiveIds: state.deletedDiveIds || [],
+    deletedPeople: state.deletedPeople || [],
+    peopleClock: Number(state.peopleClock) || 0,
     people: state.people || [],
     peopleSeeded: Boolean(state.peopleSeeded),
     sites: window.SeaDiveSites?.loadCustomSites?.() || [],
@@ -812,16 +894,79 @@ function personKey(role, name) {
   return `${role}|${String(name || "").trim().toLowerCase().replace(/\s+/g, " ")}`;
 }
 
+function personTombKeys(person) {
+  const role = person?.role === "guide" || person?.role === "center" ? person.role : "buddy";
+  const keys = [];
+  const nameKey = personKey(role, person?.name);
+  if (!nameKey.endsWith("|")) keys.push(nameKey);
+  if (person?.id) keys.push("id:" + person.id);
+  return keys;
+}
+
+function cleanPersonMarks(raw) {
+  if (!Array.isArray(raw)) return [];
+  const map = new Map();
+  raw.forEach((e) => {
+    if (!e || typeof e.k !== "string" || !e.k) return;
+    const t = Number(e.t) || 0;
+    const prev = map.get(e.k);
+    if (!prev || t >= prev.t) map.set(e.k, { k: e.k, t, gone: Boolean(e.gone) });
+  });
+  return [...map.values()].slice(-800);
+}
+
+function mergePersonMarks(a, b) {
+  return cleanPersonMarks([...(a || []), ...(b || [])]);
+}
+
+function personIsGone(person, marks) {
+  const keys = new Set(personTombKeys(person));
+  let best = null;
+  (marks || []).forEach((e) => {
+    if (!e || !keys.has(e.k)) return;
+    if (!best || Number(e.t) >= Number(best.t)) best = e;
+  });
+  return Boolean(best?.gone);
+}
+
+function personMarkTime() {
+  const tops = (state.deletedPeople || []).map((e) => Number(e.t) || 0);
+  const t = Math.max(Number(state.peopleClock) || 0, ...tops, 0) + 1;
+  state.peopleClock = t;
+  return t;
+}
+
+function writePersonMarks(person, gone) {
+  const t = personMarkTime();
+  const map = new Map((state.deletedPeople || []).map((e) => [e.k, e]));
+  personTombKeys(person).forEach((k) => map.set(k, { k, t, gone }));
+  state.deletedPeople = [...map.values()].slice(-800);
+}
+
+function rememberDeletedPerson(person) {
+  if (!person) return;
+  writePersonMarks(person, true);
+}
+
+function forgetDeletedPerson(person) {
+  if (!person) return;
+  writePersonMarks(person, false);
+}
+
 function roleLabel(role) {
   if (role === "guide") return "Istruttore";
   if (role === "center") return "Diving";
   return "Buddy";
 }
 
-function upsertPerson(partial) {
+function upsertPerson(partial, opts) {
   const name = String(partial?.name || "").trim().replace(/\s+/g, " ");
   if (!name) return null;
   const role = partial.role === "guide" || partial.role === "center" ? partial.role : "buddy";
+  if (personIsGone({ id: partial?.id, role, name }, state.deletedPeople)) {
+    if (opts?.keepTomb) return null;
+    forgetDeletedPerson({ id: partial?.id, role, name });
+  }
   if (!Array.isArray(state.people)) state.people = [];
   let found = partial.id ? state.people.find((p) => p.id === partial.id) : null;
   const key = personKey(role, name);
@@ -865,9 +1010,9 @@ function upsertPerson(partial) {
 }
 
 function linkPeopleOnDive(dive) {
-  const buddy = upsertPerson({ role: "buddy", name: dive.buddyName, cert: dive.buddyCert });
-  const guide = upsertPerson({ role: "guide", name: dive.guideName, cert: dive.guideCert });
-  const center = upsertPerson({ role: "center", name: dive.centerName, lead: dive.centerLead });
+  const buddy = upsertPerson({ role: "buddy", name: dive.buddyName, cert: dive.buddyCert }, { keepTomb: true });
+  const guide = upsertPerson({ role: "guide", name: dive.guideName, cert: dive.guideCert }, { keepTomb: true });
+  const center = upsertPerson({ role: "center", name: dive.centerName, lead: dive.centerLead }, { keepTomb: true });
   dive.buddyId = buddy?.id || "";
   dive.guideId = guide?.id || "";
   dive.centerId = center?.id || "";
@@ -885,9 +1030,9 @@ function seedPeopleOnce() {
   if (state.peopleSeeded) return false;
   if (!Array.isArray(state.people)) state.people = [];
   (state.dives || []).forEach((d) => {
-    upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert });
-    upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert });
-    upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead });
+    upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert }, { keepTomb: true });
+    upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert }, { keepTomb: true });
+    upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead }, { keepTomb: true });
   });
   state.peopleSeeded = true;
   return true;
@@ -906,13 +1051,13 @@ function backfillPeopleOnce() {
   if (!Array.isArray(state.people)) state.people = [];
   (state.dives || []).forEach((d) => {
     if (String(d.buddyName || "").trim() && !state.people.some((p) => p.role === "buddy" && samePersonName(p.name, d.buddyName))) {
-      upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert || "" });
+      upsertPerson({ role: "buddy", name: d.buddyName, cert: d.buddyCert || "" }, { keepTomb: true });
     }
     if (String(d.guideName || "").trim() && !state.people.some((p) => p.role === "guide" && samePersonName(p.name, d.guideName))) {
-      upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert || "" });
+      upsertPerson({ role: "guide", name: d.guideName, cert: d.guideCert || "" }, { keepTomb: true });
     }
     if (String(d.centerName || "").trim() && !state.people.some((p) => p.role === "center" && samePersonName(p.name, d.centerName))) {
-      upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead || "" });
+      upsertPerson({ role: "center", name: d.centerName, lead: d.centerLead || "" }, { keepTomb: true });
     }
   });
   state.peopleBackfilled = true;
@@ -2996,7 +3141,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 134</p>
+        <p class="hint">Versione 135</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3426,7 +3571,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=134")
+    divelogsPromise = fetch("./divelogs-sites.json?v=135")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6528,6 +6673,11 @@ function renderEdit() {
       form.querySelector('[data-pad="centerSign"]')?.scrollIntoView({ block: "center" });
       return;
     }
+    const contactBefore = {
+      buddyName: d.buddyName,
+      guideName: d.guideName,
+      centerName: d.centerName,
+    };
     const next = applyPlaceToDive({
       ...d,
       ...Object.fromEntries(fd.entries()),
@@ -6555,6 +6705,7 @@ function renderEdit() {
     if (!next.computerLog && !next.profileFromComputer) next.manual = true;
     next.profilePoints = ensureThermoProfile(next);
     applyDiveMetrics(next);
+    settleDiveContacts(next, contactBefore);
     linkPeopleOnDive(next);
     state.peopleSeeded = true;
     if (next.guideSign && !String(next.guideName || "").trim()) {
