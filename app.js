@@ -3017,7 +3017,41 @@ function setPageSkin() {
   document.body.classList.toggle("page-map", Boolean(loadSession()) && view.name === "map");
   document.body.classList.toggle("page-profile", Boolean(loadSession()) && view.name === "profile");
   document.body.classList.toggle("page-bio", Boolean(loadSession()) && view.name === "bio");
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  let color = "#021018";
+  if (!loadSession()) color = "#0c3a42";
+  else if (view.name === "map") color = "#061018";
+  else if (view.name === "bio") color = "#c8eef4";
+  else if (view.name === "profile") color = "#08343c";
+  meta.setAttribute("content", color);
 }
+
+function bindPhoneFit() {
+  if (bindPhoneFit.done) return;
+  bindPhoneFit.done = true;
+  const typing = (el) => {
+    if (!el || !el.matches) return false;
+    if (!el.matches("input, textarea, select")) return false;
+    const type = String(el.getAttribute("type") || "text").toLowerCase();
+    return !["checkbox", "radio", "file", "button", "range", "hidden"].includes(type);
+  };
+  document.addEventListener("focusin", (e) => {
+    if (!typing(e.target)) return;
+    document.body.classList.add("kb-open");
+    const field = e.target;
+    setTimeout(() => {
+      if (document.activeElement !== field) return;
+      field.scrollIntoView({ block: "center", inline: "nearest" });
+    }, 320);
+  });
+  document.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (!typing(document.activeElement)) document.body.classList.remove("kb-open");
+    }, 120);
+  });
+}
+bindPhoneFit();
 
 async function finishAuth(user) {
   saveSession(user);
@@ -3141,7 +3175,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 135</p>
+        <p class="hint">Versione 136</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3183,7 +3217,7 @@ function renderNav() {
     ["log", "📒", "Diario"],
     ["people", "👥", "Community"],
     ["map", "🗺️", "Mappa"],
-    ["bio", "🌿", "Biologia Marina"],
+    ["bio", "🌿", "Biologia"],
     ["computer", "⌚", "Computer"],
     ["profile", "👤", "Profilo"],
   ];
@@ -3571,7 +3605,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=135")
+    divelogsPromise = fetch("./divelogs-sites.json?v=136")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
