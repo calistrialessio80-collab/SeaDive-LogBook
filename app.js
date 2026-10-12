@@ -2505,7 +2505,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 121</p>
+        <p class="hint">Versione 122</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2932,7 +2932,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=121")
+    divelogsPromise = fetch("./divelogs-sites.json?v=122")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -3037,13 +3037,16 @@ function personalDiveGeo() {
 
 function renderWorldMap() {
   const frag = document.createDocumentFragment();
-  frag.append(topbar("siti del mondo"));
   const api = window.SeaDiveSites;
-  const hero = document.createElement("section");
-  hero.className = "card hero map-head";
-  hero.innerHTML = `
-    <h2>Mondo delle immersioni</h2>
-    <p class="tagline">Trascina per girare il globo. Scorri o pizzica per avvicinarti alla zona: la bandierina con il numero conta i siti lì, e avvicinandoti si separano. I colori sono quelli di dive-sites.net.</p>
+  const stage = document.createElement("div");
+  stage.className = "map-stage";
+  const mapWrap = document.createElement("div");
+  mapWrap.className = "world-map";
+  mapWrap.setAttribute("data-worldmap", "");
+  stage.append(mapWrap);
+  const legend = document.createElement("aside");
+  legend.className = "map-legend-float";
+  legend.innerHTML = `
     <div class="map-legend">
       <span><i class="flag-ico vh"></i> Molto alta, 100+</span>
       <span><i class="flag-ico hi"></i> Alta, 50–99</span>
@@ -3052,21 +3055,17 @@ function renderWorldMap() {
       <span><i class="flag-ico grp">12</i> Zona</span>
       <span><i class="flag-ico mine"></i> Il tuo sito</span>
     </div>
-    <p class="hint map-status" data-mapstatus>Carico i punti di immersione…</p>
-    <p class="hint">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a> (Divelogs). Tocca il mare per segnare un sito tuo.</p>
+    <p class="map-legend-note" data-mapstatus>Carico i punti…</p>
+    <p class="map-legend-note">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a></p>
   `;
-  const stack = document.createElement("div");
-  stack.className = "map-stack";
-  stack.append(hero);
-  const mapWrap = document.createElement("section");
-  mapWrap.className = "card map-shell";
-  mapWrap.innerHTML = `<div class="world-map" data-worldmap></div>`;
-  stack.append(mapWrap);
+  stage.append(legend);
+  const dock = document.createElement("details");
+  dock.className = "add-site-dock";
+  if (mapPick?.lat) dock.open = true;
+  dock.innerHTML = `<summary>Aggiungi un sito</summary>`;
   const form = document.createElement("form");
-  form.className = "card add-site";
   form.innerHTML = `
-    <h3 class="serif" style="margin:0 0 8px">Aggiungi un sito</h3>
-    <p class="hint">Tocca la mappa oppure scrivi le coordinate. Resta sul tuo telefono, visibile a te.</p>
+    <p class="hint">Tocca il mare oppure scrivi le coordinate. Resta sul tuo telefono.</p>
     <div class="form-grid">
       ${field("name", "Nome del sito", mapPick?.name || "", true)}
       ${field("country", "Paese / area", mapPick?.country || "")}
@@ -3094,12 +3093,13 @@ function renderWorldMap() {
       form.querySelector("[data-maphint]").textContent = err.message;
     }
   };
-  stack.append(form);
-  frag.append(stack);
+  dock.append(form);
+  stage.append(dock);
+  frag.append(stage);
   queueMicrotask(() => {
     const gen = worldMapGen;
-    const el = mapWrap.querySelector("[data-worldmap]");
-    const status = hero.querySelector("[data-mapstatus]");
+    const el = mapWrap;
+    const status = legend.querySelector("[data-mapstatus]");
     loadMapLibre()
       .then(() => {
         if (gen !== worldMapGen || !el?.isConnected || view.name !== "map" || !window.maplibregl) return;
@@ -3347,6 +3347,7 @@ function renderWorldMap() {
             const lat = e.lngLat.lat.toFixed(5);
             const lng = e.lngLat.lng.toFixed(5);
             mapPick = { lat, lng, name: "", country: "" };
+            dock.open = true;
             const latEl = form.querySelector("[name=lat]");
             const lngEl = form.querySelector("[name=lng]");
             if (latEl) latEl.value = lat;
@@ -3362,9 +3363,8 @@ function renderWorldMap() {
             const n = geo.features.length;
             if (status) {
               status.textContent = n
-                ? n.toLocaleString("it-IT") +
-                  " siti sul globo. Trascina per girarlo, scorri per avvicinarti: i gruppi si separano in bandierine."
-                : "Punti non caricati. Controlla la connessione e aggiorna la pagina.";
+                ? n.toLocaleString("it-IT") + " siti"
+                : "Punti non caricati.";
             }
           });
           [80, 300, 700].forEach((ms) => setTimeout(() => worldGlobe === map && map.resize(), ms));
