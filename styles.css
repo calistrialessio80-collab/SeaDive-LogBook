@@ -617,6 +617,21 @@ button.people-row { cursor: pointer; }
   width: 100%;
   flex: none;
 }
+.people-open.has-photo {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.people-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: #d7e0e8;
+}
+.people-row .people-avatar { width: 48px; height: 48px; }
 .people-name {
   display: flex;
   flex-direction: row;
@@ -1220,6 +1235,44 @@ body.page-map .nav-dock { background: transparent; }
   box-sizing: border-box;
 }
 .profile-title { margin: 0 0 4px; font-size: 22px; }
+.profile-id {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 4px;
+}
+.profile-photo {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #d7e0e8;
+  color: #5b6573;
+  font: 700 13px Outfit, system-ui, sans-serif;
+  cursor: pointer;
+  flex: none;
+}
+.profile-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-photo-clear {
+  margin-top: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.person-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 6px;
+}
+.person-head h2 { margin: 0; }
+.person-head .people-avatar { width: 64px; height: 64px; }
 .profile-block {
   margin-top: 14px;
   padding-top: 12px;

@@ -32,6 +32,7 @@ const emptyProfile = () => ({
   hrThreshold: "",
   certs: [],
   sign: "",
+  portrait: "",
 });
 
 const emptyDive = () => ({
@@ -283,6 +284,7 @@ function cleanPerson(p) {
     following: Boolean(p.following),
     remoteOwner: String(p.remoteOwner || "").trim(),
     sign: typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : "",
+    portrait: typeof p.portrait === "string" && p.portrait.startsWith("data:image/") ? p.portrait : "",
   };
 }
 
@@ -574,6 +576,7 @@ function mergePeople(a, b) {
     if (!prev.lead && p.lead) prev.lead = p.lead;
     if (!prev.note && p.note) prev.note = p.note;
     if (!prev.sign && p.sign) prev.sign = p.sign;
+    if (!prev.portrait && p.portrait) prev.portrait = p.portrait;
     if (!prev.firstName && p.firstName) prev.firstName = p.firstName;
     if (!prev.lastName && p.lastName) prev.lastName = p.lastName;
     if (!prev.remoteOwner && p.remoteOwner) prev.remoteOwner = p.remoteOwner;
@@ -842,12 +845,14 @@ function upsertPerson(partial) {
   if (partial.following === false) found.following = false;
   if (typeof partial.remoteOwner === "string" && partial.remoteOwner.trim()) found.remoteOwner = partial.remoteOwner.trim();
   if (typeof partial.sign === "string") found.sign = partial.sign.startsWith("data:image") ? partial.sign : "";
+  if (typeof partial.portrait === "string") found.portrait = partial.portrait.startsWith("data:image/") ? partial.portrait : "";
   if (twin) {
     if (!found.cert && twin.cert) found.cert = twin.cert;
     if (!found.level && twin.level) found.level = twin.level;
     if (!found.lead && twin.lead) found.lead = twin.lead;
     if (!found.note && twin.note) found.note = twin.note;
     if (!found.sign && twin.sign) found.sign = twin.sign;
+    if (!found.portrait && twin.portrait) found.portrait = twin.portrait;
     if (!found.remoteOwner && twin.remoteOwner) found.remoteOwner = twin.remoteOwner;
     (state.dives || []).forEach((d) => {
       if (d.buddyId === twin.id) d.buddyId = found.id;
@@ -920,6 +925,7 @@ function ensureOwnerPerson() {
   if (!name) return false;
   if (!Array.isArray(state.people)) state.people = [];
   const sign = profileSignImage();
+  const portrait = profilePortraitImage();
   const mine = state.people.find((p) => p.role !== "center" && samePersonName(p.name, name));
   if (!mine) {
     const names = personNames({ name });
@@ -930,14 +936,20 @@ function ensureOwnerPerson() {
       lastName: names.lastName,
       cert: state.profile.certNumber || "",
       sign,
+      portrait,
     });
     return true;
   }
+  let changed = false;
   if (sign && mine.sign !== sign && !mine.sign) {
     mine.sign = sign;
-    return true;
+    changed = true;
   }
-  return false;
+  if ((mine.portrait || "") !== portrait) {
+    mine.portrait = portrait;
+    changed = true;
+  }
+  return changed;
 }
 
 function divesForPerson(p) {
@@ -1157,6 +1169,8 @@ function personShareCard(person) {
     cert: String(person?.cert || "").trim(),
   };
   if (sign) body.sign = sign;
+  const portrait = portraitImage(person?.portrait) || (samePersonName(names.name, state.profile?.name) ? profilePortraitImage() : "");
+  if (portrait) body.portrait = portrait;
   return {
     app: "seadive-logbook",
     kind: "person-follow",
@@ -1175,6 +1189,8 @@ function myIdentityCard() {
     cert: String(state.profile.certNumber || "").trim(),
   };
   if (sign) body.sign = sign;
+  const portrait = profilePortraitImage();
+  if (portrait) body.portrait = portrait;
   return body;
 }
 
@@ -1242,6 +1258,8 @@ async function shareProfileContact(profile, sign) {
   const level = String(profile?.certLevel || "").trim();
   if (level) body.level = level;
   body.sign = shrunk || image;
+  const portrait = await shrinkPortrait(profile?.portrait || profilePortraitImage(), 160, 7000);
+  if (portrait) body.portrait = portrait;
   const card = {
     app: "seadive-logbook",
     kind: "person-follow",
@@ -1252,7 +1270,7 @@ async function shareProfileContact(profile, sign) {
   const filename = contactFileName({ name: names.name });
   const blob = new Blob([JSON.stringify(card, null, 2)], { type: "text/plain" });
   const file = new File([blob], filename, { type: "text/plain" });
-  const text = `Contatto SeaDive di ${names.name}. In Community tocca Ricevi contatto e scegli questo file: dentro ci sono nome, cognome, numero di brevetto e firma.`;
+  const text = `Contatto SeaDive di ${names.name}. In Community tocca Ricevi contatto e scegli questo file: dentro ci sono nome, cognome, numero di brevetto, firma e foto.`;
   try {
     const payload = { files: [file], title: `Contatto ${names.name}`, text };
     if (navigator.canShare?.(payload) || navigator.share) {
@@ -1351,6 +1369,8 @@ function contactFromLogbook(data) {
   };
   if (level) card.level = level;
   if (sign) card.sign = sign;
+  const portrait = portraitImage(profile.portrait) || portraitImage(hinted?.portrait);
+  if (portrait) card.portrait = portrait;
   return card;
 }
 
@@ -1374,6 +1394,8 @@ function parseFollowPayload(text) {
     const level = String(raw.level || raw.certLevel || "").trim();
     if (level) one.level = level;
     if (sign) one.sign = sign;
+    const portrait = portraitImage(raw.portrait);
+    if (portrait) one.portrait = portrait;
     if (!one.firstName && !one.lastName && !one.cert) return null;
     return one;
   };
@@ -1445,6 +1467,7 @@ function storeFollowedPerson(card, role) {
   if (card.level) payload.level = card.level;
   if (card.owner) payload.remoteOwner = card.owner;
   if (card.sign) payload.sign = card.sign;
+  if (card.portrait) payload.portrait = card.portrait;
   const before = existing ? { ...existing } : null;
   const person = upsertPerson(payload);
   if (before && person) applyPersonOntoDives(before, person);
@@ -1486,6 +1509,8 @@ function communityCardFromRow(data) {
   };
   if (level) card.level = level;
   if (typeof data?.sign === "string" && data.sign.startsWith("data:image")) card.sign = data.sign;
+  const portrait = portraitImage(data?.portrait);
+  if (portrait) card.portrait = portrait;
   return card;
 }
 
@@ -1591,6 +1616,57 @@ function shrinkSign(dataUrl) {
   });
 }
 
+function portraitImage(value) {
+  const src = String(value || "").trim();
+  return src.startsWith("data:image/") ? src : "";
+}
+
+function profilePortraitImage() {
+  return portraitImage(state.profile?.portrait);
+}
+
+function personPortrait(person) {
+  if (!person || person.role === "center") return "";
+  const own = portraitImage(person.portrait);
+  if (own) return own;
+  if (samePersonName(person.name, state.profile?.name)) return profilePortraitImage();
+  return "";
+}
+
+function avatarHtml(src, alt) {
+  const photo = portraitImage(src);
+  if (!photo) return "";
+  return `<img class="people-avatar" alt="${escapeHtml(alt || "")}" src="${escapeHtml(photo)}" />`;
+}
+
+function shrinkPortrait(dataUrl, maxSide = 240, limit = 14000) {
+  return new Promise((resolve) => {
+    if (!portraitImage(dataUrl)) return resolve("");
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.max(img.width, img.height, 1);
+      const size = Math.max(1, Math.min(maxSide, side));
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      const scale = Math.max(size / Math.max(img.width, 1), size / Math.max(img.height, 1));
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      ctx.drawImage(img, (size - dw) / 2, (size - dh) / 2, dw, dh);
+      let quality = 0.72;
+      let out = canvas.toDataURL("image/jpeg", quality);
+      while (out.length > limit && quality > 0.34) {
+        quality -= 0.08;
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out.startsWith("data:image/") && out.length <= limit + 800 ? out : "");
+    };
+    img.onerror = () => resolve("");
+    img.src = dataUrl;
+  });
+}
+
 async function loadOnlineProfiles() {
   let res;
   try {
@@ -1657,7 +1733,14 @@ async function publishMyProfile() {
     at: new Date().toISOString(),
   };
   if (sign) body.sign = sign;
-  if (JSON.stringify(body).length > 15000) delete body.sign;
+  let portrait = await shrinkPortrait(profilePortraitImage(), 160, 7000);
+  if (portrait) body.portrait = portrait;
+  if (portrait && JSON.stringify(body).length > 22000) {
+    portrait = await shrinkPortrait(profilePortraitImage(), 96, 4000);
+    if (portrait) body.portrait = portrait;
+    else delete body.portrait;
+  }
+  if (JSON.stringify(body).length > 24000) delete body.sign;
   try {
     const url = current?.id ? `${COMMUNITY_API}/${current.id}` : COMMUNITY_API;
     const res = await fetch(url, {
@@ -2101,7 +2184,7 @@ async function adoptCommunityProfile(name) {
 function communityMissText(error) {
   if (error === "short") return "Scrivi nome e cognome interi.";
   if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
-  return "Nessun profilo in rete con questo nominativo. L'altra persona deve aprire l'app aggiornata: online vanno solo nome, cognome, numero di brevetto e firma.";
+  return "Nessun profilo in rete con questo nominativo. L'altra persona deve aprire l'app aggiornata: online vanno nome, cognome, numero di brevetto, firma e foto del profilo.";
 }
 
 function scheduleCommunityPull(form) {
@@ -2863,7 +2946,7 @@ function renderAuth() {
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, didattica, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. I messaggi della chat in Community arrivano all’altra persona. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, didattica, numero di brevetto, firma e foto del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. I messaggi della chat in Community arrivano all’altra persona. Diario, foto delle immersioni, telefono e dati medici restano sul telefono e sul Drive.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -2911,7 +2994,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 129</p>
+        <p class="hint">Versione 130</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3341,7 +3424,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=129")
+    divelogsPromise = fetch("./divelogs-sites.json?v=130")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5072,9 +5155,12 @@ function renderPeople() {
     const row = document.createElement("article");
     row.className = "people-row";
     row.innerHTML = `
-      <button type="button" class="people-open">
-        <strong>${escapeHtml(who)}</strong>
-        <small>In rete${extra ? " · " + escapeHtml(extra) : ""}${cardHit.sign ? " · firma" : ""}</small>
+      <button type="button" class="people-open${cardHit.portrait ? " has-photo" : ""}">
+        ${avatarHtml(cardHit.portrait, who)}
+        <span>
+          <strong>${escapeHtml(who)}</strong>
+          <small>In rete${extra ? " · " + escapeHtml(extra) : ""}${cardHit.sign ? " · firma" : ""}</small>
+        </span>
       </button>
       ${cardHit.sign ? `<img class="people-sign" alt="" src="${escapeHtml(cardHit.sign)}" />` : ""}
       <button class="btn primary people-share" type="button">Inserisci</button>
@@ -5113,6 +5199,7 @@ function renderPeople() {
       const names = personNames(p);
       const mine = samePersonName(p.name, state.profile.name);
       const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
+      const photo = personPortrait(p);
       const meta = [
         roleLabel(p.role),
         p.role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · "),
@@ -5123,9 +5210,12 @@ function renderPeople() {
       const first = p.role === "center" ? p.name || "" : names.firstName || p.name || "";
       const last = p.role === "center" ? "" : names.lastName || "";
       row.innerHTML = `
-        <button type="button" class="people-open">
-          <span class="people-name"><strong>${escapeHtml(first)}</strong>${last ? `<strong>${escapeHtml(last)}</strong>` : ""}</span>
-          <small>${escapeHtml(meta)}</small>
+        <button type="button" class="people-open${photo ? " has-photo" : ""}">
+          ${avatarHtml(photo, p.name)}
+          <span>
+            <span class="people-name"><strong>${escapeHtml(first)}</strong>${last ? `<strong>${escapeHtml(last)}</strong>` : ""}</span>
+            <small>${escapeHtml(meta)}</small>
+          </span>
         </button>
         ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
         <div class="people-actions">
@@ -5301,7 +5391,10 @@ function renderPerson() {
   const dives = creating ? [] : divesForPerson(current);
   const names = personNames(current);
   form.innerHTML = `
-    <h2 class="serif" style="margin:0 0 6px">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
+    <div class="person-head">
+      ${avatarHtml(personPortrait(current), current.name)}
+      <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
+    </div>
     <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Nome, cognome e brevetto restano pronti sulla scheda." : "Nome, cognome e brevetto si aggiornano anche sulle schede in cui compare già."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
     <div class="chips" data-roles></div>
@@ -5556,11 +5649,21 @@ function renderProfile() {
   const form = document.createElement("form");
   form.className = "card profile-form";
   const p = state.profile;
+  let portrait = profilePortraitImage();
   form.innerHTML = `
-    <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
+    <div class="profile-id">
+      <button class="profile-photo" type="button" data-pickphoto aria-label="Foto accanto al nome">
+        ${portrait ? `<img alt="" src="${escapeHtml(portrait)}" />` : `<span>Foto</span>`}
+      </button>
+      <div>
+        <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
+        <button class="btn ghost profile-photo-clear" type="button" data-clearphoto ${portrait ? "" : "hidden"}>Togli foto</button>
+      </div>
+    </div>
+    <input type="file" accept="image/*" data-photofile hidden />
     <section class="profile-block">
       <h3>Anagrafica</h3>
-      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. Gli altri trovano nome, cognome, numero di brevetto e firma." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "Online vanno solo nome, cognome, numero di brevetto e firma. Il diario resta sul telefono."}</p>
+      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. Gli altri trovano nome, cognome, numero di brevetto, firma e la foto accanto al nome." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "Online vanno nome, cognome, numero di brevetto, firma e la foto accanto al nome. Il diario resta sul telefono."}</p>
       <div class="form-grid">
         ${field("name", "Nome e cognome", p.name, true)}
       </div>
@@ -5584,7 +5687,7 @@ function renderProfile() {
       <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto e questa firma si trovano se un altro utente cerca il tuo nominativo, anche la prima volta. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
       <button class="btn primary btn-block" type="button" data-sharecontact>Condividi contatto su WhatsApp</button>
-      <p class="hint" data-sharehint>Nel file vanno nome, cognome, numero di brevetto e firma. Chi lo riceve, in Community, tocca Ricevi contatto.</p>
+      <p class="hint" data-sharehint>Nel file vanno nome, cognome, numero di brevetto, firma e la foto. Chi lo riceve, in Community, tocca Ricevi contatto.</p>
     </section>
     <section class="profile-block">
       <h3>Medico e assicurazione</h3>
@@ -5667,6 +5770,41 @@ function renderProfile() {
     bindDel(certsBox.querySelector("[data-certrow]:last-child"));
   };
   let ownerSign = profileSignImage();
+  const photoBtn = form.querySelector("[data-pickphoto]");
+  const photoFile = form.querySelector("[data-photofile]");
+  const clearPhoto = form.querySelector("[data-clearphoto]");
+  const paintPortrait = () => {
+    photoBtn.innerHTML = portrait ? `<img alt="" src="${escapeHtml(portrait)}" />` : "<span>Foto</span>";
+    clearPhoto.hidden = !portrait;
+  };
+  photoBtn.onclick = () => photoFile.click();
+  photoFile.onchange = async () => {
+    const file = photoFile.files && photoFile.files[0];
+    photoFile.value = "";
+    if (!file) return;
+    const raw = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
+    });
+    const shrunk = await shrinkPortrait(raw);
+    if (!shrunk) return;
+    portrait = shrunk;
+    state.profile.portrait = shrunk;
+    ensureOwnerPerson();
+    save(state);
+    publishMyProfile().catch(() => {});
+    paintPortrait();
+  };
+  clearPhoto.onclick = () => {
+    portrait = "";
+    state.profile.portrait = "";
+    ensureOwnerPerson();
+    save(state);
+    publishMyProfile().catch(() => {});
+    paintPortrait();
+  };
   queueMicrotask(() => {
     bindSign(form.querySelector('[data-sign="ownerSign"]'), ownerSign, (v) => {
       ownerSign = v;
@@ -5679,6 +5817,7 @@ function renderProfile() {
         name: form.querySelector("[name=name]").value,
         certNumber: form.querySelector("[name=certNumber]").value,
         certLevel: form.querySelector("[name=certLevel]").value,
+        portrait,
       },
       ownerSign
     );
@@ -5706,6 +5845,7 @@ function renderProfile() {
       ...Object.fromEntries(fd.entries()),
       certs,
       sign: typeof ownerSign === "string" && ownerSign.startsWith("data:image") ? ownerSign : "",
+      portrait,
     };
     save(state);
     publishMyProfile().catch(() => {});
