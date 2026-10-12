@@ -1653,7 +1653,7 @@ function storeFollowedPerson(card, role) {
   return { person, created: !existing, name, card };
 }
 
-const COMMUNITY_CLOUD = "https://kvdb.io/4bHvcMQUYLWbNucNU2JKix";
+const COMMUNITY_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/board";
 const COMMUNITY_API = "profiles";
 const COMMUNITY_LINKS = "links";
 const COMMUNITY_MESSAGES = "messages";
@@ -1662,15 +1662,27 @@ function blankCommunityBoard() {
   return { profiles: {}, links: {}, messages: [] };
 }
 
-function cloudJson(value) {
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return null;
+function boardFromPayload(data) {
+  const board = blankCommunityBoard();
+  if (!data || typeof data !== "object" || Array.isArray(data)) return board;
+  if (data.profiles && typeof data.profiles === "object" && !Array.isArray(data.profiles)) board.profiles = data.profiles;
+  if (data.links && typeof data.links === "object" && !Array.isArray(data.links)) board.links = data.links;
+  if (Array.isArray(data.messages)) board.messages = data.messages.filter((row) => row && typeof row === "object");
+  return board;
+}
+
+function applyCloudKey(board, key, value) {
+  if (key.startsWith("p-")) board.profiles[key.slice(2)] = value;
+  else if (key.startsWith("l-")) board.links[key.slice(2)] = value;
+  else if (key.startsWith("m-")) {
+    const id = value && value._id;
+    board.messages = (board.messages || []).filter((row) => row._id !== id);
+    board.messages.push(value);
+    if (board.messages.length > 200) {
+      board.messages.sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+      board.messages = board.messages.slice(-200);
     }
   }
-  return value && typeof value === "object" ? value : null;
 }
 
 let communityBoardCache = { at: 0, data: null, flight: null };
@@ -1678,29 +1690,18 @@ let communityBoardCache = { at: 0, data: null, flight: null };
 async function loadCommunityBoard(maxAge = 20000) {
   if (communityBoardCache.data && Date.now() - communityBoardCache.at < maxAge) return communityBoardCache.data;
   if (communityBoardCache.flight) return communityBoardCache.flight;
-  communityBoardCache.flight = fetch(`${COMMUNITY_CLOUD}/?values=true&format=json`, {
+  communityBoardCache.flight = fetch(COMMUNITY_CLOUD, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   })
     .then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        const err = new Error(res.status === 403 || /verif/i.test(text) ? "verify" : "network");
-        throw err;
+      if (res.status === 400 || res.status === 404) {
+        const board = blankCommunityBoard();
+        communityBoardCache = { at: Date.now(), data: board, flight: null };
+        return board;
       }
-      const rows = await res.json();
-      const board = blankCommunityBoard();
-      if (Array.isArray(rows)) {
-        rows.forEach((pair) => {
-          if (!Array.isArray(pair)) return;
-          const key = String(pair[0] || "");
-          const value = cloudJson(pair[1]);
-          if (!value) return;
-          if (key.startsWith("p-")) board.profiles[key.slice(2)] = value;
-          else if (key.startsWith("l-")) board.links[key.slice(2)] = value;
-          else if (key.startsWith("m-")) board.messages.push(value);
-        });
-      }
+      if (!res.ok) throw new Error("network");
+      const board = boardFromPayload(await res.json());
       communityBoardCache = { at: Date.now(), data: board, flight: null };
       return board;
     })
@@ -1712,31 +1713,33 @@ async function loadCommunityBoard(maxAge = 20000) {
 }
 
 async function cloudSet(key, value) {
-  const res = await fetch(`${COMMUNITY_CLOUD}/${encodeURIComponent(key)}?ttl=604800`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify(value),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const err = new Error(res.status === 403 || /verif/i.test(text) ? "verify" : "network");
-    throw err;
+  let lastErr = new Error("network");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const board = await loadCommunityBoard(0);
+    const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
+    applyCloudKey(next, key, value);
+    const body = JSON.stringify({ v: 1, profiles: next.profiles, links: next.links, messages: next.messages });
+    if (body.length > 1400000) throw new Error("network");
+    const res = await fetch(COMMUNITY_CLOUD, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!res.ok) {
+      lastErr = new Error("network");
+      communityBoardCache = { at: 0, data: null, flight: null };
+      continue;
+    }
+    communityBoardCache = { at: Date.now(), data: next, flight: null };
+    return;
   }
-  if (!communityBoardCache.data) communityBoardCache.data = blankCommunityBoard();
-  if (key.startsWith("p-")) communityBoardCache.data.profiles[key.slice(2)] = value;
-  else if (key.startsWith("l-")) communityBoardCache.data.links[key.slice(2)] = value;
-  else if (key.startsWith("m-")) {
-    const id = value._id;
-    communityBoardCache.data.messages = communityBoardCache.data.messages.filter((row) => row._id !== id);
-    communityBoardCache.data.messages.push(value);
-  }
-  communityBoardCache.at = Date.now();
+  throw lastErr;
 }
 
 function fitCloudProfile(body) {
   const size = () => JSON.stringify(body).length;
-  if (size() > 15000) delete body.portrait;
-  if (size() > 15000) delete body.sign;
+  if (size() > 80000) delete body.portrait;
+  if (size() > 80000) delete body.sign;
   return body;
 }
 
@@ -1992,9 +1995,7 @@ async function connectSeaPerson(cardHit, chat) {
   }
   const res = await setMyFollow(cardHit, true);
   if (res.error) {
-    view.peopleHint = res.error === "verify"
-      ? "Apri la mail su calistrialessio80@gmail.com, conferma il cloud, poi segui di nuovo."
-      : "Seguito non registrato. Riprova tra poco.";
+    view.peopleHint = "Seguito non registrato. Riprova tra poco.";
     render();
     return;
   }
@@ -3381,7 +3382,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 142</p>
+        <p class="hint">Versione 143</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3811,7 +3812,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=142")
+    divelogsPromise = fetch("./divelogs-sites.json?v=143")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5562,9 +5563,7 @@ function renderPeople() {
   } else if (seaDirectory.error && !otherPeople.length) {
     const wait = document.createElement("p");
     wait.className = "hint";
-    wait.textContent = seaDirectory.error === "verify"
-      ? "Apri la mail su calistrialessio80@gmail.com, conferma il cloud della Community, poi riapri l'app."
-      : "Elenco non raggiungibile. Riprova tra poco.";
+    wait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
     sea.append(wait);
   } else if (!otherPeople.length) {
     const wait = document.createElement("p");
@@ -5582,11 +5581,9 @@ function renderPeople() {
       const extraSelf = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
       const selfStatus = profileOnlineStatus === "online"
         ? "Sei tu · visibile a chi usa SeaDive"
-        : profileOnlineStatus === "verify"
-          ? "Sei tu · conferma la mail del cloud"
-          : profileOnlineStatus === "short"
-            ? "Sei tu · servono nome e cognome"
-            : "Sei tu · ti pubblico tra gli altri";
+        : profileOnlineStatus === "short"
+          ? "Sei tu · servono nome e cognome"
+          : "Sei tu · ti pubblico tra gli altri";
       const selfRow = document.createElement("article");
       selfRow.className = "people-row";
       selfRow.innerHTML = `
@@ -5978,9 +5975,7 @@ function renderPerson() {
     }
     const res = await setMyFollow(current, true);
     if (res.error) {
-      view.peopleHint = res.error === "verify"
-        ? "Apri la mail su calistrialessio80@gmail.com, conferma il cloud, poi segui di nuovo."
-        : "Seguito non registrato. Riprova tra poco.";
+      view.peopleHint = "Seguito non registrato. Riprova tra poco.";
       view.personId = current.id;
       render();
       return;
