@@ -2871,6 +2871,7 @@ function setPageSkin() {
   document.body.classList.toggle("page-home", Boolean(loadSession()) && view.name === "home");
   document.body.classList.toggle("page-map", Boolean(loadSession()) && view.name === "map");
   document.body.classList.toggle("page-profile", Boolean(loadSession()) && view.name === "profile");
+  document.body.classList.toggle("page-bio", Boolean(loadSession()) && view.name === "bio");
 }
 
 async function finishAuth(user) {
@@ -2995,7 +2996,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 132</p>
+        <p class="hint">Versione 133</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3425,7 +3426,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=132")
+    divelogsPromise = fetch("./divelogs-sites.json?v=133")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();

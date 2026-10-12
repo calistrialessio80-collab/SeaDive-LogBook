@@ -1614,11 +1614,36 @@ body.page-profile::before {
   overflow: visible;
   text-overflow: unset;
 }
+body.page-bio {
+  background: #c8eef4;
+}
+body.page-bio::before {
+  background:
+    radial-gradient(circle at 8% 16%, rgba(255, 255, 255, 0.95) 0 4px, transparent 5px),
+    radial-gradient(circle at 24% 38%, rgba(255, 255, 255, 0.75) 0 2px, transparent 3px),
+    radial-gradient(circle at 70% 11%, rgba(255, 255, 255, 0.9) 0 6px, transparent 7px),
+    radial-gradient(circle at 88% 30%, rgba(255, 255, 255, 0.72) 0 3px, transparent 4px),
+    radial-gradient(circle at 42% 24%, rgba(255, 255, 255, 0.55) 0 2px, transparent 3px),
+    radial-gradient(circle at 14% 64%, rgba(255, 255, 255, 0.82) 0 8px, transparent 9px),
+    radial-gradient(circle at 56% 52%, rgba(255, 255, 255, 0.6) 0 3px, transparent 4px),
+    radial-gradient(circle at 92% 70%, rgba(255, 255, 255, 0.88) 0 5px, transparent 6px),
+    radial-gradient(circle at 34% 86%, rgba(255, 255, 255, 0.7) 0 4px, transparent 5px),
+    radial-gradient(circle at 76% 90%, rgba(255, 255, 255, 0.55) 0 2px, transparent 3px),
+    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.8), transparent 48%),
+    linear-gradient(180deg, #eefcff 0%, #d4f4f8 48%, #c3ebf3 100%);
+}
+body.page-bio .brand h1,
+body.page-bio .brand p {
+  color: #08343c;
+  text-shadow: none;
+}
+body.page-bio .nav-dock {
+  background: linear-gradient(180deg, rgba(195, 235, 243, 0), #c3ebf3 42%);
+}
 .card.bio-page {
   overflow: visible;
-  background:
-    radial-gradient(120% 80px at 0% 0%, rgba(42, 212, 201, 0.18), transparent 70%),
-    linear-gradient(180deg, #f3fbfd 0%, #ffffff 220px);
+  background: transparent;
+  box-shadow: none;
 }
 .bio-head { margin: 0 0 12px; }
 .bio-kicker {
