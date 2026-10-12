@@ -2048,42 +2048,49 @@ async function refreshSeaDirectory() {
 }
 
 async function connectSeaPerson(cardHit, chat) {
-  const stored = insertOnlineProfile(cardHit);
-  save(state);
-  const person = stored.person;
-  if (chat && person) {
-    view.peopleHint = "";
-    await openPersonChat(person);
-    return;
-  }
-  const res = await setMyFollow(cardHit, true);
-  if (res.error) {
+  try {
+    const stored = insertOnlineProfile(cardHit);
+    save(state);
+    const person = stored.person;
+    if (chat && person) {
+      view.peopleHint = "";
+      await openPersonChat(person);
+      return;
+    }
+    const res = await setMyFollow(cardHit, true);
+    if (res.error) {
+      view.peopleHint = res.error === "self"
+        ? "Questo profilo non si può seguire ancora. L'altra persona deve riaprire l'app aggiornata."
+        : "Seguito non registrato. Riprova tra poco.";
+      render();
+      return;
+    }
+    const who = stored.name || [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+    const mutual = Boolean(res.followIn);
+    const saved = upsertPerson({
+      id: person?.id,
+      role: person?.role || "buddy",
+      name: who,
+      firstName: cardHit.firstName,
+      lastName: cardHit.lastName,
+      level: cardHit.level,
+      remoteOwner: cardHit.owner,
+      followOut: true,
+      followIn: mutual,
+      followRev: Date.now(),
+      portrait: cardHit.portrait || "",
+      ...(mutual ? { cert: cardHit.cert || "", sign: cardHit.sign || "" } : {}),
+    });
+    if (mutual && saved) stampPersonSign(saved);
+    save(state);
+    view.peopleHint = mutual
+      ? `Vi seguite con ${who}. Nome, cognome, numero di brevetto e firma entrano nelle prossime immersioni.`
+      : `Segui ${who}. Quando segue anche te, nome, cognome, brevetto e firma restano pronti per le immersioni nuove.`;
+    render();
+  } catch {
     view.peopleHint = "Seguito non registrato. Riprova tra poco.";
     render();
-    return;
   }
-  const who = stored.name || [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
-  const mutual = Boolean(res.followIn);
-  const saved = upsertPerson({
-    id: person?.id,
-    role: person?.role || "buddy",
-    name: who,
-    firstName: cardHit.firstName,
-    lastName: cardHit.lastName,
-    level: cardHit.level,
-    remoteOwner: cardHit.owner,
-    followOut: true,
-    followIn: mutual,
-    followRev: Date.now(),
-    portrait: cardHit.portrait || "",
-    ...(mutual ? { cert: cardHit.cert || "", sign: cardHit.sign || "" } : {}),
-  });
-  if (mutual && saved) stampPersonSign(saved);
-  save(state);
-  view.peopleHint = res.followIn
-    ? `Vi seguite con ${who}. Nome, cognome, brevetto e firma entrano nella nuova immersione.`
-    : `Segui ${who}. Quando segue anche te, brevetto e firma entrano nell'immersione.`;
-  render();
 }
 
 async function findOnlineProfiles(query) {
@@ -2361,12 +2368,12 @@ async function syncIncomingLinks() {
   const mine = await profileOwnerKey();
   let changed = false;
   let links = [];
-  const fetchedAt = Date.now();
   try {
     links = await crudList(COMMUNITY_LINKS);
   } catch {
     links = [];
   }
+  const fetchedAt = Number(communityBoardCache.at) || 0;
   const profiles = await loadOnlineProfiles();
   const cards = profiles.error ? [] : profiles.list;
   const cardByOwner = new Map(cards.filter((c) => c.owner).map((c) => [c.owner, c]));
@@ -2379,6 +2386,7 @@ async function syncIncomingLinks() {
     const flags = linkFollowFlags(row, mine);
     const personEarly = (state.people || []).find((p) => p.remoteOwner === remote);
     if (personEarly && Number(personEarly.followRev) > fetchedAt) return;
+    if (personEarly?.followOut && !flags.followOut && Date.now() - Number(personEarly.followRev) < 20000) return;
     const card = cardByOwner.get(remote) || null;
     const names = personNames({ name: card ? `${card.firstName} ${card.lastName}` : remoteName });
     const person = (state.people || []).find(
@@ -3445,7 +3453,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 144</p>
+        <p class="hint">Versione 145</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3875,7 +3883,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=144")
+    divelogsPromise = fetch("./divelogs-sites.json?v=145")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5649,47 +5657,40 @@ function renderPeople() {
     }
     const known = localSeaPerson(cardHit);
     const mode = !known ? "none" : known.followOut && known.followIn ? "mutual" : known.followOut ? "out" : known.followIn ? "in" : "none";
-    const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "In attesa del suo seguito" : mode === "in" ? "Ti segue" : "Su SeaDive";
+    const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "In attesa del suo seguito" : mode === "in" ? "Ti segue" : "";
     const followBtn = mode === "mutual"
       ? ""
       : mode === "out"
         ? `<button class="btn ghost" type="button" disabled>In attesa</button>`
-        : `<button class="btn primary people-share" type="button">${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
+        : `<button class="btn primary" type="button" data-follow>${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
+    const photo = portraitImage(cardHit.portrait);
+    const initials = `${(cardHit.firstName || "?").slice(0, 1)}${(cardHit.lastName || "").slice(0, 1)}`.toUpperCase();
     const row = document.createElement("article");
-    row.className = "people-row";
-    row.setAttribute("data-q", [who, extra].filter(Boolean).join(" "));
+    row.className = "sea-person";
+    row.setAttribute("data-q", [cardHit.firstName, cardHit.lastName, who, extra].filter(Boolean).join(" "));
     row.innerHTML = `
-      <button type="button" class="people-open${cardHit.portrait ? " has-photo" : ""}">
-        ${avatarHtml(cardHit.portrait, who)}
-        <span>
-          <strong>${escapeHtml(who)}</strong>
-          <small>${escapeHtml(status)}${extra ? " · " + escapeHtml(extra) : ""}</small>
-        </span>
-      </button>
+      ${photo ? `<img class="sea-photo" alt="" src="${escapeHtml(photo)}" />` : `<span class="sea-photo sea-photo-fallback">${escapeHtml(initials)}</span>`}
+      <strong class="sea-first">${escapeHtml(cardHit.firstName || "")}</strong>
+      <strong class="sea-last">${escapeHtml(cardHit.lastName || "")}</strong>
+      ${status ? `<small class="sea-status">${escapeHtml(status)}</small>` : ""}
       <div class="people-actions">
         <button class="btn ghost people-chat" type="button">Chat</button>
         ${followBtn}
       </div>
     `;
-    row.querySelector(".people-open").onclick = () => {
-      if (known) {
-        view.personId = known.id;
-        view.peopleHint = "";
-        render();
-        return;
-      }
-      connectSeaPerson(cardHit, false);
-    };
     row.querySelector(".people-chat").onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       askChatNotice();
       connectSeaPerson(cardHit, true);
     };
-    row.querySelector(".people-share")?.addEventListener("click", (e) => {
+    row.querySelector("[data-follow]")?.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      connectSeaPerson(cardHit, false);
+      const button = e.currentTarget;
+      button.disabled = true;
+      button.textContent = "Salvo…";
+      await connectSeaPerson(cardHit, false);
     });
     sea.append(row);
   });
