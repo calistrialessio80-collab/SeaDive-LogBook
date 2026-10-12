@@ -1950,11 +1950,74 @@ async function loadOnlineProfiles() {
 
 let seaDirectory = { at: 0, list: [], error: "", loading: false };
 
-function seaQueryMatch(card, query) {
-  const words = communityWords(query);
-  if (!words.length) return true;
-  const hay = communityWords(`${card.firstName} ${card.lastName} ${card.level || ""} ${card.cert || ""}`);
-  return words.every((word) => hay.some((part) => part === word || part.startsWith(word)));
+function peopleSearchWords(query) {
+  return String(query || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 1);
+}
+
+function applyPeopleSearch(root) {
+  if (!root) return;
+  const words = peopleSearchWords(root.querySelector("[data-find]")?.value || "");
+  const match = (hay) => {
+    if (!words.length) return true;
+    const text = String(hay || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    return words.every((word) => text.includes(word));
+  };
+  const show = (el, on) => {
+    if (el) el.style.display = on ? "" : "none";
+  };
+  let seaShown = 0;
+  root.querySelectorAll("[data-sea] [data-q]").forEach((row) => {
+    const self = row.hasAttribute("data-self");
+    const ok = self || match(row.getAttribute("data-q") || "");
+    show(row, ok);
+    if (ok && !self) seaShown += 1;
+  });
+  let localShown = 0;
+  root.querySelectorAll("[data-list] [data-q]").forEach((row) => {
+    const ok = match(row.getAttribute("data-q") || "");
+    show(row, ok);
+    if (ok) localShown += 1;
+  });
+  const seaWait = root.querySelector("[data-sea-wait]");
+  const others = root.querySelectorAll("[data-sea] [data-q]:not([data-self])").length;
+  if (seaWait) {
+    if (!seaDirectory.at && seaDirectory.loading) {
+      show(seaWait, true);
+      seaWait.textContent = "Carico chi usa SeaDive…";
+    } else if (seaDirectory.error && !others) {
+      show(seaWait, true);
+      seaWait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
+    } else if (words.length && !seaShown) {
+      show(seaWait, true);
+      seaWait.textContent = "Nessuno con questo nome. L'altra persona deve aprire SeaDive con nome e cognome nel profilo.";
+    } else if (!others) {
+      show(seaWait, true);
+      seaWait.textContent = "Ancora nessun altro profilo. Chi ha già l'app deve aprirla una volta: con nome e cognome compare qui.";
+    } else {
+      show(seaWait, false);
+    }
+  }
+  const localWait = root.querySelector("[data-list-wait]");
+  const localTotal = root.querySelectorAll("[data-list] [data-q]").length;
+  if (localWait) {
+    if (!localTotal) {
+      show(localWait, true);
+      localWait.textContent = "Nessuno ancora. Aggiungi un buddy, un istruttore o un diving, oppure salva un'immersione con il loro nome.";
+    } else if (!localShown) {
+      show(localWait, true);
+      localWait.textContent = "Nessuno con questo filtro.";
+    } else {
+      show(localWait, false);
+    }
+  }
 }
 
 function localSeaPerson(card) {
@@ -3382,7 +3445,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 143</p>
+        <p class="hint">Versione 144</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3812,7 +3875,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=143")
+    divelogsPromise = fetch("./divelogs-sites.json?v=144")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5494,13 +5557,8 @@ function renderPeople() {
   const card = document.createElement("section");
   card.className = "card";
   const role = view.peopleRole || "all";
-  const q = String(view.peopleQuery || "").trim().toLowerCase();
   const people = [...(state.people || [])]
     .filter((p) => role === "all" || p.role === role)
-    .filter((p) => {
-      if (!q) return true;
-      return [p.name, p.firstName, p.lastName, p.cert, p.lead, p.note, roleLabel(p.role)].join(" ").toLowerCase().includes(q);
-    })
     .sort((a, b) => {
       const ao = samePersonName(a.name, state.profile.name) ? 0 : 1;
       const bo = samePersonName(b.name, state.profile.name) ? 0 : 1;
@@ -5510,7 +5568,7 @@ function renderPeople() {
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
     <p class="hint">Cerca chi usa SeaDive e seguilo. I profili stanno nel cloud della Community; il diario resta sul tuo Drive. Nome, cognome, brevetto e firma entrano in immersione solo se vi seguite entrambi.</p>
-    <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" />
+    <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" inputmode="search" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <h3 class="serif people-block">Chi usa SeaDive</h3>
     <div class="people-list" data-sea></div>
@@ -5540,7 +5598,6 @@ function renderPeople() {
   });
   const list = card.querySelector("[data-list]");
   const sea = card.querySelector("[data-sea]");
-  const seaQuery = String(view.peopleQuery || "").trim();
   const myNames = personNames({ name: state.profile?.name || "" });
   const selfCard = myNames.firstName && myNames.lastName
     ? {
@@ -5553,26 +5610,12 @@ function renderPeople() {
         owner: "me",
       }
     : null;
-  const otherPeople = (seaDirectory.list || []).filter((cardHit) => seaQueryMatch(cardHit, seaQuery));
+  const otherPeople = seaDirectory.list || [];
   const seaPeople = [selfCard, ...otherPeople].filter(Boolean);
-  if (!seaDirectory.at && seaDirectory.loading) {
-    const wait = document.createElement("p");
-    wait.className = "hint";
-    wait.textContent = "Carico chi usa SeaDive…";
-    sea.append(wait);
-  } else if (seaDirectory.error && !otherPeople.length) {
-    const wait = document.createElement("p");
-    wait.className = "hint";
-    wait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
-    sea.append(wait);
-  } else if (!otherPeople.length) {
-    const wait = document.createElement("p");
-    wait.className = "hint";
-    wait.textContent = seaQuery
-      ? "Nessuno con questo nome. L'altra persona deve aprire SeaDive con nome e cognome nel profilo."
-      : "Ancora nessun altro profilo. Chi ha già l'app deve aprirla una volta: con nome e cognome compare qui.";
-    sea.append(wait);
-  }
+  const seaWait = document.createElement("p");
+  seaWait.className = "hint";
+  seaWait.setAttribute("data-sea-wait", "");
+  sea.append(seaWait);
   seaPeople.forEach((cardHit) => {
     const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
     const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
@@ -5586,6 +5629,8 @@ function renderPeople() {
           : "Sei tu · ti pubblico tra gli altri";
       const selfRow = document.createElement("article");
       selfRow.className = "people-row";
+      selfRow.setAttribute("data-self", "");
+      selfRow.setAttribute("data-q", [whoSelf, extraSelf].filter(Boolean).join(" "));
       selfRow.innerHTML = `
         <button type="button" class="people-open${cardHit.portrait ? " has-photo" : ""}">
           ${avatarHtml(cardHit.portrait, whoSelf)}
@@ -5612,6 +5657,7 @@ function renderPeople() {
         : `<button class="btn primary people-share" type="button">${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
     const row = document.createElement("article");
     row.className = "people-row";
+    row.setAttribute("data-q", [who, extra].filter(Boolean).join(" "));
     row.innerHTML = `
       <button type="button" class="people-open${cardHit.portrait ? " has-photo" : ""}">
         ${avatarHtml(cardHit.portrait, who)}
@@ -5647,18 +5693,18 @@ function renderPeople() {
     });
     sea.append(row);
   });
-  if (!people.length) {
-    const empty = document.createElement("p");
-    empty.className = "hint";
-    empty.textContent = q || role !== "all"
-      ? "Nessuno con questo filtro."
-      : "Nessuno ancora. Aggiungi un buddy, un istruttore o un diving, oppure salva un'immersione con il loro nome.";
-    list.append(empty);
-  } else {
-    people.forEach((p) => {
+  const localWait = document.createElement("p");
+  localWait.className = "hint";
+  localWait.setAttribute("data-list-wait", "");
+  list.append(localWait);
+  people.forEach((p) => {
       const n = divesForPerson(p).length;
       const row = document.createElement("article");
       row.className = "people-card";
+      row.setAttribute(
+        "data-q",
+        [p.name, p.firstName, p.lastName, p.cert, p.lead, p.note, roleLabel(p.role)].filter(Boolean).join(" ")
+      );
       const names = personNames(p);
       const mine = samePersonName(p.name, state.profile.name);
       const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
@@ -5732,36 +5778,15 @@ function renderPeople() {
       };
       list.append(row);
     });
-  }
   const find = card.querySelector("[data-find]");
-  const refocusFind = () => {
-    queueMicrotask(() => {
-      const again = document.querySelector("[data-find]");
-      if (!again) return;
-      again.focus();
-      const end = again.value.length;
-      again.setSelectionRange?.(end, end);
-    });
-  };
-  let peopleSearchTimer = 0;
   find.oninput = () => {
-    clearTimeout(peopleSearchTimer);
-    peopleSearchTimer = setTimeout(() => {
-      view.peopleQuery = find.value;
-      view.onlineHits = [];
-      render();
-      refocusFind();
-    }, 180);
+    view.peopleQuery = find.value;
+    applyPeopleSearch(card);
   };
   find.onkeydown = (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    clearTimeout(peopleSearchTimer);
-    view.peopleQuery = find.value;
-    view.onlineHits = [];
-    render();
-    refocusFind();
+    if (e.key === "Enter") e.preventDefault();
   };
+  applyPeopleSearch(card);
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
     view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
@@ -5809,11 +5834,23 @@ function renderPeople() {
     const stamp = ++communitySyncStamp;
     const had = seaDirectory.at;
     const before = (seaDirectory.list || []).map((c) => c.owner).join("|");
+    const findEl = document.querySelector("[data-find]");
+    const typing = findEl && document.activeElement === findEl;
+    const caret = typing ? findEl.selectionStart : null;
+    const queryNow = typing ? findEl.value : null;
     Promise.all([syncIncomingLinks().catch(() => false), refreshSeaDirectory().catch(() => null)])
       .then(([changed]) => {
         if (stamp !== communitySyncStamp || view.name !== "people" || view.personId) return;
         const after = (seaDirectory.list || []).map((c) => c.owner).join("|");
-        if (changed || !had || before !== after) render();
+        if (!(changed || !had || before !== after)) return;
+        if (queryNow != null) view.peopleQuery = queryNow;
+        render();
+        if (!typing) return;
+        const again = document.querySelector("[data-find]");
+        if (!again) return;
+        again.focus();
+        const pos = Math.min(caret ?? again.value.length, again.value.length);
+        again.setSelectionRange?.(pos, pos);
       })
       .catch(() => {});
   });
