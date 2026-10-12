@@ -636,6 +636,53 @@ button.people-row { cursor: pointer; }
 }
 .people-card .people-actions { flex: none; width: 100%; justify-content: stretch; }
 .people-card .people-actions .btn { flex: 1; }
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 220px;
+  max-height: min(52vh, 480px);
+  overflow: auto;
+  margin: 12px 0;
+  padding: 4px 2px;
+}
+.chat-bubble {
+  max-width: 82%;
+  align-self: flex-start;
+  padding: 8px 12px;
+  border-radius: 16px 16px 16px 6px;
+  background: #e8eef4;
+  color: #1c2430;
+  font-size: 15px;
+  line-height: 1.35;
+}
+.chat-bubble.mine {
+  align-self: flex-end;
+  border-radius: 16px 16px 6px 16px;
+  background: #083848;
+  color: #fff;
+}
+.chat-bubble time {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.chat-compose {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.chat-compose input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 16px;
+}
+.chat-compose .btn { flex: none; }
 .sign-lock { font-size: 12px; font-weight: 700; color: var(--teal, #0b4d5e); white-space: nowrap; }
 .contact-drop { grid-column: 1 / -1; }
 .people-picks { margin: 8px 0 4px; }

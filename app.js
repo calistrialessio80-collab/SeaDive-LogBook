@@ -281,6 +281,7 @@ function cleanPerson(p) {
     lead: String(p.lead || "").trim(),
     note: String(p.note || "").trim(),
     following: Boolean(p.following),
+    remoteOwner: String(p.remoteOwner || "").trim(),
     sign: typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : "",
   };
 }
@@ -575,6 +576,7 @@ function mergePeople(a, b) {
     if (!prev.sign && p.sign) prev.sign = p.sign;
     if (!prev.firstName && p.firstName) prev.firstName = p.firstName;
     if (!prev.lastName && p.lastName) prev.lastName = p.lastName;
+    if (!prev.remoteOwner && p.remoteOwner) prev.remoteOwner = p.remoteOwner;
     if (p.following) prev.following = true;
   });
   return out;
@@ -838,6 +840,7 @@ function upsertPerson(partial) {
   if (partial.note != null) found.note = String(partial.note).trim();
   if (partial.following === true) found.following = true;
   if (partial.following === false) found.following = false;
+  if (typeof partial.remoteOwner === "string" && partial.remoteOwner.trim()) found.remoteOwner = partial.remoteOwner.trim();
   if (typeof partial.sign === "string") found.sign = partial.sign.startsWith("data:image") ? partial.sign : "";
   if (twin) {
     if (!found.cert && twin.cert) found.cert = twin.cert;
@@ -845,6 +848,7 @@ function upsertPerson(partial) {
     if (!found.lead && twin.lead) found.lead = twin.lead;
     if (!found.note && twin.note) found.note = twin.note;
     if (!found.sign && twin.sign) found.sign = twin.sign;
+    if (!found.remoteOwner && twin.remoteOwner) found.remoteOwner = twin.remoteOwner;
     (state.dives || []).forEach((d) => {
       if (d.buddyId === twin.id) d.buddyId = found.id;
       if (d.guideId === twin.id) d.guideId = found.id;
@@ -1439,6 +1443,7 @@ function storeFollowedPerson(card, role) {
     following: true,
   };
   if (card.level) payload.level = card.level;
+  if (card.owner) payload.remoteOwner = card.owner;
   if (card.sign) payload.sign = card.sign;
   const before = existing ? { ...existing } : null;
   const person = upsertPerson(payload);
@@ -1447,7 +1452,10 @@ function storeFollowedPerson(card, role) {
   return { person, created: !existing, name, card };
 }
 
-const COMMUNITY_API = "https://crudcrud.com/api/4323695fdbb14e2381719f8c374484fc/profiles";
+const COMMUNITY_ROOT = "https://crudcrud.com/api/4323695fdbb14e2381719f8c374484fc";
+const COMMUNITY_API = `${COMMUNITY_ROOT}/profiles`;
+const COMMUNITY_LINKS = `${COMMUNITY_ROOT}/links`;
+const COMMUNITY_MESSAGES = `${COMMUNITY_ROOT}/messages`;
 
 function communityWords(name) {
   return personNameKey(name)
@@ -1675,6 +1683,291 @@ function queueProfilePublish() {
       if (view.name === "profile") render();
     })
     .catch(() => {});
+}
+
+let chatTimer = 0;
+let communitySyncStamp = 0;
+const linkedPairs = new Set();
+
+function stopChatPoll() {
+  if (chatTimer) clearInterval(chatTimer);
+  chatTimer = 0;
+}
+
+async function crudList(url) {
+  let res;
+  try {
+    res = await fetch(url, { cache: "no-store" });
+  } catch {
+    throw new Error("network");
+  }
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error("network");
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+function chatPair(a, b) {
+  return [String(a || ""), String(b || "")].filter(Boolean).sort().join("~");
+}
+
+async function ensureCommunityLink(mine, other) {
+  const remote = String(other?.owner || "").trim();
+  if (!mine || !remote || mine === remote) return { error: "self" };
+  const pair = chatPair(mine, remote);
+  if (linkedPairs.has(pair)) return { ok: true, pair };
+  const list = await crudList(COMMUNITY_LINKS);
+  if (list.some((row) => row.pair === pair)) {
+    linkedPairs.add(pair);
+    return { ok: true, pair };
+  }
+  const me = personNames({ name: state.profile?.name || "" });
+  const otherName = [other.firstName, other.lastName].filter(Boolean).join(" ") || String(other.name || "").trim();
+  const leftIsMine = mine < remote;
+  const body = {
+    pair,
+    left: leftIsMine ? mine : remote,
+    right: leftIsMine ? remote : mine,
+    leftName: (leftIsMine ? me.name : otherName).slice(0, 80),
+    rightName: (leftIsMine ? otherName : me.name).slice(0, 80),
+    leftCert: (leftIsMine ? String(state.profile?.certNumber || "") : String(other.cert || "")).slice(0, 40),
+    rightCert: (leftIsMine ? String(other.cert || "") : String(state.profile?.certNumber || "")).slice(0, 40),
+  };
+  const res = await fetch(COMMUNITY_LINKS, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return { error: "network" };
+  linkedPairs.add(pair);
+  return { ok: true, pair };
+}
+
+async function syncIncomingLinks() {
+  const mine = await profileOwnerKey();
+  let changed = false;
+  let links = [];
+  try {
+    links = await crudList(COMMUNITY_LINKS);
+  } catch {
+    links = [];
+  }
+  links.forEach((row) => {
+    if (row.left !== mine && row.right !== mine) return;
+    const remote = row.left === mine ? row.right : row.left;
+    const remoteName = row.left === mine ? row.rightName : row.leftName;
+    const remoteCert = row.left === mine ? row.rightCert : row.leftCert;
+    if (!remote || !String(remoteName || "").trim()) return;
+    const names = personNames({ name: remoteName });
+    const person = (state.people || []).find(
+      (p) => p.remoteOwner === remote || (p.role !== "center" && samePersonName(p.name, remoteName))
+    );
+    if (!person) {
+      storeFollowedPerson(
+        { firstName: names.firstName, lastName: names.lastName, cert: remoteCert || "", owner: remote },
+        "buddy"
+      );
+      changed = true;
+      return;
+    }
+    if (person.remoteOwner !== remote) {
+      upsertPerson({
+        id: person.id,
+        role: person.role,
+        name: person.name,
+        remoteOwner: remote,
+      });
+      changed = true;
+    }
+  });
+  const profiles = await loadOnlineProfiles();
+  if (!profiles.error) {
+    for (const card of profiles.list) {
+      if (!card.owner || card.owner === mine) continue;
+      const person = (state.people || []).find(
+        (p) => p.role !== "center" && samePersonName(p.name, `${card.firstName} ${card.lastName}`)
+      );
+      if (!person) continue;
+      if (person.remoteOwner !== card.owner) {
+        upsertPerson({ id: person.id, role: person.role, name: person.name, remoteOwner: card.owner });
+        changed = true;
+      }
+      try {
+        await ensureCommunityLink(mine, card);
+      } catch {
+        /* il collegamento si ritenta all'apertura della chat */
+      }
+    }
+  }
+  if (changed) save(state);
+  return changed;
+}
+
+async function openPersonChat(person) {
+  if (!person || person.role === "center") return;
+  const mine = await profileOwnerKey();
+  let remote = String(person.remoteOwner || "");
+  let card = null;
+  if (!remote || remote === mine) {
+    const found = await findOnlineProfiles(person.name);
+    const hits = (found.hits || []).filter((hit) => hit.owner && hit.owner !== mine);
+    card = hits.length === 1 ? hits[0] : null;
+    remote = card?.owner || "";
+  }
+  if (!remote) {
+    view.name = "people";
+    view.personId = person.id;
+    view.peopleHint = "Per la chat questa persona deve aprire l'app con nome e cognome nel profilo.";
+    render();
+    return;
+  }
+  upsertPerson({
+    id: person.id,
+    role: person.role,
+    name: person.name,
+    firstName: person.firstName,
+    lastName: person.lastName,
+    remoteOwner: remote,
+    following: true,
+  });
+  let linked = { error: "network" };
+  try {
+    linked = await ensureCommunityLink(mine, {
+      owner: remote,
+      firstName: card?.firstName || person.firstName,
+      lastName: card?.lastName || person.lastName,
+      name: person.name,
+      cert: card?.cert || person.cert,
+    });
+  } catch {
+    linked = { error: "network" };
+  }
+  save(state);
+  if (linked.error) {
+    view.name = "people";
+    view.personId = null;
+    view.peopleHint = "Chat non raggiungibile. Riprova tra poco.";
+    render();
+    return;
+  }
+  view.name = "chat";
+  view.chatPersonId = person.id;
+  view.peopleHint = "";
+  render();
+}
+
+function renderChat() {
+  const person = (state.people || []).find((p) => p.id === view.chatPersonId);
+  const frag = document.createDocumentFragment();
+  frag.append(topbar(person?.name || "Chat"));
+  const card = document.createElement("section");
+  card.className = "card chat-screen";
+  const back = () => {
+    view.name = "people";
+    view.chatPersonId = null;
+    render();
+  };
+  if (!person?.remoteOwner) {
+    card.innerHTML = `<p class="hint">Contatto non collegato.</p><button class="btn ghost" type="button" data-back>Torna a Community</button>`;
+    card.querySelector("[data-back]").onclick = back;
+    frag.append(card);
+    return frag;
+  }
+  card.innerHTML = `
+    <h2 class="serif" style="margin:0">${escapeHtml(person.name)}</h2>
+    <p class="hint">Siete collegati. I messaggi arrivano in pochi secondi. Il diario non viene inviato.</p>
+    <div class="chat-log" data-log><p class="hint">Carico la chat…</p></div>
+    <form class="chat-compose">
+      <input name="text" maxlength="400" placeholder="Scrivi un messaggio" autocomplete="off" enterkeyhint="send" />
+      <button class="btn primary" type="submit">Invia</button>
+    </form>
+    <p class="hint" data-chatstatus></p>
+    <button class="btn ghost" type="button" data-back>Torna a Community</button>
+  `;
+  card.querySelector("[data-back]").onclick = back;
+  const log = card.querySelector("[data-log]");
+  const status = card.querySelector("[data-chatstatus]");
+  const form = card.querySelector("form");
+  let owner = "";
+  let thread = "";
+  let stick = true;
+  const draw = (rows) => {
+    const near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
+    log.replaceChildren();
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "hint";
+      empty.textContent = "Nessun messaggio. Scrivi tu il primo.";
+      log.append(empty);
+      return;
+    }
+    rows.forEach((row) => {
+      const bubble = document.createElement("div");
+      bubble.className = "chat-bubble" + (row.from === owner ? " mine" : "");
+      const text = document.createElement("span");
+      text.textContent = row.text;
+      const time = document.createElement("time");
+      const when = new Date(row.at);
+      time.textContent = Number.isNaN(when.getTime())
+        ? ""
+        : when.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      bubble.append(text, time);
+      log.append(bubble);
+    });
+    if (stick || near) log.scrollTop = log.scrollHeight;
+    stick = false;
+  };
+  const pull = async () => {
+    if (!thread || view.name !== "chat" || view.chatPersonId !== person.id || !log.isConnected) return;
+    try {
+      const all = await crudList(COMMUNITY_MESSAGES);
+      const rows = all
+        .filter((row) => row.thread === thread && String(row.text || "").trim())
+        .map((row) => ({
+          from: String(row.from || ""),
+          text: String(row.text || "").slice(0, 400),
+          at: String(row.at || ""),
+        }))
+        .sort((a, b) => a.at.localeCompare(b.at));
+      if (!log.isConnected) return;
+      draw(rows);
+      status.textContent = "";
+    } catch {
+      if (status.isConnected) status.textContent = "Chat non raggiungibile. Riprovo.";
+    }
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const input = form.querySelector("[name=text]");
+    const text = String(input.value || "").trim().slice(0, 400);
+    if (!text || !thread || !owner) return;
+    input.disabled = true;
+    try {
+      const res = await fetch(COMMUNITY_MESSAGES, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread, from: owner, text, at: new Date().toISOString() }),
+      });
+      if (!res.ok) throw new Error("network");
+      input.value = "";
+      stick = true;
+      await pull();
+    } catch {
+      status.textContent = "Messaggio non inviato. Riprova.";
+    }
+    input.disabled = false;
+    input.focus();
+  };
+  profileOwnerKey().then((mine) => {
+    if (!card.isConnected) return;
+    owner = mine;
+    thread = chatPair(mine, person.remoteOwner);
+    pull();
+    stopChatPoll();
+    chatTimer = setInterval(pull, 3500);
+  });
+  frag.append(card);
+  return frag;
 }
 
 function insertOnlineProfile(card) {
@@ -2399,6 +2692,7 @@ async function finishAuth(user) {
 }
 
 function render() {
+  stopChatPoll();
   destroyDiveSiteMap();
   destroyGoogleWorldMap();
   destroyWorldGlobe();
@@ -2427,6 +2721,7 @@ function render() {
   if (view.name === "map") app.append(renderWorldMap());
   if (view.name === "bio") app.append(view.bioId ? renderBioGuide() : renderBiology());
   if (view.name === "people") app.append(view.personId ? renderPerson() : renderPeople());
+  if (view.name === "chat") app.append(renderChat());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   document.body.append(renderNav());
@@ -2457,7 +2752,7 @@ function renderAuth() {
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, didattica, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. Nome, cognome, didattica, numero di brevetto e firma del profilo sono trovabili dagli altri utenti SeaDive che cercano quel nominativo. I messaggi della chat in Community arrivano all’altra persona. Diario, foto, telefono e dati medici restano sul telefono e sul Drive.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -2505,7 +2800,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 122</p>
+        <p class="hint">Versione 123</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -2553,7 +2848,7 @@ function renderNav() {
   ];
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");
-    const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit"));
+    const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
     b.className = on ? "active" : "";
     b.innerHTML = `<span>${icon}</span><small>${label}</small>`;
     b.onclick = () => {
@@ -2932,7 +3227,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=122")
+    divelogsPromise = fetch("./divelogs-sites.json?v=123")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -4571,7 +4866,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Scrivi nome o cognome. Se il profilo è in rete, entrano da soli nome, cognome, numero di brevetto e firma. In rete non va il diario.</p>
+    <p class="hint">Scrivi nome o cognome. Se il profilo è in rete, entrate entrambi in Community e potete scrivervi in chat. Il diario non va in rete.</p>
     <div class="chips" data-roles></div>
     <input class="search" data-find placeholder="Nome e cognome" value="${escapeHtml(view.peopleQuery || "")}" />
     <button class="btn primary btn-block" type="button" data-findremote>Cerca nominativo</button>
@@ -4662,6 +4957,7 @@ function renderPeople() {
         </button>
         ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
         <div class="people-actions">
+          ${p.role === "center" ? "" : `<button class="btn ghost people-chat" type="button">Chat</button>`}
           ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
           <button class="btn danger people-del" type="button">Elimina</button>
         </div>
@@ -4671,6 +4967,11 @@ function renderPeople() {
         view.peopleHint = "";
         render();
       };
+      row.querySelector(".people-chat")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPersonChat(p);
+      });
       row.querySelector(".people-share")?.addEventListener("click", async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -4800,6 +5101,16 @@ function renderPeople() {
     }
   };
   frag.append(card);
+  queueMicrotask(() => {
+    const stamp = ++communitySyncStamp;
+    syncIncomingLinks()
+      .then((changed) => {
+        if (!changed || stamp !== communitySyncStamp) return;
+        if (view.name !== "people" || view.personId) return;
+        render();
+      })
+      .catch(() => {});
+  });
   return frag;
 }
 
@@ -4840,6 +5151,7 @@ function renderPerson() {
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
     <div class="actions">
       <button class="btn primary" type="submit">Salva</button>
+      ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-chat>Chat</button>`}
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-shareperson>Condividi nome e brevetto</button>`}
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-follow>${current.following ? "Invia i miei dati" : "Segui"}</button>`}
       ${!creating && current.following && current.role !== "center" ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
@@ -4923,6 +5235,15 @@ function renderPerson() {
     view.peopleHint = "";
     render();
   };
+  form.querySelector("[data-chat]")?.addEventListener("click", () => {
+    openPersonChat({
+      ...current,
+      firstName: form.querySelector("[name=firstName]")?.value || current.firstName,
+      lastName: form.querySelector("[name=lastName]")?.value || current.lastName,
+      cert: form.querySelector("[name=cert]")?.value || current.cert,
+      name: current.role === "center" ? current.name : [form.querySelector("[name=firstName]")?.value, form.querySelector("[name=lastName]")?.value].filter(Boolean).join(" ") || current.name,
+    });
+  });
   form.querySelector("[data-shareperson]")?.addEventListener("click", async () => {
     const names = personNames({
       ...current,
