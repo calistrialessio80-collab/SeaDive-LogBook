@@ -1112,6 +1112,42 @@ button.people-row { cursor: pointer; }
 .kv div { background: rgba(255, 255, 255, 0.7); border-radius: 10px; padding: 6px 7px; min-width: 0; font-size: 13px; line-height: 1.25; }
 .kv b { display: block; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.58; font-weight: 600; margin-bottom: 1px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; position: relative; }
+.dive-export {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.dive-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(8, 56, 72, 0.1);
+  border-radius: 999px;
+  min-height: 32px;
+  padding: 5px 12px 5px 9px;
+  background: #fff;
+  color: #083848;
+  box-shadow: 0 4px 12px rgba(8, 56, 72, 0.08);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dive-chip svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dive-chip.wa {
+  background: #e8f8ef;
+  color: #128c4a;
+  border-color: transparent;
+}
 .chip:disabled { opacity: 0.4; cursor: default; }
 
 canvas.profile, canvas.sign {

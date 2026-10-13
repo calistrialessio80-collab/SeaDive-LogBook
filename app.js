@@ -1255,6 +1255,244 @@ async function shareOneDive(d) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+const PDF_WIN = {
+  "à": "\\340", "è": "\\350", "é": "\\351", "ì": "\\354", "ò": "\\362", "ù": "\\371",
+  "À": "\\300", "È": "\\310", "É": "\\311", "Ì": "\\314", "Ò": "\\322", "Ù": "\\331",
+  "á": "\\341", "í": "\\355", "ó": "\\363", "ú": "\\372",
+  "°": "\\260", "·": "\\267", "ç": "\\347",
+  "’": "\\222", "‘": "\\221",
+};
+
+function pdfLiteral(text) {
+  let out = "";
+  for (const ch of String(text ?? "")) {
+    if (PDF_WIN[ch]) {
+      out += PDF_WIN[ch];
+      continue;
+    }
+    if (ch === "\\" ) out += "\\\\";
+    else if (ch === "(") out += "\\(";
+    else if (ch === ")") out += "\\)";
+    else if (ch === "\n" || ch === "\r" || ch === "\t") out += " ";
+    else if (ch.charCodeAt(0) >= 32 && ch.charCodeAt(0) <= 126) out += ch;
+    else out += " ";
+  }
+  return out.replace(/ {2,}/g, " ").trim();
+}
+
+function pdfWrap(text, max) {
+  const words = String(text || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const rows = [];
+  let line = "";
+  words.forEach((word) => {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > max && line) {
+      rows.push(line);
+      line = word.slice(0, max);
+    } else line = next.slice(0, max);
+  });
+  if (line) rows.push(line);
+  return rows;
+}
+
+function pdfNum(n) {
+  return (Math.round(Number(n) * 10) / 10).toFixed(1);
+}
+
+function pdfFile(content) {
+  const enc = new TextEncoder();
+  const parts = [];
+  let size = 0;
+  const write = (s) => {
+    const bytes = enc.encode(s);
+    parts.push(bytes);
+    size += bytes.length;
+  };
+  write("%PDF-1.4\n");
+  const offsets = [0];
+  const obj = (n, body) => {
+    offsets[n] = size;
+    write(`${n} 0 obj\n${body}\nendobj\n`);
+  };
+  const stream = content.endsWith("\n") ? content : `${content}\n`;
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>");
+  obj(4, `<< /Length ${enc.encode(stream).length} >>\nstream\n${stream}endstream`);
+  obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  const xrefAt = size;
+  let xref = "xref\n0 7\n0000000000 65535 f \n";
+  for (let i = 1; i <= 6; i += 1) xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  xref += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`;
+  write(xref);
+  return new Blob(parts, { type: "application/pdf" });
+}
+
+function divePdfName(d) {
+  return shareDiveFilename(d).replace(/\.json$/, ".pdf");
+}
+
+function buildDivePdf(d) {
+  const ops = [];
+  const txt = (font, size, x, y, str, rgb = "0.05 0.16 0.2") => {
+    const safe = pdfLiteral(str);
+    if (!safe) return;
+    ops.push(`BT ${rgb} rg /F${font} ${size} Tf 1 0 0 1 ${pdfNum(x)} ${pdfNum(y)} Tm (${safe}) Tj ET`);
+  };
+  const fill = (rgb, x, y, w, h) => ops.push(`${rgb} rg ${pdfNum(x)} ${pdfNum(y)} ${pdfNum(w)} ${pdfNum(h)} re f`);
+  ops.push("0.031 0.220 0.282 rg 0 786 595 56 re f");
+  txt(2, 16, 36, 816, "SeaDive LogBook", "1 1 1");
+  txt(1, 9, 36, 800, "Libretto immersioni", "0.78 0.93 0.95");
+  txt(1, 10, 470, 808, d.number ? `N. ${d.number}` : "Scheda", "1 1 1");
+  let y = 758;
+  txt(2, 18, 36, y, d.site || "Senza nome");
+  y -= 16;
+  const when = [d.date, [d.timeIn, d.timeOut].filter(Boolean).join(" - ")].filter(Boolean).join("  ·  ");
+  if (when) {
+    txt(1, 10, 36, y, when, "0.27 0.36 0.4");
+    y -= 14;
+  }
+  const place = [d.location, geoText(d)].filter(Boolean).join("  ·  ");
+  if (place) {
+    txt(1, 10, 36, y, place, "0.27 0.36 0.4");
+    y -= 16;
+  }
+  y -= 8;
+  const shown = (value, unit) => {
+    const text = String(value ?? "").trim();
+    if (!text || text === "—") return "";
+    return unit ? `${text} ${unit}` : text;
+  };
+  const cells = [];
+  const add = (label, value) => {
+    if (value) cells.push([label, value]);
+  };
+  add("Prof. max", shown(d.maxDepth, "m"));
+  add("Prof. media", shown(d.avgDepth || d.computerLog?.avgDepth, "m"));
+  add("Tempo di fondo", shown(d.bottomTime, "min"));
+  add("Tempo totale", shown(d.totalTime, "min"));
+  add("Sosta sicurezza", shown(d.safetyStop, "min"));
+  add("Visibilità", shown(d.visibility, "m"));
+  add("Acqua", shown(d.waterTemp, "°C"));
+  add("Aria", shown(d.airTemp, "°C"));
+  add("Muta", shown(d.wetsuit, "mm"));
+  add("Zavorra", shown(d.ballast, "kg"));
+  add("Bombola", shown(d.tank, "L"));
+  add("Miscela", shown(d.mix) ? `EAN ${d.mix}` : "");
+  add("Pressione", [shown(d.pressureStart), shown(d.pressureEnd)].filter(Boolean).join(" - ") + (shown(d.pressureStart) || shown(d.pressureEnd) ? " bar" : ""));
+  add("SAC", shown(d.sac, "L/min"));
+  add("Corrente", shown(d.current));
+  add("Mare", shown(d.seaConditions));
+  add("Fuori curva", d.deco ? "Sì" : "No");
+  add("NDL", shown(d.ndl, "min"));
+  if (cells.length) {
+    txt(2, 11, 36, y, "Scheda", "0.04 0.42 0.45");
+    y -= 18;
+    for (let i = 0; i < cells.length && y > 210; i += 2) {
+      const right = cells[i + 1];
+      txt(1, 8, 36, y, cells[i][0], "0.42 0.5 0.54");
+      txt(2, 10, 36, y - 12, cells[i][1]);
+      if (right) {
+        txt(1, 8, 310, y, right[0], "0.42 0.5 0.54");
+        txt(2, 10, 310, y - 12, right[1]);
+      }
+      y -= 28;
+    }
+    y -= 6;
+  }
+  const people = [];
+  const diver = String(state.profile?.name || "").trim();
+  if (diver) people.push(["Subacqueo", [diver, state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" · ")]);
+  if (String(d.buddyName || "").trim()) people.push(["Buddy", [d.buddyName, d.buddyCert].filter(Boolean).join(" · ")]);
+  if (String(d.guideName || "").trim()) people.push(["Guida", [d.guideName, d.guideCert].filter(Boolean).join(" · ")]);
+  if (String(d.centerName || "").trim()) people.push(["Diving", [d.centerName, d.centerLead].filter(Boolean).join(" · ")]);
+  if (people.length && y > 160) {
+    txt(2, 11, 36, y, "Persone", "0.04 0.42 0.45");
+    y -= 16;
+    people.forEach((row) => {
+      if (y < 150) return;
+      txt(1, 8, 36, y, row[0], "0.42 0.5 0.54");
+      txt(2, 10, 100, y, row[1]);
+      y -= 14;
+    });
+    y -= 8;
+  }
+  let points = [];
+  try {
+    points = profileFor(d) || [];
+  } catch {
+    points = [];
+  }
+  if (points.length >= 2 && y > 150) {
+    txt(2, 11, 36, y, "Profilo", "0.04 0.42 0.45");
+    y -= 78;
+    const chartY = y;
+    const chartH = 64;
+    const chartW = 520;
+    fill("0.90 0.97 0.98", 36, chartY, chartW, chartH);
+    const sorted = [...points].sort((a, b) => Number(a.t) - Number(b.t));
+    const maxT = Math.max(1, ...sorted.map((p) => Number(p.t) || 0));
+    const maxD = Math.max(1, ...sorted.map((p) => Number(p.d) || 0));
+    const path = sorted.map((p, index) => {
+      const x = 36 + ((Number(p.t) || 0) / maxT) * chartW;
+      const py = chartY + chartH - ((Number(p.d) || 0) / maxD) * (chartH - 8) - 4;
+      return `${pdfNum(x)} ${pdfNum(py)} ${index ? "l" : "m"}`;
+    });
+    ops.push(`0.03 0.45 0.5 RG 1.4 w ${path.join(" ")} S`);
+    txt(1, 8, 40, chartY + 4, `0–${Math.round(maxD)} m`, "0.35 0.48 0.52");
+    y -= 16;
+  }
+  const notes = String(d.notes || "").trim();
+  if (notes && y > 80) {
+    txt(2, 11, 36, y, "Note", "0.04 0.42 0.45");
+    y -= 14;
+    pdfWrap(notes, 92).slice(0, 4).forEach((line) => {
+      if (y < 48) return;
+      txt(1, 10, 36, y, line, "0.15 0.22 0.26");
+      y -= 13;
+    });
+  }
+  txt(1, 8, 36, 28, "SeaDive LogBook · scheda dell'immersione", "0.45 0.52 0.56");
+  return pdfFile(ops.join("\n"));
+}
+
+function saveBlobFile(blob, filename) {
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function downloadDivePdf(d) {
+  saveBlobFile(buildDivePdf(d), divePdfName(d));
+}
+
+function diveWhatsappText(d) {
+  const lines = [`SeaDive · Immersione${d.number ? ` n° ${d.number}` : ""}`];
+  if (String(d.site || "").trim()) lines.push(String(d.site).trim());
+  const when = [d.date, [d.timeIn, d.timeOut].filter(Boolean).join("–")].filter(Boolean).join(" · ");
+  if (when) lines.push(when);
+  const stats = [];
+  if (String(d.maxDepth || "").trim()) stats.push(`${d.maxDepth} m`);
+  if (String(d.bottomTime || "").trim()) stats.push(`${d.bottomTime} min`);
+  if (stats.length) lines.push(stats.join(" · "));
+  if (String(d.location || "").trim()) lines.push(String(d.location).trim());
+  if (String(d.buddyName || "").trim()) lines.push(`Buddy: ${String(d.buddyName).trim()}`);
+  if (String(d.guideName || "").trim()) lines.push(`Guida: ${String(d.guideName).trim()}`);
+  const notes = String(d.notes || "").trim();
+  if (notes) lines.push(notes.slice(0, 280));
+  return lines.join("\n");
+}
+
+function sendDiveWhatsapp(d) {
+  const url = `https://wa.me/?text=${encodeURIComponent(diveWhatsappText(d))}`;
+  const opened = window.open(url, "_blank", "noopener,noreferrer");
+  if (!opened) location.href = url;
+}
+
 function parseSharedPayload(text) {
   const clean = String(text || "").replace(/^\uFEFF/, "").trim();
   const tryParse = (raw) => {
@@ -3894,7 +4132,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 162</p>
+        <p class="hint">Versione 163</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4324,7 +4562,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=162")
+    divelogsPromise = fetch("./divelogs-sites.json?v=163")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -7211,6 +7449,16 @@ function renderDetail() {
       <button class="btn danger" type="button" data-act="del">Elimina</button>
     </div>
     <p class="hint">Condividi porta anche la firma del buddy, della guida e del diving. Chi la riceve con Ricevi immersione la ritrova già firmata.</p>
+    <div class="dive-export">
+      <button class="dive-chip" type="button" data-act="pdf" aria-label="Scarica PDF">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h7.5L19 8v12.5H7z"/><path d="M14 3.5V8h5"/><path d="M9 13h6M9 16.5h4"/></svg>
+        PDF
+      </button>
+      <button class="dive-chip wa" type="button" data-act="wa" aria-label="Invia con WhatsApp">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18.5 5 21l2.7-.8A8 8 0 1 0 6 18.5z"/><path d="M9.2 10.2c.2.5.8 1.5 1.6 2.2.8.7 1.7 1.1 2.2 1.2.3 0 .7-.2.9-.6l.4-.8-.9-.5c-.2 0-.5.1-.8.4"/></svg>
+        WhatsApp
+      </button>
+    </div>
   `;
   bindComputerFill(card);
   card.querySelector("[data-act=edit]").onclick = () => {
@@ -7218,6 +7466,8 @@ function renderDetail() {
     render();
   };
   card.querySelector("[data-act=share]").onclick = () => shareOneDive(d);
+  card.querySelector("[data-act=pdf]").onclick = () => downloadDivePdf(d);
+  card.querySelector("[data-act=wa]").onclick = () => sendDiveWhatsapp(d);
   card.querySelector("[data-act=back]").onclick = () => {
     view = { name: "log", query: view.query };
     render();
