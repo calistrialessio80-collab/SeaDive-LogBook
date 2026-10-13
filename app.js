@@ -2615,11 +2615,20 @@ async function syncIncomingLinks() {
     const remoteLabel = String(remoteName || "").trim();
     if (personIsGone(personEarly || { role: "buddy", name: remoteLabel }, state.deletedPeople)) return;
     if (personEarly?.followOut && !flags.followOut) {
-      if (Date.now() - Number(personEarly.followRev) < 120000) setMyFollow(personEarly, true).catch(() => {});
-      return;
+      if (flags.followIn && !personEarly.followIn) {
+        personEarly.followIn = true;
+        personEarly.following = true;
+        changed = true;
+      }
+      if (Date.now() - Number(personEarly.followRev) < 120000) {
+        setMyFollow(personEarly, true).catch(() => {});
+        return;
+      }
     }
-    if (personEarly && Number(personEarly.followRev) > fetchedAt) return;
+    const theyFollowedBack = Boolean(flags.followIn) && personEarly && !personEarly.followIn;
+    if (!theyFollowedBack && personEarly && Number(personEarly.followRev) > fetchedAt) return;
     if (
+      !theyFollowedBack &&
       personEarly &&
       Date.now() - Number(personEarly.followRev) < 20000 &&
       (Boolean(personEarly.followOut) !== flags.followOut || Boolean(personEarly.followIn) !== flags.followIn)
@@ -3684,7 +3693,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 156</p>
+        <p class="hint">Versione 157</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4114,7 +4123,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=156")
+    divelogsPromise = fetch("./divelogs-sites.json?v=157")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5888,7 +5897,8 @@ function renderPeople() {
       return;
     }
     const known = localSeaPerson(cardHit);
-    const mode = !known ? "none" : known.followOut && known.followIn ? "mutual" : known.followOut ? "out" : known.followIn ? "in" : "none";
+    const mutual = Boolean(known?.followOut && known?.followIn);
+    const mode = mutual ? "mutual" : !known ? "none" : known.followOut ? "out" : known.followIn ? "in" : "none";
     const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "In attesa del suo seguito" : mode === "in" ? "Ti segue" : "";
     const followBtn = mode === "mutual" || mode === "out"
       ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>`
