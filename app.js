@@ -3894,7 +3894,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 159</p>
+        <p class="hint">Versione 160</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4324,7 +4324,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=159")
+    divelogsPromise = fetch("./divelogs-sites.json?v=160")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6265,7 +6265,7 @@ function renderPeople() {
     const known = localSeaPerson(cardHit);
     const mutual = Boolean(known?.followOut && known?.followIn);
     const mode = mutual ? "mutual" : !known ? "none" : known.followOut ? "out" : known.followIn ? "in" : "none";
-    const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "In attesa del suo seguito" : mode === "in" ? "Ti segue" : "";
+    const status = mode === "mutual" ? "Vi seguite" : mode === "in" ? "Ti segue" : "";
     const followBtn = mode === "mutual" || mode === "out"
       ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>`
       : `<button class="btn primary" type="button" data-follow>${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
@@ -6322,7 +6322,6 @@ function renderPeople() {
       const status = [
         mine ? "Sei tu" : "",
         p.remoteOwner && p.followOut && p.followIn ? "Vi seguite" : "",
-        p.remoteOwner && p.followOut && !p.followIn ? "In attesa" : "",
         p.remoteOwner && !p.followOut && p.followIn ? "Ti segue" : "",
         !p.remoteOwner && !mine ? roleLabel(p.role) : "",
         n ? `${n} ${n === 1 ? "scheda" : "schede"}` : "",
@@ -6484,7 +6483,7 @@ function renderPerson() {
     <div class="actions">
       <button class="btn primary" type="submit">Salva</button>
       ${creating || current.role === "center" ? "" : `<button class="btn ghost" type="button" data-shareperson>Condividi nome e brevetto</button>`}
-      ${creating || current.role === "center" || !current.remoteOwner || (current.followOut && current.followIn) ? "" : current.followOut ? `<button class="btn ghost" type="button" disabled>In attesa</button>` : `<button class="btn primary" type="button" data-follow>${current.followIn ? "Segui anche tu" : "Segui"}</button>`}
+      ${creating || current.role === "center" || !current.remoteOwner || current.followOut ? "" : `<button class="btn primary" type="button" data-follow>${current.followIn ? "Segui anche tu" : "Segui"}</button>`}
       ${!creating && current.role !== "center" && current.remoteOwner && current.followOut ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
       ${!creating && current.role !== "center" && !current.remoteOwner && current.following ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>` : ""}
       <button class="btn ghost" type="button" data-back>Torna a Community</button>
