@@ -13,7 +13,7 @@
   --line: rgba(28, 36, 48, 0.08);
   --ok: #3dcf6a;
   --shadow: 0 10px 28px rgba(28, 36, 48, 0.06);
-  --nav-h: 84px;
+  --nav-h: 92px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -511,43 +511,71 @@ body.page-home .section-head h3 { color: #1c2430; }
   pointer-events: none;
 }
 .nav {
-  position: fixed; left: 50%; bottom: calc(8px + var(--safe-bottom));
+  position: fixed; left: 50%; bottom: calc(6px + var(--safe-bottom));
   transform: translate3d(-50%, 0, 0);
-  width: min(400px, calc(100% - 16px));
-  display: grid; grid-template-columns: repeat(7, 1fr);
+  width: min(440px, calc(100% - 8px));
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: stretch;
   background: #fff;
   border: 0;
-  border-radius: 28px;
-  padding: 6px 4px 8px;
+  border-radius: 30px;
+  padding: 6px 2px 7px;
   z-index: 10000;
   box-shadow: 0 12px 40px rgba(28, 36, 48, 0.14);
 }
 .nav button {
-  border: 0; background: transparent; color: #9aa3b2;
-  min-height: 48px;
-  padding: 6px 2px; border-radius: 18px; cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: #9aa3b2;
+  min-width: 0;
+  min-height: 62px;
+  padding: 0;
+  border-radius: 18px;
+  cursor: pointer;
 }
 .nav button.active { color: #2f8fff; }
-.nav button.active span {
-  width: 36px; height: 36px; margin: 0 auto 2px; border-radius: 50%;
-  background: #e8f3ff; color: unset; display: grid; place-items: center;
-}
 .nav button span {
-  display: block;
-  font-size: 18px;
-  line-height: 1.1;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  border-radius: 50%;
+  font-size: 24px;
+  line-height: 1;
+  flex: none;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   font-style: normal;
 }
+.nav button.active span {
+  background: #e8f3ff;
+  color: unset;
+}
 .nav button span.nav-divers {
-  font-size: 12px;
-  letter-spacing: -3px;
+  font-size: 18px;
+  letter-spacing: -5px;
   line-height: 1;
   white-space: nowrap;
 }
 .nav button small {
-  display: block; font-size: 9px; font-weight: 600; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; padding: 0 1px;
+  display: block;
+  width: 100%;
+  margin: 0;
+  font-size: clamp(9.5px, 2.7vw, 10.5px);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0;
 }
 
 .btn {
@@ -2113,5 +2141,4 @@ body.page-people .community-page {
   .kpi strong { font-size: 20px; }
   .log-kpis b { font-size: 12px; }
   .kv { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .nav button small { font-size: 9px; }
 }

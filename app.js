@@ -3684,7 +3684,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 155</p>
+        <p class="hint">Versione 156</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4114,7 +4114,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=155")
+    divelogsPromise = fetch("./divelogs-sites.json?v=156")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
