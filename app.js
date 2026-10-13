@@ -1042,11 +1042,11 @@ function linkPeopleOnDive(dive) {
   dive.buddyId = buddy?.id || "";
   dive.guideId = guide?.id || "";
   dive.centerId = center?.id || "";
-  if (buddy && mutualFollow(buddy) && !(typeof dive.buddySign === "string" && dive.buddySign.startsWith("data:image"))) {
+  if (buddy && diveContactReady(buddy) && !(typeof dive.buddySign === "string" && dive.buddySign.startsWith("data:image"))) {
     const sign = personKnownSign(buddy);
     if (sign) dive.buddySign = sign;
   }
-  if (guide && mutualFollow(guide) && !(typeof dive.guideSign === "string" && dive.guideSign.startsWith("data:image"))) {
+  if (guide && diveContactReady(guide) && !(typeof dive.guideSign === "string" && dive.guideSign.startsWith("data:image"))) {
     const sign = personKnownSign(guide);
     if (sign) dive.guideSign = sign;
   }
@@ -2811,7 +2811,7 @@ async function pullCommunitySigns(form) {
     const typed = form.querySelector(`[name=${nameKey}]`)?.value || "";
     if (communityWords(typed).join("").length < 3) continue;
     const local = personByTypedName(role, typed);
-    if (local && mutualFollow(local)) continue;
+    if (local && diveContactReady(local)) continue;
     const found = await findOnlineProfiles(typed);
     if (found.hits?.length !== 1) continue;
     const card = found.hits[0];
@@ -3629,7 +3629,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 149</p>
+        <p class="hint">Versione 150</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4059,7 +4059,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=149")
+    divelogsPromise = fetch("./divelogs-sites.json?v=150")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6247,7 +6247,7 @@ function bindPeoplePicks(form, d) {
     ["center", "Diving in community", "centerName", "centerLead", "centerId"],
   ];
   groups.forEach(([role, title, nameKey, extraKey, idKey]) => {
-    const list = (state.people || []).filter((p) => p.role === role && (role === "center" || mutualFollow(p)));
+    const list = (state.people || []).filter((p) => p.role === role && (role === "center" || diveContactReady(p)));
     if (!list.length) return;
     const wrap = document.createElement("div");
     const hint = document.createElement("p");
@@ -6273,7 +6273,7 @@ function bindPeoplePicks(form, d) {
           }
           d[nameKey] = p.name;
           d[idKey] = p.id;
-          d[extraKey] = role === "center" ? p.lead || "" : mutualFollow(p) ? p.cert || "" : "";
+          d[extraKey] = role === "center" ? p.lead || "" : diveContactReady(p) ? p.cert || "" : "";
           const nameInput = form.querySelector(`[name=${nameKey}]`);
           const extraInput = form.querySelector(`[name=${extraKey}]`);
           if (nameInput) nameInput.value = d[nameKey];
@@ -6282,7 +6282,7 @@ function bindPeoplePicks(form, d) {
           b.classList.add("on");
           if (role === "buddy" || role === "guide") {
             const signKey = role === "buddy" ? "buddySign" : "guideSign";
-            const sign = mutualFollow(p) ? personKnownSign(p) : "";
+            const sign = diveContactReady(p) ? personKnownSign(p) : "";
             if (sign) d[signKey] = sign;
             form._applyOwnerSign?.({ forceBuddy: role === "buddy", forceGuide: role === "guide" });
             const line = form.querySelector("[data-pickedperson]");
@@ -6832,7 +6832,7 @@ function renderEdit() {
       ${ownerOnDiveHtml()}
       ${peoplePicksHtml()}
       <p class="hint" data-pickedperson hidden></p>
-      <p class="hint">Scrivi nome e cognome di un buddy già in Community: brevetto e firma entrano da soli, insieme al tuo profilo.</p>
+      <p class="hint">Tocca chi segui: nome, cognome, numero di brevetto e firma entrano nella scheda.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
@@ -7046,7 +7046,7 @@ function renderEdit() {
         const named = personByTypedName(role, typed);
         const certInput = form.querySelector(`[name=${certKey}]`);
         const prev = stamped[role];
-        const ready = named && mutualFollow(named);
+        const ready = named && diveContactReady(named);
         if (ready) {
           d[idKey] = named.id;
           d[certKey] = named.cert || "";
@@ -7087,7 +7087,7 @@ function renderEdit() {
       const shown = buddyNamed || guideNamed;
       if (line && shown) {
         line.hidden = false;
-        line.textContent = mutualFollow(shown) ? profileShareLine(shown, personKnownSign(shown)) : followWaitText(shown);
+        line.textContent = diveContactReady(shown) ? profileShareLine(shown, personKnownSign(shown)) : followWaitText(shown);
       } else if (line && !opts.forceBuddy && !opts.forceGuide) {
         line.hidden = true;
         line.textContent = "";
@@ -7319,6 +7319,13 @@ function mutualFollow(person) {
   return Boolean(person.followOut && person.followIn);
 }
 
+function diveContactReady(person) {
+  if (!person || person.role === "center") return false;
+  if (samePersonName(person.name, state.profile?.name)) return true;
+  if (!String(person.remoteOwner || "").trim()) return true;
+  return Boolean(person.followOut);
+}
+
 function followWaitText(person) {
   const name = person?.name || "questa persona";
   if (person?.followOut && !person?.followIn) return `Segui ${name}. Brevetto e firma entrano in immersione quando segue anche te.`;
@@ -7332,7 +7339,7 @@ function signForInsertedPerson(role, typedName) {
   const people = state.people || [];
   const exact = people.find((p) => p.role === role && samePersonName(p.name, typedName));
   const person = exact || people.find((p) => p.role !== "center" && samePersonName(p.name, typedName));
-  if (person && !mutualFollow(person)) {
+  if (person && !diveContactReady(person)) {
     if (samePersonName(state.profile?.name, typedName)) return profileSignImage();
     return "";
   }
