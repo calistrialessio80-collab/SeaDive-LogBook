@@ -4132,7 +4132,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 164</p>
+        <p class="hint">Versione 165</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4563,7 +4563,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=164")
+    divelogsPromise = fetch("./divelogs-sites.json?v=165")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5522,6 +5522,16 @@ function readPhotoSignals(bitmap) {
   minY = Math.max(0, minY - padY);
   maxX = Math.min(w - 1, maxX + padX);
   maxY = Math.min(h - 1, maxY + padY);
+  let absorbed = 0;
+  for (let p = 0; p < count; p += 1) if (seen[p]) absorbed += 1;
+  const closeup = !framed && absorbed / count >= 0.72;
+  if (closeup) {
+    framed = true;
+    minX = Math.round(w * 0.06);
+    minY = Math.round(h * 0.06);
+    maxX = Math.max(minX + 1, Math.round(w * 0.94) - 1);
+    maxY = Math.max(minY + 1, Math.round(h * 0.94) - 1);
+  }
   const bins = {
     rosso: 0, arancio: 0, giallo: 0, verde: 0, blu: 0, viola: 0, rosa: 0, bianco: 0, nero: 0, bruno: 0, grigio: 0,
   };
@@ -5533,8 +5543,8 @@ function readPhotoSignals(bitmap) {
       const p = y * w + x;
       const px = rgbAt(p);
       lum[p] = 0.3 * px[0] + 0.59 * px[1] + 0.11 * px[2];
-      if (framed && !mask[p]) continue;
-      if (framed && nearest(px) <= threshold * 0.72) continue;
+      if (!closeup && framed && !mask[p]) continue;
+      if (!closeup && framed && nearest(px) <= threshold * 0.72) continue;
       bins[photoColorName(px[0], px[1], px[2])] += 1;
       used += 1;
     }
@@ -5553,7 +5563,7 @@ function readPhotoSignals(bitmap) {
     }
   }
   let colors = Object.entries(bins)
-    .filter(([, n]) => used > 0 && n / used >= 0.1)
+    .filter(([, n]) => used > 0 && n / used >= 0.08)
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name);
   const dull = new Set(["grigio", "nero", "bruno", "bianco"]);
@@ -5562,7 +5572,7 @@ function readPhotoSignals(bitmap) {
     colors = [...vivid, ...colors.filter((name) => !vivid.includes(name))];
   }
   const withoutBg = colors.filter((name) => !bgNames.has(name));
-  if (withoutBg.length) colors = withoutBg;
+  if (!closeup && withoutBg.length) colors = withoutBg;
   colors = colors.slice(0, 3);
   const axis = (horizontal) => {
     const values = [];
@@ -5574,14 +5584,14 @@ function readPhotoSignals(bitmap) {
       if (horizontal) {
         for (let y = minY; y <= maxY; y += 1) {
           const p = y * w + i;
-          if (framed && !mask[p]) continue;
+          if (!closeup && framed && !mask[p]) continue;
           sum += lum[p];
           n += 1;
         }
       } else {
         for (let x = minX; x <= maxX; x += 1) {
           const p = i * w + x;
-          if (framed && !mask[p]) continue;
+          if (!closeup && framed && !mask[p]) continue;
           sum += lum[p];
           n += 1;
         }
@@ -5608,7 +5618,7 @@ function readPhotoSignals(bitmap) {
   for (let y = minY + 2; y <= maxY - 2; y += 2) {
     for (let x = minX + 2; x <= maxX - 2; x += 2) {
       const p = y * w + x;
-      if (framed && !mask[p]) continue;
+      if (!closeup && framed && !mask[p]) continue;
       samples += 1;
       const around = (lum[p - w * 2] + lum[p + w * 2] + lum[p - 2] + lum[p + 2]) / 4;
       if (Math.abs(lum[p] - around) > 32) peaks += 1;
@@ -5624,6 +5634,7 @@ function readPhotoSignals(bitmap) {
   shot.width = Math.max(1, Math.round(160 * (sw / long)));
   shot.height = Math.max(1, Math.round(160 * (sh / long)));
   shot.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, shot.width, shot.height);
+  if (colors.length) framed = true;
   return { colors, patterns, framed, preview: shot.toDataURL("image/jpeg", 0.8) };
 }
 
@@ -5643,7 +5654,7 @@ function bioPhotoHint(signals) {
   };
   const parts = (signals.colors || []).map((color) => colorName[color]).filter(Boolean);
   (signals.patterns || []).forEach((pattern) => parts.push(pattern === "bande" ? "bande" : "macchie"));
-  if (!signals.framed || !parts.length) return "Non distinguo il soggetto dallo sfondo. Avvicinalo, con meno acqua intorno, e riprova.";
+  if (!parts.length) return "Non distinguo il soggetto dallo sfondo. Avvicinalo, con meno acqua intorno, e riprova.";
   return `Soggetto inquadrato: ${parts.join(", ")}. Ecco le specie della guida che ci assomigliano.`;
 }
 
@@ -5859,20 +5870,47 @@ function renderBiology() {
   photoButton.onclick = () => photoFile.click();
   photoFile.onchange = async () => {
     const file = photoFile.files?.[0];
-    photoFile.value = "";
     if (!file) return;
     photoButton.disabled = true;
     photoButton.textContent = "Leggo la foto…";
     try {
-      const bitmap = await createImageBitmap(file);
+      const bytes = await file.arrayBuffer();
+      photoFile.value = "";
+      const type = String(file.type || "").startsWith("image/") ? file.type : "image/jpeg";
+      const blob = new Blob([bytes], { type });
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+      } catch {
+        const url = URL.createObjectURL(blob);
+        try {
+          const img = await new Promise((resolve, reject) => {
+            const el = new Image();
+            el.onload = () => resolve(el);
+            el.onerror = () => reject(new Error("image"));
+            el.src = url;
+          });
+          const canvas = document.createElement("canvas");
+          const limit = 1600;
+          const fit = Math.min(1, limit / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1));
+          canvas.width = Math.max(1, Math.round((img.naturalWidth || img.width) * fit));
+          canvas.height = Math.max(1, Math.round((img.naturalHeight || img.height) * fit));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          bitmap = await createImageBitmap(canvas);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
       const signals = readPhotoSignals(bitmap);
       bitmap.close?.();
       bioPhotoSearch = { signals, preview: signals.preview, hint: bioPhotoHint(signals) };
       paint();
+      sec.querySelector("[data-biophotochip]")?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch {
+      photoFile.value = "";
       bioPhotoSearch = null;
       paint();
-      blurb.textContent = "Foto non leggibile. Scegline un'altra.";
+      blurb.textContent = "Foto non leggibile. Scegline un'altra dalla galleria.";
     }
     photoButton.disabled = false;
     photoButton.textContent = "Cerca con foto";

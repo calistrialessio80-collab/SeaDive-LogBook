@@ -2811,7 +2811,7 @@ const LIFE_PHOTO_PATTERNS = {
 };
 
 function lifeLookWords(x) {
-  return lifeNorm(`${x.look} ${x.tag}`).split(/[^a-z]+/).filter((word) => word.length > 2);
+  return lifeNorm(`${x.look} ${x.tag} ${x.life}`).split(/[^a-z]+/).filter((word) => word.length > 2);
 }
 
 function lifeWordHit(words, keys) {
