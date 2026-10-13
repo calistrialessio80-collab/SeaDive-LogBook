@@ -4109,7 +4109,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 168</p>
+        <p class="hint">Versione 169</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4540,7 +4540,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=168")
+    divelogsPromise = fetch("./divelogs-sites.json?v=169")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5719,11 +5719,87 @@ function readPhotoSignals(bitmap) {
   return { colors, patterns, shape, framed, vector, preview: shot.toDataURL("image/jpeg", 0.8) };
 }
 
-function bioPhotoHint(signals) {
-  if (!(signals?.vector || []).length && !(signals?.colors || []).length && !(signals?.patterns || []).length) {
-    return "Non distinguo il soggetto dallo sfondo. Avvicinalo, con meno acqua intorno, e riprova.";
+function bioPhotoHint() {
+  return "Riconosco il soggetto della foto, poi cerco quel tipo nella guida.";
+}
+
+let lifeClipPromise = null;
+let lifeClipStatus = () => {};
+
+function loadLifeClip() {
+  if (!lifeClipPromise) {
+    lifeClipPromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
+      .then(({ pipeline }) => pipeline("zero-shot-image-classification", "Xenova/clip-vit-base-patch32", {
+        dtype: "q8",
+        progress_callback: (data) => {
+          if (!data) return;
+          if (data.status === "progress" && data.total) {
+            lifeClipStatus(`Scarico il riconoscimento del soggetto… ${Math.min(100, Math.round((100 * data.loaded) / data.total))}%`);
+          } else if (data.status === "initiate") {
+            lifeClipStatus("Scarico il riconoscimento del soggetto. La prima volta può volerci un po'.");
+          }
+        },
+      }))
+      .catch((err) => {
+        lifeClipPromise = null;
+        throw err;
+      });
   }
-  return "Confronto la foto con tutte le specie della guida, per forma, disegno e colore.";
+  return lifeClipPromise;
+}
+
+async function clipBest(classifier, image, items, labelOf) {
+  const labels = items.map(labelOf);
+  const ranked = await classifier(image, labels);
+  const score = new Map((Array.isArray(ranked) ? ranked : []).map((row) => [row.label, Number(row.score) || 0]));
+  let best = items[0];
+  let bestScore = -1;
+  items.forEach((item) => {
+    const value = score.get(labelOf(item)) || 0;
+    if (value > bestScore) {
+      best = item;
+      bestScore = value;
+    }
+  });
+  return { best, score };
+}
+
+async function recognizePhotoSubject(image, signals, token) {
+  lifeClipStatus = (text) => {
+    if (token !== bioPhotoToken || !bioPhotoSearch) return;
+    bioPhotoSearch.hint = text;
+    const hint = document.querySelector("[data-biophotohint]");
+    if (hint) hint.textContent = text;
+  };
+  lifeClipStatus("Preparo il riconoscimento del soggetto…");
+  const classifier = await loadLifeClip();
+  if (token !== bioPhotoToken) return null;
+  const kinds = (window.SeaDiveBiology.LIFE_PHOTO_CLASSES || []).flatMap((row) => row.kinds || []);
+  lifeClipStatus("Guardo che soggetto c’è nella foto…");
+  const kindPick = await clipBest(classifier, image, kinds, (item) => item.label);
+  const kind = kindPick.best;
+  if (token !== bioPhotoToken || !kind) return null;
+  let pool = window.SeaDiveBiology.speciesForPhotoKind(kind);
+  if (!pool.length) return { rows: [], hint: `Sembra ${kind.phrase}, ma questo soggetto non è nella guida.` };
+  const focus = {
+    colors: (signals?.colors || []).slice(0, 1),
+    patterns: signals?.patterns || [],
+    shape: signals?.shape || [],
+  };
+  const traits = new Map((window.SeaDiveBiology.scoreMarineLifeByPhoto(focus) || []).map((row) => [row.x.id, row.score]));
+  const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const plain = norm(kind.phrase).replace(/^(un|una|uno|il|lo|la)\s+/, "");
+  pool = pool.slice().sort((a, b) => {
+    const scoreA = (traits.get(a.id) || 0) + (norm(a.it) === plain ? 2 : 0);
+    const scoreB = (traits.get(b.id) || 0) + (norm(b.it) === plain ? 2 : 0);
+    return scoreB - scoreA || a.it.localeCompare(b.it, "it");
+  });
+  const rows = pool.length <= 8 ? pool : pool.slice(0, 6);
+  const first = rows[0];
+  const hint = rows.length === 1
+    ? `Sembra ${kind.phrase}: ${first.it}.`
+    : `Sembra ${kind.phrase}. Per primo, ${first.it}.`;
+  return { rows, hint };
 }
 
 function cosineSlice(a, b, from, to) {
@@ -5974,7 +6050,7 @@ function renderBiology() {
     }
     let rows;
     if (photo) {
-      rows = photo.rows || api.matchMarineLifeByPhoto(photo.signals);
+      rows = Array.isArray(photo.rows) ? photo.rows : [];
       if (q.trim()) {
         const allowed = new Set(api.filterMarineLife(q, "all", "all").map((x) => x.id));
         rows = rows.filter((x) => allowed.has(x.id));
@@ -5984,10 +6060,10 @@ function renderBiology() {
     }
     const section = group === "all" ? null : api.lifeSection(group);
     blurb.textContent = photo ? "" : (section?.blurb || "");
-    count.textContent = rows.length === 1 ? "1 specie" : `${rows.length} specie`;
+    count.textContent = photo?.pending ? "Riconoscimento…" : (rows.length === 1 ? "1 specie" : `${rows.length} specie`);
     if (!rows.length) {
       list.innerHTML = photo
-        ? `<p class="hint">Nessuna specie della guida assomiglia a questa foto. Avvicina il soggetto e riprova, oppure cerca per nome.</p>`
+        ? `<p class="hint">${escapeHtml(photo.pending ? photo.hint : "Non ho riconosciuto questo soggetto nella guida. Avvicina l’animale e riprova.")}</p>`
         : `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
       return;
     }
@@ -6099,26 +6175,38 @@ function renderBiology() {
         }
       }
       const signals = readPhotoSignals(bitmap);
+      const frame = document.createElement("canvas");
+      const fit = Math.min(1, 384 / Math.max(bitmap.width, bitmap.height, 1));
+      frame.width = Math.max(1, Math.round(bitmap.width * fit));
+      frame.height = Math.max(1, Math.round(bitmap.height * fit));
+      frame.getContext("2d").drawImage(bitmap, 0, 0, frame.width, frame.height);
+      const clipImage = frame.toDataURL("image/jpeg", 0.86);
       bitmap.close?.();
       bioPhotoSearch = {
         signals,
         preview: signals.preview,
-        hint: bioPhotoHint(signals),
-        rows: window.SeaDiveBiology.matchMarineLifeByPhoto(signals),
+        hint: bioPhotoHint(),
+        rows: [],
+        pending: true,
       };
       paint();
       sec.querySelector("[data-biophotochip]")?.scrollIntoView({ block: "start", behavior: "smooth" });
       photoButton.disabled = false;
       photoButton.textContent = "Cerca con foto";
-      const ranked = await rankPhotoOnGuide(signals, token, (done, total) => {
+      try {
+        const found = await recognizePhotoSubject(clipImage, signals, token);
+        if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
+        bioPhotoSearch.rows = found.rows;
+        bioPhotoSearch.hint = found.hint;
+        bioPhotoSearch.pending = false;
+        paint();
+      } catch {
         if (token !== bioPhotoToken || !bioPhotoSearch) return;
-        const hint = sec.querySelector("[data-biophotohint]");
-        if (hint) hint.textContent = `Confronto la foto con tutte le specie… ${done} di ${total}`;
-      });
-      if (!ranked || token !== bioPhotoToken || !bioPhotoSearch) return;
-      bioPhotoSearch.rows = ranked;
-      bioPhotoSearch.hint = "Le specie più simili in tutta la guida, per forma, disegno e colore.";
-      paint();
+        bioPhotoSearch.pending = false;
+        bioPhotoSearch.rows = [];
+        bioPhotoSearch.hint = "Non riesco a riconoscere il soggetto adesso. Controlla la rete e riprova.";
+        paint();
+      }
     } catch {
       photoFile.value = "";
       bioPhotoToken += 1;

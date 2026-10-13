@@ -2919,12 +2919,148 @@ async function lifeThumb(la, it) {
   return page.thumb || "";
 }
 
+const SHARK_TAGS = new Set(["Carcharinide", "Lamnide", "Alopiide", "Sfirnide", "Ginglymostomatide", "Triakide", "Cetorinide", "Rincodontide", "Stegostomatide", "Sciliorinide", "Odontaspide"]);
+const RAY_TAGS = new Set(["Dasiatide", "Rajide", "Miliobatide", "Mobulide", "Torpedinide", "Rinide"]);
+
+const LIFE_PHOTO_CLASSES = [
+  {
+    id: "cefalopode",
+    label: "an octopus, cuttlefish or squid",
+    kinds: [
+      { id: "polpo", phrase: "un polpo", label: "an octopus", test: (x) => x.tag === "Polpo" },
+      { id: "seppia", phrase: "una seppia", label: "a cuttlefish", test: (x) => x.tag === "Seppia" || x.tag === "Seppiola" },
+      { id: "calamaro", phrase: "un calamaro", label: "a squid", test: (x) => x.tag === "Calamaro" || x.tag === "Cefalopode" },
+    ],
+  },
+  {
+    id: "conchiglia",
+    label: "a clam, mussel or sea snail",
+    kinds: [
+      { id: "bivalve", phrase: "un bivalve", label: "a clam or mussel", test: (x) => x.tag === "Bivalve" },
+      { id: "chiocciola", phrase: "un mollusco con conchiglia", label: "a sea snail", test: (x) => x.tag === "Gasteropode" },
+    ],
+  },
+  {
+    id: "nudibranco",
+    label: "a nudibranch sea slug",
+    kinds: [
+      { id: "doride", phrase: "un nudibranco doride", label: "a dorid nudibranch", test: (x) => x.tag === "Doride" },
+      { id: "eolide", phrase: "un nudibranco eolide", label: "an aeolid nudibranch with cerata", test: (x) => x.tag === "Eolide" },
+      { id: "lepre", phrase: "una lepre di mare", label: "a sea hare", test: (x) => x.tag === "Lepre di mare" },
+      { id: "sacoglosso", phrase: "un sacoglosso", label: "a sap-sucking sea slug", test: (x) => x.tag === "Sacoglosso" },
+    ],
+  },
+  {
+    id: "corallo",
+    label: "a coral or gorgonian",
+    kinds: [
+      { id: "corallo-rosso", phrase: "corallo rosso", label: "the red coral Corallium rubrum", test: (x) => /corallium rubrum/i.test(x.la) },
+      { id: "gorgonia-rossa", phrase: "una gorgonia rossa", label: "a red gorgonian sea fan", test: (x) => x.tag === "Gorgonia" && /ross|porpor/i.test(lifeNorm(`${x.it} ${x.look}`)) },
+      { id: "gorgonia", phrase: "una gorgonia", label: "a yellow or white gorgonian sea fan", test: (x) => x.tag === "Gorgonia" },
+      { id: "madrepora", phrase: "una madrepora", label: "a stony hard coral", test: (x) => x.tag === "Madrepora" },
+      { id: "corallo-molle", phrase: "un corallo molle", label: "a soft coral", test: (x) => x.tag === "Corallo molle" },
+      { id: "corallo-nero", phrase: "un corallo nero", label: "a black coral", test: (x) => x.tag === "Antipataro" },
+    ],
+  },
+  {
+    id: "pesce",
+    label: "a fish",
+    kinds: [
+      { id: "cernia", phrase: "una cernia", label: "a grouper fish with a heavy body and a big mouth", test: (x) => lifeNorm(x.it).startsWith("cernia") },
+      { id: "anthias", phrase: "un anthias", label: "an anthias", test: (x) => /anthias/i.test(`${x.it} ${x.la}`) },
+      { id: "sciarrano", phrase: "uno sciarrano", label: "a comber", test: (x) => /sciarrano|perchia|serranus/i.test(`${x.it} ${x.la}`) },
+      { id: "labro", phrase: "un labro", label: "a wrasse", test: (x) => x.tag === "Labridae" },
+      { id: "sarago", phrase: "un sarago", label: "a sea bream", test: (x) => x.tag === "Sparide" },
+      { id: "murena", phrase: "una murena", label: "a moray eel", test: (x) => x.tag === "Murenide" || x.tag === "Congride" },
+      { id: "razza", phrase: "una razza", label: "a ray or stingray", test: (x) => RAY_TAGS.has(x.tag) },
+      { id: "squalo", phrase: "uno squalo", label: "a shark", test: (x) => SHARK_TAGS.has(x.tag) },
+      { id: "scorfano", phrase: "uno scorfano", label: "a scorpionfish or lionfish", test: (x) => x.tag === "Scorpenide" },
+      { id: "castagnola", phrase: "una castagnola", label: "a damselfish", test: (x) => x.tag === "Pomacentride" },
+      { id: "cavalluccio", phrase: "un cavalluccio marino", label: "a seahorse or pipefish", test: (x) => x.tag === "Singnatide" },
+      { id: "balista", phrase: "un pesce balestra", label: "a triggerfish", test: (x) => x.tag === "Balistide" },
+      { id: "pappagallo", phrase: "un pesce pappagallo", label: "a parrotfish", test: (x) => x.tag === "Scaride" },
+      { id: "tonno", phrase: "un tonno", label: "a tuna or mackerel", test: (x) => x.tag === "Scombride" },
+      { id: "barracuda", phrase: "un barracuda", label: "a barracuda", test: (x) => x.tag === "Sfirenide" },
+    ],
+  },
+  {
+    id: "cnidario",
+    label: "a jellyfish or sea anemone",
+    kinds: [
+      { id: "medusa", phrase: "una medusa", label: "a jellyfish", test: (x) => x.tag === "Medusa" || x.tag === "Cubomedusa" || x.tag === "Sifonoforo" },
+      { id: "anemone", phrase: "un anemone", label: "a sea anemone", test: (x) => x.tag === "Anemone" || x.tag === "Cerianto" },
+    ],
+  },
+  {
+    id: "crostaceo",
+    label: "a crab, lobster or shrimp",
+    kinds: [
+      { id: "granchio", phrase: "un granchio", label: "a crab", test: (x) => x.tag === "Granchio" || x.tag === "Galateide" },
+      { id: "gambero", phrase: "un gambero", label: "a shrimp or lobster", test: (x) => x.tag === "Gambero" || x.tag === "Decapode" },
+      { id: "paguro", phrase: "un paguro", label: "a hermit crab", test: (x) => x.tag === "Paguro" },
+    ],
+  },
+  {
+    id: "echinoderma",
+    label: "a starfish, sea urchin or sea cucumber",
+    kinds: [
+      { id: "stella", phrase: "una stella marina", label: "a starfish", test: (x) => x.tag === "Stella" },
+      { id: "riccio", phrase: "un riccio di mare", label: "a sea urchin", test: (x) => x.tag === "Riccio" },
+      { id: "oloturia", phrase: "un cetriolo di mare", label: "a sea cucumber", test: (x) => x.tag === "Oloturia" },
+    ],
+  },
+  {
+    id: "spugna",
+    label: "a sea sponge",
+    kinds: [
+      { id: "spugna", phrase: "una spugna", label: "a sea sponge", test: (x) => x.group === "spugne" },
+    ],
+  },
+  {
+    id: "pianta",
+    label: "seaweed or seagrass",
+    kinds: [
+      { id: "alga", phrase: "un'alga", label: "a seaweed", test: (x) => x.group === "flora" && x.tag !== "Pianta" },
+      { id: "pianta", phrase: "una pianta marina", label: "a seagrass or mangrove", test: (x) => x.tag === "Pianta" },
+    ],
+  },
+  {
+    id: "rettile",
+    label: "a sea turtle",
+    kinds: [
+      { id: "tartaruga", phrase: "una tartaruga marina", label: "a sea turtle", test: (x) => x.tag === "Tartaruga" },
+    ],
+  },
+  {
+    id: "mammifero",
+    label: "a dolphin or whale",
+    kinds: [
+      { id: "delfino", phrase: "un delfino", label: "a dolphin", test: (x) => x.tag === "Delfino" },
+      { id: "balena", phrase: "una balena", label: "a whale", test: (x) => x.tag === "Balena" || x.tag === "Capodoglio" || x.tag === "Zifide" },
+    ],
+  },
+  {
+    id: "verme",
+    label: "a tube worm",
+    kinds: [
+      { id: "verme", phrase: "un verme tubicolo", label: "a tube worm", test: (x) => x.group === "vermi" },
+    ],
+  },
+];
+
+function speciesForPhotoKind(kind) {
+  if (!kind?.test) return [];
+  return MARINE_LIFE.filter((x) => kind.test(x));
+}
+
 window.SeaDiveBiology = {
   MARINE_LIFE,
   LIFE_SECTIONS,
+  LIFE_PHOTO_CLASSES,
   filterMarineLife,
   matchMarineLifeByPhoto,
   scoreMarineLifeByPhoto,
+  speciesForPhotoKind,
   findMarineLife,
   lifeSection,
   lifeWeb,
