@@ -1689,8 +1689,9 @@ let communityBoardCache = { at: 0, data: null, flight: null };
 
 async function loadCommunityBoard(maxAge = 20000) {
   if (communityBoardCache.data && Date.now() - communityBoardCache.at < maxAge) return communityBoardCache.data;
-  if (communityBoardCache.flight) return communityBoardCache.flight;
-  communityBoardCache.flight = fetch(COMMUNITY_CLOUD, {
+  if (maxAge !== 0 && communityBoardCache.flight) return communityBoardCache.flight;
+  const boardUrl = maxAge === 0 ? `${COMMUNITY_CLOUD}?t=${Date.now()}` : COMMUNITY_CLOUD;
+  communityBoardCache.flight = fetch(boardUrl, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   })
@@ -2057,6 +2058,7 @@ async function connectSeaPerson(cardHit, chat) {
       await openPersonChat(person);
       return;
     }
+    const alreadyIn = Boolean((state.people || []).find((p) => cardHit.owner && p.remoteOwner === cardHit.owner)?.followIn);
     const res = await setMyFollow(cardHit, true);
     if (res.error) {
       view.peopleHint = res.error === "self"
@@ -2066,7 +2068,7 @@ async function connectSeaPerson(cardHit, chat) {
       return;
     }
     const who = stored.name || [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
-    const mutual = Boolean(res.followIn);
+    const mutual = Boolean(res.followIn) || alreadyIn;
     const saved = upsertPerson({
       id: person?.id,
       role: person?.role || "buddy",
@@ -2079,7 +2081,7 @@ async function connectSeaPerson(cardHit, chat) {
       followIn: mutual,
       followRev: Date.now(),
       portrait: cardHit.portrait || "",
-      ...(mutual ? { cert: cardHit.cert || "", sign: cardHit.sign || "" } : {}),
+      ...(mutual ? { cert: cardHit.cert || person?.cert || "", sign: cardHit.sign || person?.sign || "" } : {}),
     });
     if (mutual && saved) stampPersonSign(saved);
     save(state);
@@ -2337,23 +2339,31 @@ async function setMyFollow(other, on) {
   const remote = String(other?.owner || other?.remoteOwner || "").trim();
   if (!mine || !remote || mine === remote) return { error: "self" };
   const pair = chatPair(mine, remote);
-  const list = await crudList(COMMUNITY_LINKS);
+  const list = await crudList(COMMUNITY_LINKS, true);
   const current = list.find((row) => row.pair === pair);
+  const local = (state.people || []).find((p) => p.remoteOwner === remote);
   const me = personNames({ name: state.profile?.name || "" });
   const otherName = [other.firstName, other.lastName].filter(Boolean).join(" ") || String(other.name || "").trim();
-  const leftIsMine = mine < remote;
+  const left = current?.left || (mine < remote ? mine : remote);
+  const right = current?.right || (left === mine ? remote : mine);
+  const mineIsLeft = left === mine;
   const body = {
     pair,
-    left: current?.left || (leftIsMine ? mine : remote),
-    right: current?.right || (leftIsMine ? remote : mine),
-    leftName: String(current?.leftName || (leftIsMine ? me.name : otherName)).slice(0, 80),
-    rightName: String(current?.rightName || (leftIsMine ? otherName : me.name)).slice(0, 80),
-    leftCert: String(current?.leftCert || (leftIsMine ? state.profile?.certNumber || "" : other.cert || "")).slice(0, 40),
-    rightCert: String(current?.rightCert || (leftIsMine ? other.cert || "" : state.profile?.certNumber || "")).slice(0, 40),
+    left,
+    right,
+    leftName: String(current?.leftName || (mineIsLeft ? me.name : otherName)).slice(0, 80),
+    rightName: String(current?.rightName || (mineIsLeft ? otherName : me.name)).slice(0, 80),
+    leftCert: String(current?.leftCert || (mineIsLeft ? state.profile?.certNumber || "" : other.cert || "")).slice(0, 40),
+    rightCert: String(current?.rightCert || (mineIsLeft ? other.cert || "" : state.profile?.certNumber || "")).slice(0, 40),
     leftFollows: Boolean(current?.leftFollows),
     rightFollows: Boolean(current?.rightFollows),
   };
-  if (body.left === mine) body.leftFollows = Boolean(on);
+  const theyFollow = Boolean(local?.followIn) || (mineIsLeft ? Boolean(current?.rightFollows) : Boolean(current?.leftFollows));
+  if (theyFollow) {
+    if (mineIsLeft) body.rightFollows = true;
+    else body.leftFollows = true;
+  }
+  if (mineIsLeft) body.leftFollows = Boolean(on);
   else body.rightFollows = Boolean(on);
   try {
     await cloudSet(`l-${pair}`, body);
@@ -3453,7 +3463,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 145</p>
+        <p class="hint">Versione 146</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3883,7 +3893,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=145")
+    divelogsPromise = fetch("./divelogs-sites.json?v=146")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6019,7 +6029,7 @@ function renderPerson() {
       return;
     }
     const card = (seaDirectory.list || []).find((hit) => hit.owner === current.remoteOwner);
-    const mutual = Boolean(res.followIn);
+    const mutual = Boolean(res.followIn) || Boolean(current.followIn);
     const saved = upsertPerson({
       id: current.id,
       role: current.role,
