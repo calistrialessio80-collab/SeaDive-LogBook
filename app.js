@@ -3693,7 +3693,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 157</p>
+        <p class="hint">Versione 158</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4123,7 +4123,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=157")
+    divelogsPromise = fetch("./divelogs-sites.json?v=158")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -4908,6 +4908,118 @@ function drawTempDepth(canvas, points) {
 }
 
 let bioThumbGen = 0;
+let bioPhotoSearch = null;
+
+function readPhotoSignals(bitmap) {
+  const size = 48;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const side = Math.min(bitmap.width, bitmap.height);
+  const crop = side * 0.62;
+  const sx = (bitmap.width - crop) / 2;
+  const sy = (bitmap.height - crop) / 2;
+  ctx.drawImage(bitmap, sx, sy, crop, crop, 0, 0, size, size);
+  const pixels = ctx.getImageData(0, 0, size, size).data;
+  const bins = {
+    rosso: 0, arancio: 0, giallo: 0, verde: 0, blu: 0, viola: 0, rosa: 0, bianco: 0, nero: 0, bruno: 0, grigio: 0,
+  };
+  const lum = new Array(size * size);
+  for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const light = (max + min) / 2 / 255;
+    const sat = max === 0 ? 0 : (max - min) / max;
+    lum[p] = 0.3 * r + 0.59 * g + 0.11 * b;
+    if (light < 0.14) {
+      bins.nero += 1;
+      continue;
+    }
+    if (sat < 0.16) {
+      if (light > 0.78) bins.bianco += 1;
+      else if (light < 0.32) bins.nero += 1;
+      else bins.grigio += 1;
+      continue;
+    }
+    let hue = 0;
+    const delta = max - min || 1;
+    if (max === r) hue = ((g - b) / delta) % 6;
+    else if (max === g) hue = (b - r) / delta + 2;
+    else hue = (r - g) / delta + 4;
+    hue *= 60;
+    if (hue < 0) hue += 360;
+    if (hue < 18 || hue >= 345) bins.rosso += 1;
+    else if (hue < 45) bins[light < 0.46 ? "bruno" : "arancio"] += 1;
+    else if (hue < 70) bins.giallo += 1;
+    else if (hue < 165) bins.verde += 1;
+    else if (hue < 255) bins.blu += 1;
+    else if (hue < 320) bins.viola += 1;
+    else bins.rosa += 1;
+  }
+  const total = size * size;
+  let colors = Object.entries(bins)
+    .filter(([, count]) => count / total > 0.07)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name);
+  if (colors[0] === "blu" && bins.blu / total > 0.42 && colors.length > 1) colors = colors.filter((name) => name !== "blu");
+  colors = colors.slice(0, 3);
+  const spread = (sums) => {
+    const avg = sums.map((value) => value / size);
+    const mean = avg.reduce((sum, value) => sum + value, 0) / avg.length;
+    return Math.sqrt(avg.reduce((sum, value) => sum + (value - mean) ** 2, 0) / avg.length);
+  };
+  const cols = Array(size).fill(0);
+  const rows = Array(size).fill(0);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const value = lum[y * size + x];
+      cols[x] += value;
+      rows[y] += value;
+    }
+  }
+  const colSpread = spread(cols);
+  const rowSpread = spread(rows);
+  const patterns = [];
+  if (Math.max(colSpread, rowSpread) > 22 && Math.max(colSpread, rowSpread) > Math.min(colSpread, rowSpread) * 1.35) patterns.push("bande");
+  let peaks = 0;
+  for (let y = 2; y < size - 2; y += 3) {
+    for (let x = 2; x < size - 2; x += 3) {
+      const value = lum[y * size + x];
+      const around = (lum[(y - 2) * size + x] + lum[(y + 2) * size + x] + lum[y * size + (x - 2)] + lum[y * size + (x + 2)]) / 4;
+      if (Math.abs(value - around) > 36) peaks += 1;
+    }
+  }
+  if (peaks > 18 && !patterns.includes("bande")) patterns.push("macchie");
+  const shot = document.createElement("canvas");
+  shot.width = 160;
+  shot.height = 160;
+  shot.getContext("2d").drawImage(bitmap, sx, sy, crop, crop, 0, 0, 160, 160);
+  return { colors, patterns, preview: shot.toDataURL("image/jpeg", 0.72) };
+}
+
+function bioPhotoHint(signals) {
+  const colorName = {
+    rosso: "rosso",
+    arancio: "arancione",
+    giallo: "giallo",
+    verde: "verde",
+    blu: "blu",
+    viola: "viola",
+    rosa: "rosa",
+    bianco: "bianco",
+    nero: "nero",
+    bruno: "bruno",
+    grigio: "grigio",
+  };
+  const parts = (signals.colors || []).map((color) => colorName[color]).filter(Boolean);
+  (signals.patterns || []).forEach((pattern) => parts.push(pattern === "bande" ? "bande" : "macchie"));
+  if (!parts.length) return "Nella foto non distinguo un colore netto. Avvicina l'animale, senza troppo blu intorno, e riprova.";
+  return `Dalla foto: ${parts.join(", ")}. Ecco le specie della guida che ci assomigliano.`;
+}
 
 function bindBioThumbs(root) {
   const api = window.SeaDiveBiology;
@@ -4991,7 +5103,18 @@ function renderBiology() {
     </header>
     <div class="bio-search">
       <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nome, gruppo o ambiente" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
-      <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
+      <div class="bio-search-actions">
+        <button class="btn ghost" type="button" data-biophoto>Cerca con foto</button>
+        <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
+      </div>
+      <input type="file" accept="image/*" data-biophotofile />
+      <div class="bio-photo-chip" data-biophotochip hidden>
+        <img alt="" data-biophotoprev />
+        <div>
+          <p class="hint" data-biophotohint></p>
+          <button class="btn ghost" type="button" data-biophotoclear>Togli foto</button>
+        </div>
+      </div>
     </div>
     <div class="bio-filters">
       <div class="chips" data-biofilters></div>
@@ -5014,12 +5137,25 @@ function renderBiology() {
     const where = bioWhereOn();
     view.bioFilter = group;
     view.bioWhere = where;
-    const rows = api.filterMarineLife(q, group, where);
+    const photo = bioPhotoSearch;
+    const chip = sec.querySelector("[data-biophotochip]");
+    chip.hidden = !photo;
+    if (photo) {
+      sec.querySelector("[data-biophotoprev]").src = photo.preview;
+      sec.querySelector("[data-biophotohint]").textContent = photo.hint;
+    }
+    let rows = photo ? api.matchMarineLifeByPhoto(photo.signals, group, where) : api.filterMarineLife(q, group, where);
+    if (photo && q.trim()) {
+      const allowed = new Set(api.filterMarineLife(q, group, where).map((x) => x.id));
+      rows = rows.filter((x) => allowed.has(x.id));
+    }
     const section = group === "all" ? null : api.lifeSection(group);
     blurb.textContent = section?.blurb || "";
     count.textContent = rows.length === 1 ? "1 specie" : `${rows.length} specie`;
     if (!rows.length) {
-      list.innerHTML = `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
+      list.innerHTML = photo
+        ? `<p class="hint">Nessuna specie della guida assomiglia a questa foto. Avvicina il soggetto e riprova, oppure cerca per nome.</p>`
+        : `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
       return;
     }
     if (group === "all") {
@@ -5091,6 +5227,33 @@ function renderBiology() {
     const rows = api.filterMarineLife(q, bioGroupOn(), bioWhereOn());
     const hit = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q)) || rows[0];
     openLifePage(hit ? `${hit.it} ${hit.la}` : q);
+  };
+  const photoButton = sec.querySelector("[data-biophoto]");
+  const photoFile = sec.querySelector("[data-biophotofile]");
+  photoButton.onclick = () => photoFile.click();
+  photoFile.onchange = async () => {
+    const file = photoFile.files?.[0];
+    photoFile.value = "";
+    if (!file) return;
+    photoButton.disabled = true;
+    photoButton.textContent = "Leggo la foto…";
+    try {
+      const bitmap = await createImageBitmap(file);
+      const signals = readPhotoSignals(bitmap);
+      bitmap.close?.();
+      bioPhotoSearch = { signals, preview: signals.preview, hint: bioPhotoHint(signals) };
+      paint();
+    } catch {
+      bioPhotoSearch = null;
+      paint();
+      blurb.textContent = "Foto non leggibile. Scegline un'altra.";
+    }
+    photoButton.disabled = false;
+    photoButton.textContent = "Cerca con foto";
+  };
+  sec.querySelector("[data-biophotoclear]").onclick = () => {
+    bioPhotoSearch = null;
+    paint();
   };
   paint();
   frag.append(sec);

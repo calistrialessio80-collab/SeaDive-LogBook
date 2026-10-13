@@ -1975,6 +1975,34 @@ body.page-people .community-page {
 .bio-lead { margin: 8px 0 0; font-size: 14px; line-height: 1.45; opacity: 0.82; }
 .bio-search { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 8px; }
 .bio-search .search { margin-bottom: 0; }
+.bio-search-actions { display: flex; gap: 8px; }
+.bio-search-actions .btn { flex: 1; min-width: 0; padding-left: 10px; padding-right: 10px; }
+.bio-search input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+.bio-photo-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bio-photo-chip[hidden] { display: none; }
+.bio-photo-chip img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 16px;
+  flex: none;
+  background: #e7eef2;
+}
+.bio-photo-chip .hint { margin: 0 0 6px; }
+.bio-photo-chip .btn { min-height: 36px; padding: 6px 12px; }
 .bio-filters { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; }
 .bio-filters .chips {
   flex-wrap: nowrap;

@@ -2791,6 +2791,54 @@ function filterMarineLife(query, group, where) {
   });
 }
 
+const LIFE_PHOTO_COLORS = {
+  rosso: ["rosso", "rossa", "rossi", "rossastr", "rossic"],
+  arancio: ["aranc"],
+  giallo: ["giall", "dorat"],
+  verde: ["verd"],
+  blu: ["blu", "azzurr", "turches"],
+  viola: ["viola", "porpor", "lilla"],
+  rosa: ["rosa"],
+  bianco: ["bianc"],
+  nero: ["nero", "nera", "neri", "scur"],
+  bruno: ["brun", "marron", "beige", "bronze", "ocra"],
+  grigio: ["grig", "argent"],
+};
+
+const LIFE_PHOTO_PATTERNS = {
+  bande: ["banda", "bande", "strisc", "fascia", "fasce"],
+  macchie: ["macchi", "puntin", "ocell"],
+};
+
+function lifeLookWords(x) {
+  return lifeNorm(`${x.look} ${x.tag}`).split(/[^a-z]+/).filter((word) => word.length > 2);
+}
+
+function lifeWordHit(words, keys) {
+  return keys.some((key) => words.some((word) => word === key || word.startsWith(key)));
+}
+
+function matchMarineLifeByPhoto(signals, group, where) {
+  const colors = Array.isArray(signals?.colors) ? signals.colors : [];
+  const patterns = Array.isArray(signals?.patterns) ? signals.patterns : [];
+  const ranked = [];
+  filterMarineLife("", group, where).forEach((x) => {
+    const words = lifeLookWords(x);
+    let score = 0;
+    colors.forEach((color, index) => {
+      const keys = LIFE_PHOTO_COLORS[color];
+      if (keys && lifeWordHit(words, keys)) score += index === 0 ? 4 : 2;
+    });
+    patterns.forEach((pattern) => {
+      const keys = LIFE_PHOTO_PATTERNS[pattern];
+      if (keys && lifeWordHit(words, keys)) score += 3;
+    });
+    if (score > 0) ranked.push({ x, score });
+  });
+  ranked.sort((a, b) => b.score - a.score || a.x.it.localeCompare(b.x.it, "it"));
+  return ranked.slice(0, 24).map((row) => row.x);
+}
+
 function lifeEmoji(x) {
   return lifeSection(x.group)?.emoji || "🌊";
 }
@@ -2858,6 +2906,7 @@ window.SeaDiveBiology = {
   MARINE_LIFE,
   LIFE_SECTIONS,
   filterMarineLife,
+  matchMarineLifeByPhoto,
   findMarineLife,
   lifeSection,
   lifeWeb,
