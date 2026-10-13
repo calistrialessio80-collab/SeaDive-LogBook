@@ -2323,7 +2323,7 @@ function stopChatPoll() {
   chatTimer = 0;
 }
 
-let chatUnread = 0;
+const chatPending = new Map();
 const chatSeen = new Set();
 let chatNoticeReady = false;
 
@@ -2332,14 +2332,25 @@ function askChatNotice() {
   Notification.requestPermission().catch(() => {});
 }
 
+function chatUnreadTotal() {
+  let n = 0;
+  chatPending.forEach((value) => {
+    n += value;
+  });
+  return n;
+}
+
 function paintChatBadge() {
   const label = document.querySelector("[data-chatnav] small");
   if (!label) return;
-  label.textContent = chatUnread > 0 ? "Community " + chatUnread : "Community";
+  const n = chatUnreadTotal();
+  label.textContent = n > 0 ? "Community " + n : "Community";
 }
 
-function openMainChat() {
-  chatUnread = 0;
+function openMainChat(roomKey) {
+  view.chatRoom = String(roomKey || "");
+  if (view.chatRoom) chatPending.delete(view.chatRoom);
+  else chatPending.clear();
   paintChatBadge();
   view.name = "chat";
   view.chatPersonId = null;
@@ -2348,11 +2359,12 @@ function openMainChat() {
   render();
 }
 
-function openChatFromOwner() {
-  openMainChat();
+function openChatFromOwner(from) {
+  view.chatFocus = String(from || "");
+  openMainChat("");
 }
 
-function chatCircle(mine, links) {
+function mutualAdj(links) {
   const adj = new Map();
   const touch = (id) => {
     const key = String(id || "");
@@ -2365,18 +2377,112 @@ function chatCircle(mine, links) {
     touch(row.left).add(String(row.right));
     touch(row.right).add(String(row.left));
   });
-  const seen = new Set();
-  const stack = [String(mine || "")];
-  while (stack.length) {
-    const id = stack.pop();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    (adj.get(id) || []).forEach((next) => {
-      if (!seen.has(next)) stack.push(next);
+  return adj;
+}
+
+function roomKey(members) {
+  return [...members].filter(Boolean).sort().join("~");
+}
+
+function expandCommonRoom(adj, seed) {
+  const members = new Set(seed);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    const counts = new Map();
+    members.forEach((id) => {
+      (adj.get(id) || []).forEach((next) => {
+        if (members.has(next)) return;
+        counts.set(next, (counts.get(next) || 0) + 1);
+      });
+    });
+    counts.forEach((n, id) => {
+      if (n >= 2) {
+        members.add(id);
+        grew = true;
+      }
     });
   }
-  if (seen.size < 2) return new Set();
-  return seen;
+  return members;
+}
+
+function mergeChatRooms(adj, rooms) {
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < rooms.length; i += 1) {
+      for (let j = i + 1; j < rooms.length; j += 1) {
+        let shared = 0;
+        rooms[j].members.forEach((id) => {
+          if (rooms[i].members.has(id)) shared += 1;
+        });
+        if (shared < 2) continue;
+        rooms[j].members.forEach((id) => rooms[i].members.add(id));
+        expandCommonRoom(adj, rooms[i].members).forEach((id) => rooms[i].members.add(id));
+        rooms[i].key = roomKey(rooms[i].members);
+        rooms.splice(j, 1);
+        merged = true;
+        break;
+      }
+      if (merged) break;
+    }
+  }
+  return rooms;
+}
+
+function chatRooms(mine, links) {
+  const me = String(mine || "");
+  if (!me) return [];
+  const adj = mutualAdj(links);
+  const friends = [...(adj.get(me) || [])];
+  if (!friends.length) return [];
+  const rooms = [];
+  friends.forEach((other) => {
+    const members = new Set([me, other]);
+    (adj.get(me) || []).forEach((id) => {
+      if (id !== other && (adj.get(other) || new Set()).has(id)) members.add(id);
+    });
+    expandCommonRoom(adj, members).forEach((id) => members.add(id));
+    if (members.size < 2) return;
+    const key = roomKey(members);
+    if (rooms.some((room) => room.key === key)) return;
+    rooms.push({ key, members });
+  });
+  return mergeChatRooms(adj, rooms).sort((a, b) => b.members.size - a.members.size || a.key.localeCompare(b.key));
+}
+
+function pickChatRoom(rooms, key, focus) {
+  if (!rooms.length) return null;
+  const exact = key ? rooms.find((room) => room.key === key) : null;
+  if (exact) return exact;
+  const wanted = new Set(String(focus || key || "").split("~").filter(Boolean));
+  if (wanted.size) {
+    let best = null;
+    let score = 0;
+    rooms.forEach((room) => {
+      let n = 0;
+      wanted.forEach((id) => {
+        if (room.members.has(id)) n += 1;
+      });
+      if (n > score) {
+        score = n;
+        best = room;
+      }
+    });
+    if (best && score > 0) return best;
+  }
+  return rooms.length === 1 ? rooms[0] : null;
+}
+
+function messageInRoom(row, room, rooms) {
+  if (!row || !room) return false;
+  const from = String(row.from || "");
+  if (!from || !room.members.has(from)) return false;
+  const ids = String(row.with || "").split("~").filter(Boolean);
+  if (ids.length) return ids.every((id) => room.members.has(id));
+  if (String(row.thread || "") !== CHAT_ROOM) return false;
+  const homes = (rooms || []).filter((item) => item.members.has(from));
+  return homes.length === 1 && homes[0].key === room.key;
 }
 
 function chatInitials(name) {
@@ -2409,6 +2515,59 @@ function chatMembers(mine, circle, links, profiles) {
   return [...circle]
     .map((id) => ({ id, name: nameOf(id), portrait: portraitOf(id), self: id === mine }))
     .sort((a, b) => (a.self === b.self ? a.name.localeCompare(b.name, "it") : a.self ? -1 : 1));
+}
+
+function chatRoomLabel(room, mine, links, profiles) {
+  const names = chatMembers(mine, room.members, links, profiles)
+    .filter((person) => !person.self)
+    .map((person) => person.name);
+  if (!names.length) return "Chat di chi si segue";
+  if (names.length === 1) return "Chat con " + names[0];
+  if (names.length === 2) return "Chat con " + names[0] + " e " + names[1];
+  if (names.length === 3) return "Chat con " + names[0] + ", " + names[1] + " e " + names[2];
+  return "Chat con " + names[0] + ", " + names[1] + " e altri " + (names.length - 2);
+}
+
+function paintCommunityChats(card) {
+  const box = card?.querySelector?.("[data-chatlist]");
+  if (!box) return;
+  const token = (paintCommunityChats.token = (paintCommunityChats.token || 0) + 1);
+  profileOwnerKey().then(async (mine) => {
+    if (!box.isConnected || token !== paintCommunityChats.token) return;
+    let links = {};
+    try {
+      links = await loadMergedLinks(false);
+    } catch {
+      return;
+    }
+    if (!box.isConnected || token !== paintCommunityChats.token) return;
+    let profiles = [];
+    try {
+      profiles = (await loadOnlineProfiles()).list || [];
+    } catch {
+      profiles = [];
+    }
+    if (!box.isConnected || token !== paintCommunityChats.token) return;
+    const rooms = chatRooms(mine, links);
+    box.replaceChildren();
+    const make = (title, key) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chat-entry";
+      const pending = key ? chatPending.get(key) || 0 : chatUnreadTotal();
+      button.textContent = pending ? title + " · " + pending : title;
+      button.onclick = () => {
+        askChatNotice();
+        openMainChat(key || "");
+      };
+      return button;
+    };
+    if (!rooms.length) {
+      box.append(make("Chat di chi si segue", ""));
+      return;
+    }
+    rooms.forEach((room) => box.append(make(chatRoomLabel(room, mine, links, profiles), room.key)));
+  }).catch(() => {});
 }
 
 async function showChatNotice(title, body, from) {
@@ -2448,9 +2607,9 @@ async function watchChatNotices() {
     return;
   }
   const mine = await profileOwnerKey();
-  let circle = new Set();
+  let rooms = [];
   try {
-    circle = chatCircle(mine, await loadMergedLinks(false));
+    rooms = chatRooms(mine, await loadMergedLinks(false));
   } catch {
     return;
   }
@@ -2463,15 +2622,18 @@ async function watchChatNotices() {
     const text = String(row.text || "").trim();
     const from = String(row.from || "");
     const at = String(row.at || "");
-    if (String(row.thread || "") !== CHAT_ROOM) continue;
-    if (!circle.has(from)) continue;
-    if (firstOpen || !text || !from || from === mine) continue;
-    if (since && at <= since) continue;
-    const person = (state.people || []).find((p) => p.remoteOwner === from);
-    const looking = view.name === "chat" && document.visibilityState === "visible";
-    if (looking) continue;
-    chatUnread += 1;
+    const room = rooms.find((item) => messageInRoom(row, item, rooms));
+    if (!room || !text || !from || from === mine) continue;
+    if (firstOpen || (since && at <= since)) continue;
+    const looking = view.name === "chat" && document.visibilityState === "visible" && (!view.chatRoom || view.chatRoom === room.key);
+    if (looking) {
+      chatPending.delete(room.key);
+      continue;
+    }
+    chatPending.set(room.key, (chatPending.get(room.key) || 0) + 1);
     paintChatBadge();
+    paintCommunityChats(document.querySelector(".community-page"));
+    const person = (state.people || []).find((p) => p.remoteOwner === from);
     const title = String(row.name || person?.name || "SeaDive").slice(0, 80);
     await showChatNotice(title, text.slice(0, 140), from);
   }
@@ -2485,7 +2647,10 @@ function armChatNotices() {
   watchChatNotices().catch(() => {});
   setInterval(() => {
     watchChatNotices().catch(() => {});
-  }, 60000);
+  }, 15000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") watchChatNotices().catch(() => {});
+  });
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", (event) => {
       if (event.data?.type === "seadive-chat") openChatFromOwner(event.data.owner || "");
@@ -2682,12 +2847,13 @@ function renderChat() {
   };
   card.innerHTML = `
     <h2 class="serif" style="margin:0">Chat</h2>
-    <p class="hint">Una chat sola per chi si segue. Se due persone si seguono e una segue anche un’altra, entrano tutti e tre. Chi non si segue resta fuori. Il diario non viene inviato.</p>
+    <p class="hint">La chat è solo di chi è seguito in comune. Se due persone si seguono e seguono anche le stesse persone, la chat diventa una sola e la vedono tutti loro. Chi resta fuori non legge i messaggi. Quando scrivi, gli altri nella chat ricevono una notifica. Il diario non viene inviato.</p>
     <div class="chat-members" data-members></div>
+    <div class="chat-list" data-rooms hidden></div>
     <p class="hint" data-gate>Carico chi è dentro…</p>
     <div class="chat-log" data-log hidden></div>
     <form class="chat-compose" hidden>
-      <input name="text" maxlength="400" placeholder="Scrivi a chi si segue" autocomplete="off" enterkeyhint="send" />
+      <input name="text" maxlength="400" placeholder="Scrivi a chi è in questa chat" autocomplete="off" enterkeyhint="send" />
       <button class="btn primary" type="submit">Invia</button>
     </form>
     <p class="hint" data-chatstatus></p>
@@ -2695,12 +2861,14 @@ function renderChat() {
   `;
   card.querySelector("[data-back]").onclick = back;
   const members = card.querySelector("[data-members]");
+  const roomBox = card.querySelector("[data-rooms]");
   const gate = card.querySelector("[data-gate]");
   const log = card.querySelector("[data-log]");
   const status = card.querySelector("[data-chatstatus]");
   const form = card.querySelector("form");
   let owner = "";
-  let circle = new Set();
+  let active = null;
+  let knownRooms = [];
   let stick = true;
   const paintMembers = (people) => {
     members.replaceChildren();
@@ -2719,6 +2887,26 @@ function renderChat() {
       label.textContent = person.self ? "Tu" : person.name;
       chip.append(face, label);
       members.append(chip);
+    });
+  };
+  const showRooms = (rooms, links, profiles) => {
+    roomBox.hidden = rooms.length < 2;
+    roomBox.replaceChildren();
+    if (rooms.length < 2) return;
+    rooms.forEach((room) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chat-entry" + (active && room.key === active.key ? " on" : "");
+      button.textContent = chatRoomLabel(room, owner, links, profiles);
+      button.onclick = () => {
+        view.chatRoom = room.key;
+        view.chatFocus = "";
+        chatPending.delete(room.key);
+        paintChatBadge();
+        stick = true;
+        pull();
+      };
+      roomBox.append(button);
     });
   };
   const draw = (rows) => {
@@ -2762,25 +2950,37 @@ function renderChat() {
         loadOnlineProfiles(),
       ]);
       if (!log.isConnected) return;
-      circle = chatCircle(owner, links);
-      const open = circle.has(owner);
-      const people = open ? chatMembers(owner, circle, links, profiles.list || []) : [];
+      knownRooms = chatRooms(owner, links);
+      active = pickChatRoom(knownRooms, view.chatRoom, view.chatFocus);
+      if (active) {
+        view.chatRoom = active.key;
+        chatPending.delete(active.key);
+        paintChatBadge();
+      }
+      const open = Boolean(active && active.members.has(owner));
+      const people = open ? chatMembers(owner, active.members, links, profiles.list || []) : [];
       paintMembers(people);
+      showRooms(knownRooms, links, profiles.list || []);
       gate.hidden = open;
       log.hidden = !open;
       form.hidden = !open;
       if (!open) {
-        gate.textContent = "Ancora fuori. Appena tu e un’altra persona vi seguite, la chat si apre da sola. Chi è collegato di incrocio entra con voi.";
+        gate.textContent = knownRooms.length
+          ? "Scegli una chat. Ognuna riunisce solo le persone seguite in comune."
+          : "Ancora fuori. Appena tu e un’altra persona vi seguite, la chat si apre. Se seguite le stesse persone, entrano anche loro.";
         return;
       }
       const rows = all
-        .filter((row) => row.thread === CHAT_ROOM && circle.has(String(row.from || "")) && String(row.text || "").trim())
-        .map((row) => ({
-          from: String(row.from || ""),
-          name: String(row.name || "").slice(0, 80),
-          text: String(row.text || "").slice(0, 400),
-          at: String(row.at || ""),
-        }))
+        .filter((row) => messageInRoom(row, active, knownRooms) && String(row.text || "").trim())
+        .map((row) => {
+          if (row._id) chatSeen.add(String(row._id));
+          return {
+            from: String(row.from || ""),
+            name: String(row.name || "").slice(0, 80),
+            text: String(row.text || "").slice(0, 400),
+            at: String(row.at || ""),
+          };
+        })
         .sort((a, b) => a.at.localeCompare(b.at));
       draw(rows);
       status.textContent = "";
@@ -2792,19 +2992,21 @@ function renderChat() {
     e.preventDefault();
     const input = form.querySelector("[name=text]");
     const text = String(input.value || "").trim().slice(0, 400);
-    if (!text || !owner || !circle.has(owner)) return;
+    if (!text || !owner || !active?.members.has(owner)) return;
     input.disabled = true;
     try {
       const links = await loadMergedLinks(true);
-      circle = chatCircle(owner, links);
-      if (!circle.has(owner)) {
+      knownRooms = chatRooms(owner, links);
+      active = pickChatRoom(knownRooms, view.chatRoom, view.chatFocus);
+      if (!active?.members.has(owner)) {
         status.textContent = "Sei uscito dalla chat: non vi seguite più.";
         await pull();
       } else {
         const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
         const msg = {
           _id: uid().replace(/-/g, ""),
-          thread: CHAT_ROOM,
+          thread: active.key,
+          with: active.key,
           from: owner,
           name: sender.slice(0, 80),
           text,
@@ -3615,7 +3817,6 @@ function render() {
   if (view.name === "chat") app.append(renderChat());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
-  if (loadSession() && (view.name === "people" || view.name === "chat")) chatUnread = 0;
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
   if (view.name === "log") {
@@ -3693,7 +3894,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 158</p>
+        <p class="hint">Versione 159</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3745,7 +3946,7 @@ function renderNav() {
     b.className = on ? "active" : "";
     if (id === "bio") b.classList.add("bio-nav");
     if (id === "people") b.dataset.chatnav = "1";
-    const badge = id === "people" && chatUnread > 0 ? " " + chatUnread : "";
+    const badge = id === "people" && chatUnreadTotal() > 0 ? " " + chatUnreadTotal() : "";
     b.innerHTML = `<span${id === "people" ? " class=\"nav-divers\"" : ""}>${icon}</span><small>${label}${badge}</small>`;
     b.onclick = () => {
       view = {
@@ -4123,7 +4324,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=158")
+    divelogsPromise = fetch("./divelogs-sites.json?v=159")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5980,7 +6181,9 @@ function renderPeople() {
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
     <p class="hint">Cerca chi usa SeaDive e seguilo. I profili stanno nel cloud della Community; il diario resta sul tuo Drive. Nome, cognome, brevetto e firma entrano in immersione solo se vi seguite entrambi.</p>
-    <button class="chat-entry" type="button" data-openchat>Chat di chi si segue</button>
+    <div class="chat-list" data-chatlist>
+      <button class="chat-entry" type="button" data-openchat>Chat di chi si segue</button>
+    </div>
     <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" inputmode="search" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <h3 class="serif people-block">Chi usa SeaDive</h3>
@@ -6162,10 +6365,14 @@ function renderPeople() {
     if (e.key === "Enter") e.preventDefault();
   };
   applyPeopleSearch(card);
-  card.querySelector("[data-openchat]").onclick = () => {
-    askChatNotice();
-    openMainChat();
-  };
+  const openChat = card.querySelector("[data-openchat]");
+  if (openChat) {
+    openChat.onclick = () => {
+      askChatNotice();
+      openMainChat("");
+    };
+  }
+  paintCommunityChats(card);
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
     view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
