@@ -1470,29 +1470,6 @@ function downloadDivePdf(d) {
   saveBlobFile(buildDivePdf(d), divePdfName(d));
 }
 
-function diveWhatsappText(d) {
-  const lines = [`SeaDive · Immersione${d.number ? ` n° ${d.number}` : ""}`];
-  if (String(d.site || "").trim()) lines.push(String(d.site).trim());
-  const when = [d.date, [d.timeIn, d.timeOut].filter(Boolean).join("–")].filter(Boolean).join(" · ");
-  if (when) lines.push(when);
-  const stats = [];
-  if (String(d.maxDepth || "").trim()) stats.push(`${d.maxDepth} m`);
-  if (String(d.bottomTime || "").trim()) stats.push(`${d.bottomTime} min`);
-  if (stats.length) lines.push(stats.join(" · "));
-  if (String(d.location || "").trim()) lines.push(String(d.location).trim());
-  if (String(d.buddyName || "").trim()) lines.push(`Buddy: ${String(d.buddyName).trim()}`);
-  if (String(d.guideName || "").trim()) lines.push(`Guida: ${String(d.guideName).trim()}`);
-  const notes = String(d.notes || "").trim();
-  if (notes) lines.push(notes.slice(0, 280));
-  return lines.join("\n");
-}
-
-function sendDiveWhatsapp(d) {
-  const url = `https://wa.me/?text=${encodeURIComponent(diveWhatsappText(d))}`;
-  const opened = window.open(url, "_blank", "noopener,noreferrer");
-  if (!opened) location.href = url;
-}
-
 function parseSharedPayload(text) {
   const clean = String(text || "").replace(/^\uFEFF/, "").trim();
   const tryParse = (raw) => {
@@ -4132,7 +4109,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 167</p>
+        <p class="hint">Versione 168</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4563,7 +4540,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=167")
+    divelogsPromise = fetch("./divelogs-sites.json?v=168")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -7731,10 +7708,6 @@ function renderDetail() {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h7.5L19 8v12.5H7z"/><path d="M14 3.5V8h5"/><path d="M9 13h6M9 16.5h4"/></svg>
         PDF
       </button>
-      <button class="dive-chip wa" type="button" data-act="wa" aria-label="Invia con WhatsApp">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18.5 5 21l2.7-.8A8 8 0 1 0 6 18.5z"/><path d="M9.2 10.2c.2.5.8 1.5 1.6 2.2.8.7 1.7 1.1 2.2 1.2.3 0 .7-.2.9-.6l.4-.8-.9-.5c-.2 0-.5.1-.8.4"/></svg>
-        WhatsApp
-      </button>
     </div>
   `;
   bindComputerFill(card);
@@ -7744,7 +7717,6 @@ function renderDetail() {
   };
   card.querySelector("[data-act=share]").onclick = () => shareOneDive(d);
   card.querySelector("[data-act=pdf]").onclick = () => downloadDivePdf(d);
-  card.querySelector("[data-act=wa]").onclick = () => sendDiveWhatsapp(d);
   card.querySelector("[data-act=back]").onclick = () => {
     view = { name: "log", query: view.query };
     render();
