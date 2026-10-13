@@ -3627,7 +3627,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 152</p>
+        <p class="hint">Versione 153</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4057,7 +4057,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=152")
+    divelogsPromise = fetch("./divelogs-sites.json?v=153")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5881,69 +5881,46 @@ function renderPeople() {
       );
       const names = personNames(p);
       const mine = samePersonName(p.name, state.profile.name);
-      const thumb = typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : mine ? profileSignImage() : "";
       const photo = personPortrait(p);
-      const meta = [
-        roleLabel(p.role),
-        p.role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · "),
-        mine ? "il tuo profilo" : "",
-        p.remoteOwner && p.followOut && p.followIn ? "vi seguite" : "",
-        p.remoteOwner && p.followOut && !p.followIn ? "in attesa" : "",
-        p.remoteOwner && !p.followOut && p.followIn ? "ti segue" : "",
-        !p.remoteOwner && p.following && !mine ? "contatto tuo" : "",
-        `${n} ${n === 1 ? "scheda" : "schede"}`,
+      const initials = p.role === "center"
+        ? (p.name || "?").slice(0, 1).toUpperCase()
+        : `${(names.firstName || p.name || "?").slice(0, 1)}${(names.lastName || "").slice(0, 1)}`.toUpperCase();
+      const status = [
+        mine ? "Sei tu" : "",
+        p.remoteOwner && p.followOut && p.followIn ? "Vi seguite" : "",
+        p.remoteOwner && p.followOut && !p.followIn ? "In attesa" : "",
+        p.remoteOwner && !p.followOut && p.followIn ? "Ti segue" : "",
+        !p.remoteOwner && !mine ? roleLabel(p.role) : "",
+        n ? `${n} ${n === 1 ? "scheda" : "schede"}` : "",
       ].filter(Boolean).join(" · ");
       const first = p.role === "center" ? p.name || "" : names.firstName || p.name || "";
       const last = p.role === "center" ? "" : names.lastName || "";
+      row.className = "contact-row";
       row.innerHTML = `
-        <button type="button" class="people-open${photo ? " has-photo" : ""}">
-          ${avatarHtml(photo, p.name)}
-          <span>
-            <span class="people-name"><strong>${escapeHtml(first)}</strong>${last ? `<strong>${escapeHtml(last)}</strong>` : ""}</span>
-            <small>${escapeHtml(meta)}</small>
+        <button type="button" class="contact-main">
+          ${photo ? `<img class="contact-photo" alt="" src="${escapeHtml(photo)}" />` : `<span class="contact-photo contact-fallback">${escapeHtml(initials)}</span>`}
+          <span class="contact-copy">
+            <strong>${escapeHtml([first, last].filter(Boolean).join(" "))}</strong>
+            <small>${escapeHtml(status)}</small>
           </span>
         </button>
-        ${thumb ? `<img class="people-sign" alt="Firma di ${escapeHtml(p.name)}" src="${escapeHtml(thumb)}" />` : ""}
-        <div class="people-actions">
-          ${p.role === "center" ? "" : `<button class="btn ghost people-chat" type="button">Chat</button>`}
-          ${p.role === "center" ? "" : `<button class="btn ghost people-share" type="button">Condividi</button>`}
-          <button class="btn danger people-del" type="button">Elimina</button>
+        <div class="contact-links">
+          ${p.role === "center" ? "" : `<button class="contact-chat" type="button">Chat</button>`}
+          <button class="contact-del" type="button">Elimina</button>
         </div>
       `;
-      row.querySelector(".people-open").onclick = () => {
+      row.querySelector(".contact-main").onclick = () => {
         view.personId = p.id;
         view.peopleHint = "";
         render();
       };
-      row.querySelector(".people-chat")?.addEventListener("click", (e) => {
+      row.querySelector(".contact-chat")?.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         askChatNotice();
         openPersonChat(p);
       });
-      row.querySelector(".people-share")?.addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (p.role !== "center" && !p.remoteOwner) {
-          upsertPerson({
-            id: p.id,
-            role: p.role,
-            name: p.name,
-            firstName: p.firstName,
-            lastName: p.lastName,
-            cert: p.cert,
-            following: true,
-          });
-          save(state);
-        }
-        const sent = await sharePersonCard(p);
-        if (!sent) return;
-        view.peopleHint = p.remoteOwner
-          ? `Inviati nome e brevetto di ${p.name}. In immersione servono se vi seguite entrambi.`
-          : `Contatto di ${p.name} inviato.`;
-        render();
-      });
-      row.querySelector(".people-del").onclick = async (e) => {
+      row.querySelector(".contact-del").onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
         if (!(await removePerson(p))) return;

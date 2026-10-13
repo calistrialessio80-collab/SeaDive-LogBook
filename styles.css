@@ -679,8 +679,69 @@ button.people-row { cursor: pointer; }
   background: #f4fbfb;
   border-radius: 12px;
 }
-.people-card .people-actions { flex: none; width: 100%; justify-content: stretch; }
-.people-card .people-actions .btn { flex: 1; }
+.people-list[data-list] { gap: 0; margin-top: 4px; }
+.contact-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+}
+.contact-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.contact-photo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: #e7eef2;
+}
+.contact-fallback {
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #083848;
+}
+.contact-copy { min-width: 0; }
+.contact-copy strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.contact-copy small { display: block; margin-top: 2px; font-size: 12px; opacity: 0.65; }
+.contact-links { display: flex; gap: 10px; flex: none; align-items: center; }
+.contact-links button {
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  color: #1d7fe0;
+  cursor: pointer;
+}
+.contact-links .contact-del { color: #c44532; }
 .sea-strip { margin: 8px 0 4px; width: 100%; max-width: 100%; }
 .sea-row {
   display: flex;
