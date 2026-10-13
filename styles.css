@@ -566,10 +566,12 @@ body.page-home .section-head h3 { color: #1c2430; }
 .nav button span.nav-diver {
   font-size: 0;
 }
-.nav button span.nav-diver svg {
-  width: 32px;
-  height: 32px;
+.nav button span.nav-diver img {
+  width: 34px;
+  height: 34px;
   display: block;
+  object-fit: contain;
+  pointer-events: none;
 }
 .nav button small {
   display: block;
