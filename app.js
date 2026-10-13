@@ -440,14 +440,18 @@ async function removePerson(person) {
   if (!person) return false;
   const ok = await askConfirm({
     title: "Elimina contatto",
-    message: `Vuoi eliminare ${person.name || "questo contatto"} dalla Community e dalla copia su Drive? Il nome resta sulle schede già scritte.`,
+    message: `Vuoi togliere ${person.name || "questo contatto"} dal telefono e dal tuo Drive? Se ha l'app lo ritrovi con Cerca chi usa SeaDive. Il nome resta sulle schede già scritte.`,
     ok: "Elimina",
     cancel: "Annulla",
   });
   if (!ok) return false;
+  if (person.remoteOwner) {
+    try { await setMyFollow(person, false); } catch { /* il profilo cloud resta cercabile */ }
+  }
   rememberDeletedPerson(person);
   state.people = (state.people || []).filter((p) => p.id !== person.id && !personIsGone(p, state.deletedPeople));
   save(state);
+  silentDrivePush();
   return true;
 }
 
@@ -1654,6 +1658,7 @@ function storeFollowedPerson(card, role) {
 }
 
 const COMMUNITY_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/board";
+const COMMUNITY_LINKS_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/links";
 const COMMUNITY_API = "profiles";
 const COMMUNITY_LINKS = "links";
 const COMMUNITY_MESSAGES = "messages";
@@ -1707,9 +1712,8 @@ async function loadCommunityBoard(maxAge = 20000) {
   })
     .then(async (res) => {
       if (res.status === 400 || res.status === 404) {
-        const board = blankCommunityBoard();
-        if (gen === communityLoadGen) communityBoardCache = { at: Date.now(), data: board, flight: null };
-        return board;
+        if (communityBoardCache.data && Object.keys(communityBoardCache.data.profiles || {}).length) return communityBoardCache.data;
+        throw new Error("network");
       }
       if (!res.ok) throw new Error("network");
       const board = boardFromPayload(await res.json());
@@ -1745,6 +1749,8 @@ async function cloudSet(key, value) {
         const board = await loadCommunityBoard(0);
         const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
         applyCloudKey(next, key, value);
+        const prevProfiles = Object.keys(board.profiles || {}).length;
+        if (prevProfiles && !Object.keys(next.profiles || {}).length) throw new Error("network");
         await postCommunityBoard(next);
         return;
       } catch (err) {
@@ -1754,6 +1760,69 @@ async function cloudSet(key, value) {
     }
     throw lastErr;
   });
+}
+
+let linkBasketCache = { at: 0, data: null, flight: null };
+let linkLoadGen = 0;
+
+function linkMapFromPayload(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const src = data.links && typeof data.links === "object" && !Array.isArray(data.links) ? data.links : data;
+  const out = {};
+  Object.entries(src).forEach(([key, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    if (key === "v" || key === "_metadata" || key === "links") return;
+    const pair = String(value.pair || key);
+    if (!pair || pair === "v") return;
+    out[pair] = value;
+  });
+  return out;
+}
+
+async function loadLinkBasket(maxAge = 20000) {
+  if (linkBasketCache.data && Date.now() - linkBasketCache.at < maxAge) return linkBasketCache.data;
+  if (maxAge !== 0 && linkBasketCache.flight) return linkBasketCache.flight;
+  const gen = ++linkLoadGen;
+  const flight = fetch(`${COMMUNITY_LINKS_CLOUD}?t=${Date.now()}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  })
+    .then(async (res) => {
+      if (res.status === 400 || res.status === 404) return {};
+      if (!res.ok) throw new Error("network");
+      const map = linkMapFromPayload(await res.json());
+      if (gen === linkLoadGen) linkBasketCache = { at: Date.now(), data: map, flight: null };
+      return map;
+    })
+    .catch((err) => {
+      if (linkBasketCache.flight === flight) linkBasketCache.flight = null;
+      throw err;
+    });
+  linkBasketCache.flight = flight;
+  return flight;
+}
+
+async function loadMergedLinks(fresh) {
+  const board = await loadCommunityBoard(fresh ? 0 : 20000);
+  let basket = {};
+  try {
+    basket = await loadLinkBasket(fresh ? 0 : 20000);
+  } catch {
+    basket = linkBasketCache.data || {};
+  }
+  return { ...(board.links || {}), ...(basket || {}) };
+}
+
+async function postLinkBasket(map) {
+  const body = JSON.stringify({ v: 1, links: map });
+  const res = await fetch(COMMUNITY_LINKS_CLOUD, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  if (!res.ok) throw new Error("network");
+  linkLoadGen += 1;
+  linkBasketCache = { at: Date.now(), data: map, flight: null };
 }
 
 function fitCloudProfile(body) {
@@ -2069,7 +2138,7 @@ async function refreshSeaDirectory() {
 
 function rememberMutualProfile(person, cardHit, mutual) {
   const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") || person?.name || "";
-  const saved = upsertPerson({
+  const payload = {
     id: person?.id,
     role: person?.role || "buddy",
     name: who,
@@ -2081,8 +2150,12 @@ function rememberMutualProfile(person, cardHit, mutual) {
     followIn: mutual,
     followRev: Date.now(),
     portrait: cardHit.portrait || person?.portrait || "",
-    ...(mutual ? { cert: cardHit.cert || person?.cert || "", sign: cardHit.sign || person?.sign || "" } : {}),
-  });
+  };
+  const cert = String(cardHit.cert || person?.cert || "").trim();
+  const sign = cardHit.sign || person?.sign || "";
+  if (cert) payload.cert = cert;
+  if (typeof sign === "string" && sign.startsWith("data:image")) payload.sign = sign;
+  const saved = upsertPerson(payload);
   if (mutual && saved) stampPersonSign(saved);
   return saved;
 }
@@ -2091,36 +2164,42 @@ async function connectSeaPerson(cardHit, chat) {
   followSaveBusy = true;
   try {
     const stored = insertOnlineProfile(cardHit);
-    save(state);
     const person = stored.person;
     if (chat && person) {
+      save(state);
       view.peopleHint = "";
       await openPersonChat(person);
       return;
     }
     const alreadyIn = Boolean((state.people || []).find((p) => cardHit.owner && p.remoteOwner === cardHit.owner)?.followIn);
+    rememberMutualProfile(person, cardHit, alreadyIn);
+    save(state);
+    silentDrivePush();
     const res = await setMyFollow(cardHit, true);
-    if (res.error) {
-      view.peopleHint = res.error === "self"
-        ? "Questo profilo non si può seguire ancora. L'altra persona deve riaprire l'app aggiornata."
-        : "Seguito non registrato. Riprova tra poco.";
+    const who = stored.name || [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
+    if (res.error === "self") {
+      view.peopleHint = "Questo profilo non si può seguire ancora. L'altra persona deve riaprire l'app aggiornata.";
       render();
       return;
     }
-    const who = stored.name || [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
-    const mutual = Boolean(res.followIn) || alreadyIn;
-    rememberMutualProfile(person, cardHit, mutual);
-    save(state);
-    if (mutual) publishMyProfile().catch(() => {});
-    view.peopleHint = mutual
-      ? `Vi seguite con ${who}. Nome, cognome, numero di brevetto e firma sono condivisi per le prossime immersioni.`
-      : `Segui ${who}. Quando segue anche te, nome, cognome, brevetto e firma restano pronti per le immersioni nuove.`;
+    const mutual = !res.error && (Boolean(res.followIn) || alreadyIn);
+    if (!res.error) {
+      rememberMutualProfile(person, cardHit, mutual);
+      save(state);
+      silentDrivePush();
+      if (mutual) publishMyProfile().catch(() => {});
+    }
+    view.peopleHint = res.error
+      ? `Segui ${who}. Il profilo è sul tuo Drive. Il collegamento cloud riprova tra poco.`
+      : mutual
+        ? `Vi seguite con ${who}. Nome, cognome, numero di brevetto e firma sono sul tuo Drive e nelle prossime immersioni.`
+        : `Segui ${who}. Nome, cognome, brevetto e firma sono sul tuo Drive. In immersione entrano quando segue anche te.`;
     render();
   } catch {
     view.peopleHint = "Seguito non registrato. Riprova tra poco.";
     render();
   } finally {
-    followSaveBusy = false;
+    setTimeout(() => { followSaveBusy = false; }, 800);
   }
 }
 
@@ -2154,6 +2233,7 @@ async function disconnectSeaPerson(cardHit) {
       }
     }
     save(state);
+    silentDrivePush();
     view.personId = null;
     view.peopleHint = `${who} non è più tra i contatti. Lo ritrovi con Cerca chi usa SeaDive.`;
     render();
@@ -2353,8 +2433,8 @@ function armChatNotices() {
 }
 
 async function crudList(url, fresh) {
+  if (url === COMMUNITY_LINKS) return Object.values(await loadMergedLinks(Boolean(fresh)));
   const board = await loadCommunityBoard(fresh ? 0 : 20000);
-  if (url === COMMUNITY_LINKS) return Object.values(board.links || {});
   if (url === COMMUNITY_MESSAGES) return board.messages || [];
   if (url === COMMUNITY_API) return Object.values(board.profiles || {});
   return [];
@@ -2373,8 +2453,8 @@ async function ensureCommunityLink(mine, other) {
   const otherName = [other.firstName, other.lastName].filter(Boolean).join(" ") || String(other.name || "").trim();
   try {
     await enqueueCloud(async () => {
-      const board = await loadCommunityBoard(0);
-      if (board.links && board.links[pair]) return;
+      const links = await loadMergedLinks(true);
+      if (links[pair]) return;
       const leftIsMine = mine < remote;
       const body = {
         pair,
@@ -2387,9 +2467,7 @@ async function ensureCommunityLink(mine, other) {
         leftFollows: false,
         rightFollows: false,
       };
-      const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
-      next.links[pair] = body;
-      await postCommunityBoard(next);
+      await postLinkBasket({ ...links, [pair]: body });
     });
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
@@ -2414,8 +2492,8 @@ async function setMyFollow(other, on) {
   const otherName = [other.firstName, other.lastName].filter(Boolean).join(" ") || String(other.name || "").trim();
   try {
     const body = await enqueueCloud(async () => {
-      const board = await loadCommunityBoard(0);
-      const current = board.links?.[pair] || null;
+      const links = await loadMergedLinks(true);
+      const current = links[pair] || null;
       const local = (state.people || []).find((p) => p.remoteOwner === remote);
       const left = current?.left || (mine < remote ? mine : remote);
       const right = current?.right || (left === mine ? remote : mine);
@@ -2442,9 +2520,7 @@ async function setMyFollow(other, on) {
         nextBody.leftCert = String(mineIsLeft ? state.profile?.certNumber || current?.leftCert || "" : other.cert || current?.leftCert || "").slice(0, 40);
         nextBody.rightCert = String(mineIsLeft ? other.cert || current?.rightCert || "" : state.profile?.certNumber || current?.rightCert || "").slice(0, 40);
       }
-      const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
-      next.links[pair] = nextBody;
-      await postCommunityBoard(next);
+      await postLinkBasket({ ...links, [pair]: nextBody });
       return nextBody;
     });
     linkedPairs.add(pair);
@@ -2475,6 +2551,12 @@ async function syncIncomingLinks() {
     if (!remote || !String(remoteName || "").trim()) return;
     const flags = linkFollowFlags(row, mine);
     const personEarly = (state.people || []).find((p) => p.remoteOwner === remote);
+    const remoteLabel = String(remoteName || "").trim();
+    if (personIsGone(personEarly || { role: "buddy", name: remoteLabel }, state.deletedPeople)) return;
+    if (personEarly?.followOut && !flags.followOut) {
+      if (Date.now() - Number(personEarly.followRev) < 120000) setMyFollow(personEarly, true).catch(() => {});
+      return;
+    }
     if (personEarly && Number(personEarly.followRev) > fetchedAt) return;
     if (
       personEarly &&
@@ -3547,7 +3629,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 147</p>
+        <p class="hint">Versione 148</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3977,7 +4059,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=147")
+    divelogsPromise = fetch("./divelogs-sites.json?v=148")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
