@@ -2806,8 +2806,13 @@ const LIFE_PHOTO_COLORS = {
 };
 
 const LIFE_PHOTO_PATTERNS = {
-  bande: ["banda", "bande", "strisc", "fascia", "fasce"],
-  macchie: ["macchi", "puntin", "ocell"],
+  bande: ["banda", "bande", "strisc", "fascia", "fasce", "zebr", "barrat", "anell"],
+  macchie: ["macchi", "puntin", "ocell", "reticol", "marmor", "varieg", "macul"],
+};
+
+const LIFE_PHOTO_SHAPES = {
+  lungo: ["allungat", "slanciat", "fusiform", "affusol", "serpent", "anguill", "nastr", "tubolar", "cilindric"],
+  alto: ["erett", "colonn", "arboresc", "ramificat"],
 };
 
 function lifeLookWords(x) {
@@ -2818,25 +2823,37 @@ function lifeWordHit(words, keys) {
   return keys.some((key) => words.some((word) => word === key || word.startsWith(key)));
 }
 
-function matchMarineLifeByPhoto(signals, group, where) {
+function scoreMarineLifeByPhoto(signals) {
   const colors = Array.isArray(signals?.colors) ? signals.colors : [];
   const patterns = Array.isArray(signals?.patterns) ? signals.patterns : [];
+  const shapes = Array.isArray(signals?.shape) ? signals.shape : [];
   const ranked = [];
-  filterMarineLife("", group, where).forEach((x) => {
+  MARINE_LIFE.forEach((x) => {
     const words = lifeLookWords(x);
-    let score = 0;
+    let colorScore = 0;
+    let patternScore = 0;
+    let shapeScore = 0;
     colors.forEach((color, index) => {
       const keys = LIFE_PHOTO_COLORS[color];
-      if (keys && lifeWordHit(words, keys)) score += index === 0 ? 4 : 2;
+      if (keys && lifeWordHit(words, keys)) colorScore += index === 0 ? 4 : 2;
     });
     patterns.forEach((pattern) => {
       const keys = LIFE_PHOTO_PATTERNS[pattern];
-      if (keys && lifeWordHit(words, keys)) score += 3;
+      if (keys && lifeWordHit(words, keys)) patternScore += 5;
     });
-    if (score > 0) ranked.push({ x, score });
+    shapes.forEach((shape) => {
+      const keys = LIFE_PHOTO_SHAPES[shape];
+      if (keys && lifeWordHit(words, keys)) shapeScore += 3;
+    });
+    const score = colorScore + patternScore + shapeScore;
+    if (score > 0) ranked.push({ x, score, traits: patternScore + shapeScore });
   });
-  ranked.sort((a, b) => b.score - a.score || a.x.it.localeCompare(b.x.it, "it"));
-  return ranked.slice(0, 24).map((row) => row.x);
+  ranked.sort((a, b) => b.score - a.score || b.traits - a.traits || a.x.it.localeCompare(b.x.it, "it"));
+  return ranked;
+}
+
+function matchMarineLifeByPhoto(signals) {
+  return scoreMarineLifeByPhoto(signals).slice(0, 18).map((row) => row.x);
 }
 
 function lifeEmoji(x) {
@@ -2907,6 +2924,7 @@ window.SeaDiveBiology = {
   LIFE_SECTIONS,
   filterMarineLife,
   matchMarineLifeByPhoto,
+  scoreMarineLifeByPhoto,
   findMarineLife,
   lifeSection,
   lifeWeb,

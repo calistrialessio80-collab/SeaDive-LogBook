@@ -4132,7 +4132,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 165</p>
+        <p class="hint">Versione 166</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4563,7 +4563,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=165")
+    divelogsPromise = fetch("./divelogs-sites.json?v=166")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5349,6 +5349,8 @@ function drawTempDepth(canvas, points) {
 
 let bioThumbGen = 0;
 let bioPhotoSearch = null;
+let bioPhotoToken = 0;
+const bioVectorCache = new Map();
 
 function photoColorName(r, g, b) {
   const max = Math.max(r, g, b);
@@ -5375,6 +5377,94 @@ function photoColorName(r, g, b) {
   if (hue < 255) return "blu";
   if (hue < 320) return "viola";
   return "rosa";
+}
+
+function photoFeatureVector(data, w, h, box, mask, closeup, framed, spotRatio) {
+  const minX = box.minX;
+  const minY = box.minY;
+  const maxX = box.maxX;
+  const maxY = box.maxY;
+  const bw = Math.max(1, maxX - minX + 1);
+  const bh = Math.max(1, maxY - minY + 1);
+  const useMask = !closeup && framed && mask;
+  const hueHist = new Float64Array(8);
+  let hueN = 0;
+  let white = 0;
+  let gray = 0;
+  let black = 0;
+  let counted = 0;
+  const grid = new Float64Array(27);
+  const gridN = new Float64Array(9);
+  const lum = new Float32Array(w * h);
+  const take = (x, y) => !useMask || mask[y * w + x];
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      if (!take(x, y)) continue;
+      const p = y * w + x;
+      const o = p * 4;
+      const r = data[o] / 255;
+      const g = data[o + 1] / 255;
+      const b = data[o + 2] / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const spread = max - min;
+      const sat = max === 0 ? 0 : spread / max;
+      lum[p] = 0.3 * data[o] + 0.59 * data[o + 1] + 0.11 * data[o + 2];
+      counted += 1;
+      if (max < 0.18) black += 1;
+      else if (sat < 0.18 && max > 0.72) white += 1;
+      else if (sat < 0.18) gray += 1;
+      else {
+        let hue = 0;
+        if (max === r) hue = ((g - b) / spread) % 6;
+        else if (max === g) hue = (b - r) / spread + 2;
+        else hue = (r - g) / spread + 4;
+        hue = (hue * 60 + 360) % 360;
+        hueHist[Math.min(7, Math.floor(hue / 45))] += 1;
+        hueN += 1;
+      }
+      const gx = Math.min(2, Math.floor(((x - minX) / bw) * 3));
+      const gy = Math.min(2, Math.floor(((y - minY) / bh) * 3));
+      const cell = gy * 3 + gx;
+      grid[cell * 3] += r;
+      grid[cell * 3 + 1] += g;
+      grid[cell * 3 + 2] += b;
+      gridN[cell] += 1;
+    }
+  }
+  const vec = [];
+  for (let i = 0; i < 8; i += 1) vec.push(hueN ? hueHist[i] / hueN : 0);
+  vec.push(counted ? white / counted : 0, counted ? gray / counted : 0, counted ? black / counted : 0);
+  for (let cell = 0; cell < 9; cell += 1) {
+    const n = gridN[cell] || 1;
+    vec.push(gridN[cell] ? grid[cell * 3] / n : 0);
+    vec.push(gridN[cell] ? grid[cell * 3 + 1] / n : 0);
+    vec.push(gridN[cell] ? grid[cell * 3 + 2] / n : 0);
+  }
+  let vertical = 0;
+  let horizontal = 0;
+  let diagonal = 0;
+  let edges = 0;
+  for (let y = minY; y < maxY; y += 1) {
+    for (let x = minX; x < maxX; x += 1) {
+      const p = y * w + x;
+      if (!take(x, y) || !take(x + 1, y) || !take(x, y + 1)) continue;
+      const dh = Math.abs(lum[p + 1] - lum[p]);
+      const dv = Math.abs(lum[p + w] - lum[p]);
+      if (dh + dv < 18) continue;
+      edges += 1;
+      if (dh > dv * 1.35) vertical += 1;
+      else if (dv > dh * 1.35) horizontal += 1;
+      else diagonal += 1;
+    }
+  }
+  const aspect = bw / bh;
+  vec.push(Math.min(aspect, 3) / 3);
+  vec.push(Math.min(1, counted / (bw * bh)));
+  vec.push(edges ? vertical / edges : 0, edges ? horizontal / edges : 0, edges ? diagonal / edges : 0);
+  vec.push(counted ? Math.min(1, edges / counted) : 0);
+  vec.push(Math.max(0, Math.min(1, spotRatio || 0)));
+  return vec;
 }
 
 function readPhotoSignals(bitmap) {
@@ -5609,10 +5699,6 @@ function readPhotoSignals(bitmap) {
     }
     return flips;
   };
-  const patterns = [];
-  const colFlips = axis(true);
-  const rowFlips = axis(false);
-  if (Math.max(colFlips, rowFlips) >= 3 && Math.max(colFlips, rowFlips) > Math.min(colFlips, rowFlips) * 1.3) patterns.push("bande");
   let peaks = 0;
   let samples = 0;
   for (let y = minY + 2; y <= maxY - 2; y += 2) {
@@ -5624,7 +5710,25 @@ function readPhotoSignals(bitmap) {
       if (Math.abs(lum[p] - around) > 32) peaks += 1;
     }
   }
+  const patterns = [];
+  const colFlips = axis(true);
+  const rowFlips = axis(false);
+  if (Math.max(colFlips, rowFlips) >= 3 && Math.max(colFlips, rowFlips) > Math.min(colFlips, rowFlips) * 1.3) patterns.push("bande");
   if (samples > 8 && peaks / samples > 0.14 && !patterns.includes("bande")) patterns.push("macchie");
+  const aspect = (maxX - minX + 1) / Math.max(1, maxY - minY + 1);
+  const shape = [];
+  if (aspect >= 1.65) shape.push("lungo");
+  if (aspect <= 0.72) shape.push("alto");
+  const vector = photoFeatureVector(
+    data,
+    w,
+    h,
+    { minX, minY, maxX, maxY },
+    mask,
+    closeup,
+    framed,
+    samples > 8 ? peaks / samples : 0,
+  );
   const sx = minX * (bitmap.width / w);
   const sy = minY * (bitmap.height / h);
   const sw = Math.max(1, (maxX - minX + 1) * (bitmap.width / w));
@@ -5635,27 +5739,137 @@ function readPhotoSignals(bitmap) {
   shot.height = Math.max(1, Math.round(160 * (sh / long)));
   shot.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, shot.width, shot.height);
   if (colors.length) framed = true;
-  return { colors, patterns, framed, preview: shot.toDataURL("image/jpeg", 0.8) };
+  return { colors, patterns, shape, framed, vector, preview: shot.toDataURL("image/jpeg", 0.8) };
 }
 
 function bioPhotoHint(signals) {
-  const colorName = {
-    rosso: "rosso",
-    arancio: "arancione",
-    giallo: "giallo",
-    verde: "verde",
-    blu: "blu",
-    viola: "viola",
-    rosa: "rosa",
-    bianco: "bianco",
-    nero: "nero",
-    bruno: "bruno",
-    grigio: "grigio",
+  if (!(signals?.vector || []).length && !(signals?.colors || []).length && !(signals?.patterns || []).length) {
+    return "Non distinguo il soggetto dallo sfondo. Avvicinalo, con meno acqua intorno, e riprova.";
+  }
+  return "Confronto la foto con tutte le specie della guida, per forma, disegno e colore.";
+}
+
+function cosineSlice(a, b, from, to) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = from; i < to; i += 1) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na < 1e-8 || nb < 1e-8) return 0;
+  return dot / Math.sqrt(na * nb);
+}
+
+function photoVisualScore(a, b) {
+  if (!a || !b || a.length !== b.length || !a.length) return 0;
+  const color = cosineSlice(a, b, 0, 11);
+  const layout = cosineSlice(a, b, 11, 38);
+  const form = cosineSlice(a, b, 38, a.length);
+  return color * 0.34 + layout * 0.36 + form * 0.3;
+}
+
+const bioThumbUrlCache = new Map();
+let guideNextAt = 0;
+
+async function guideSlot() {
+  const now = Date.now();
+  const at = Math.max(now, guideNextAt);
+  guideNextAt = at + 90;
+  if (at > now) await new Promise((resolve) => setTimeout(resolve, at - now));
+}
+
+async function wikiSummary(wiki, title) {
+  const url = `https://${wiki}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(String(title).replace(/ /g, "_"))}`;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await guideSlot();
+    const res = await fetch(url);
+    if (res.status === 429) {
+      guideNextAt = Date.now() + 2000;
+      continue;
+    }
+    if (!res.ok) return null;
+    return res.json();
+  }
+  throw new Error("rate");
+}
+
+async function guideThumbUrl(species) {
+  if (bioThumbUrlCache.has(species.id)) return bioThumbUrlCache.get(species.id);
+  const titles = [species.la, species.it].filter(Boolean);
+  for (const wiki of ["en", "it"]) {
+    for (const title of titles) {
+      const data = await wikiSummary(wiki, title);
+      if (!data || data.type === "disambiguation") continue;
+      const src = data.thumbnail?.source || "";
+      if (!src) continue;
+      bioThumbUrlCache.set(species.id, src);
+      return src;
+    }
+  }
+  bioThumbUrlCache.set(species.id, "");
+  return "";
+}
+
+async function speciesPhotoVector(api, species) {
+  if (bioVectorCache.has(species.id)) return bioVectorCache.get(species.id);
+  let src = "";
+  for (let attempt = 0; attempt < 3 && !src; attempt += 1) {
+    try {
+      src = await guideThumbUrl(species);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  if (!src) {
+    if (bioThumbUrlCache.has(species.id)) bioVectorCache.set(species.id, null);
+    return null;
+  }
+  try {
+    const res = await fetch(src);
+    if (!res.ok) throw new Error("thumb");
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob);
+    const signals = readPhotoSignals(bitmap);
+    bitmap.close?.();
+    const vector = signals.vector || null;
+    bioVectorCache.set(species.id, vector);
+    return vector;
+  } catch {
+    return null;
+  }
+}
+
+async function rankPhotoOnGuide(signals, token, onStep) {
+  const api = window.SeaDiveBiology;
+  const list = api.MARINE_LIFE || [];
+  const text = new Map((api.scoreMarineLifeByPhoto?.(signals) || []).map((row) => [row.x.id, row.score]));
+  const scored = [];
+  let cursor = 0;
+  let done = 0;
+  const run = async () => {
+    while (cursor < list.length) {
+      if (token !== bioPhotoToken) return;
+      const species = list[cursor];
+      cursor += 1;
+      let visual = 0;
+      try {
+        visual = photoVisualScore(signals.vector, await speciesPhotoVector(api, species));
+      } catch {
+        visual = 0;
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      scored.push({ species, visual, score: visual * 50 + (text.get(species.id) || 0) });
+      done += 1;
+      if (onStep && (done % 8 === 0 || done === list.length)) onStep(done, list.length);
+    }
   };
-  const parts = (signals.colors || []).map((color) => colorName[color]).filter(Boolean);
-  (signals.patterns || []).forEach((pattern) => parts.push(pattern === "bande" ? "bande" : "macchie"));
-  if (!parts.length) return "Non distinguo il soggetto dallo sfondo. Avvicinalo, con meno acqua intorno, e riprova.";
-  return `Soggetto inquadrato: ${parts.join(", ")}. Ecco le specie della guida che ci assomigliano.`;
+  await Promise.all([run(), run(), run(), run()]);
+  if (token !== bioPhotoToken) return null;
+  scored.sort((a, b) => b.score - a.score || a.species.it.localeCompare(b.species.it, "it"));
+  const good = scored.filter((row) => row.visual >= 0.36 || (text.get(row.species.id) || 0) >= 5);
+  return (good.length >= 4 ? good : scored).slice(0, 16).map((row) => row.species);
 }
 
 function bindBioThumbs(root) {
@@ -5781,13 +5995,18 @@ function renderBiology() {
       sec.querySelector("[data-biophotoprev]").src = photo.preview;
       sec.querySelector("[data-biophotohint]").textContent = photo.hint;
     }
-    let rows = photo ? api.matchMarineLifeByPhoto(photo.signals, group, where) : api.filterMarineLife(q, group, where);
-    if (photo && q.trim()) {
-      const allowed = new Set(api.filterMarineLife(q, group, where).map((x) => x.id));
-      rows = rows.filter((x) => allowed.has(x.id));
+    let rows;
+    if (photo) {
+      rows = photo.rows || api.matchMarineLifeByPhoto(photo.signals);
+      if (q.trim()) {
+        const allowed = new Set(api.filterMarineLife(q, "all", "all").map((x) => x.id));
+        rows = rows.filter((x) => allowed.has(x.id));
+      }
+    } else {
+      rows = api.filterMarineLife(q, group, where);
     }
     const section = group === "all" ? null : api.lifeSection(group);
-    blurb.textContent = section?.blurb || "";
+    blurb.textContent = photo ? "" : (section?.blurb || "");
     count.textContent = rows.length === 1 ? "1 specie" : `${rows.length} specie`;
     if (!rows.length) {
       list.innerHTML = photo
@@ -5795,7 +6014,7 @@ function renderBiology() {
         : `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
       return;
     }
-    if (group === "all") {
+    if (photo || group === "all") {
       list.innerHTML = (api.LIFE_SECTIONS || [])
         .map((s) => {
           const items = rows.filter((x) => x.group === s.id);
@@ -5871,6 +6090,7 @@ function renderBiology() {
   photoFile.onchange = async () => {
     const file = photoFile.files?.[0];
     if (!file) return;
+    const token = ++bioPhotoToken;
     photoButton.disabled = true;
     photoButton.textContent = "Leggo la foto…";
     try {
@@ -5903,11 +6123,28 @@ function renderBiology() {
       }
       const signals = readPhotoSignals(bitmap);
       bitmap.close?.();
-      bioPhotoSearch = { signals, preview: signals.preview, hint: bioPhotoHint(signals) };
+      bioPhotoSearch = {
+        signals,
+        preview: signals.preview,
+        hint: bioPhotoHint(signals),
+        rows: window.SeaDiveBiology.matchMarineLifeByPhoto(signals),
+      };
       paint();
       sec.querySelector("[data-biophotochip]")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      photoButton.disabled = false;
+      photoButton.textContent = "Cerca con foto";
+      const ranked = await rankPhotoOnGuide(signals, token, (done, total) => {
+        if (token !== bioPhotoToken || !bioPhotoSearch) return;
+        const hint = sec.querySelector("[data-biophotohint]");
+        if (hint) hint.textContent = `Confronto la foto con tutte le specie… ${done} di ${total}`;
+      });
+      if (!ranked || token !== bioPhotoToken || !bioPhotoSearch) return;
+      bioPhotoSearch.rows = ranked;
+      bioPhotoSearch.hint = "Le specie più simili in tutta la guida, per forma, disegno e colore.";
+      paint();
     } catch {
       photoFile.value = "";
+      bioPhotoToken += 1;
       bioPhotoSearch = null;
       paint();
       blurb.textContent = "Foto non leggibile. Scegline un'altra dalla galleria.";
@@ -5916,6 +6153,7 @@ function renderBiology() {
     photoButton.textContent = "Cerca con foto";
   };
   sec.querySelector("[data-biophotoclear]").onclick = () => {
+    bioPhotoToken += 1;
     bioPhotoSearch = null;
     paint();
   };
