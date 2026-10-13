@@ -1686,55 +1686,74 @@ function applyCloudKey(board, key, value) {
 }
 
 let communityBoardCache = { at: 0, data: null, flight: null };
+let communityLoadGen = 0;
+let cloudChain = Promise.resolve();
+let followSaveBusy = false;
+
+function enqueueCloud(task) {
+  const job = cloudChain.then(task, task);
+  cloudChain = job.then(() => {}, () => {});
+  return job;
+}
 
 async function loadCommunityBoard(maxAge = 20000) {
   if (communityBoardCache.data && Date.now() - communityBoardCache.at < maxAge) return communityBoardCache.data;
   if (maxAge !== 0 && communityBoardCache.flight) return communityBoardCache.flight;
-  const boardUrl = maxAge === 0 ? `${COMMUNITY_CLOUD}?t=${Date.now()}` : COMMUNITY_CLOUD;
-  communityBoardCache.flight = fetch(boardUrl, {
+  const gen = ++communityLoadGen;
+  const boardUrl = `${COMMUNITY_CLOUD}?t=${Date.now()}`;
+  const flight = fetch(boardUrl, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   })
     .then(async (res) => {
       if (res.status === 400 || res.status === 404) {
         const board = blankCommunityBoard();
-        communityBoardCache = { at: Date.now(), data: board, flight: null };
+        if (gen === communityLoadGen) communityBoardCache = { at: Date.now(), data: board, flight: null };
         return board;
       }
       if (!res.ok) throw new Error("network");
       const board = boardFromPayload(await res.json());
-      communityBoardCache = { at: Date.now(), data: board, flight: null };
+      if (gen === communityLoadGen) communityBoardCache = { at: Date.now(), data: board, flight: null };
       return board;
     })
     .catch((err) => {
-      communityBoardCache.flight = null;
+      if (communityBoardCache.flight === flight) communityBoardCache.flight = null;
       throw err;
     });
-  return communityBoardCache.flight;
+  communityBoardCache.flight = flight;
+  return flight;
+}
+
+async function postCommunityBoard(next) {
+  const body = JSON.stringify({ v: 1, profiles: next.profiles, links: next.links, messages: next.messages });
+  if (body.length > 1400000) throw new Error("network");
+  const res = await fetch(COMMUNITY_CLOUD, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  if (!res.ok) throw new Error("network");
+  communityLoadGen += 1;
+  communityBoardCache = { at: Date.now(), data: next, flight: null };
 }
 
 async function cloudSet(key, value) {
-  let lastErr = new Error("network");
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const board = await loadCommunityBoard(0);
-    const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
-    applyCloudKey(next, key, value);
-    const body = JSON.stringify({ v: 1, profiles: next.profiles, links: next.links, messages: next.messages });
-    if (body.length > 1400000) throw new Error("network");
-    const res = await fetch(COMMUNITY_CLOUD, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-    if (!res.ok) {
-      lastErr = new Error("network");
-      communityBoardCache = { at: 0, data: null, flight: null };
-      continue;
+  return enqueueCloud(async () => {
+    let lastErr = new Error("network");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const board = await loadCommunityBoard(0);
+        const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
+        applyCloudKey(next, key, value);
+        await postCommunityBoard(next);
+        return;
+      } catch (err) {
+        lastErr = err;
+        communityBoardCache = { at: 0, data: null, flight: null };
+      }
     }
-    communityBoardCache = { at: Date.now(), data: next, flight: null };
-    return;
-  }
-  throw lastErr;
+    throw lastErr;
+  });
 }
 
 function fitCloudProfile(body) {
@@ -2048,7 +2067,28 @@ async function refreshSeaDirectory() {
   }
 }
 
+function rememberMutualProfile(person, cardHit, mutual) {
+  const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") || person?.name || "";
+  const saved = upsertPerson({
+    id: person?.id,
+    role: person?.role || "buddy",
+    name: who,
+    firstName: cardHit.firstName || person?.firstName,
+    lastName: cardHit.lastName || person?.lastName,
+    level: cardHit.level || person?.level,
+    remoteOwner: cardHit.owner || person?.remoteOwner,
+    followOut: true,
+    followIn: mutual,
+    followRev: Date.now(),
+    portrait: cardHit.portrait || person?.portrait || "",
+    ...(mutual ? { cert: cardHit.cert || person?.cert || "", sign: cardHit.sign || person?.sign || "" } : {}),
+  });
+  if (mutual && saved) stampPersonSign(saved);
+  return saved;
+}
+
 async function connectSeaPerson(cardHit, chat) {
+  followSaveBusy = true;
   try {
     const stored = insertOnlineProfile(cardHit);
     save(state);
@@ -2069,29 +2109,59 @@ async function connectSeaPerson(cardHit, chat) {
     }
     const who = stored.name || [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
     const mutual = Boolean(res.followIn) || alreadyIn;
-    const saved = upsertPerson({
-      id: person?.id,
-      role: person?.role || "buddy",
-      name: who,
-      firstName: cardHit.firstName,
-      lastName: cardHit.lastName,
-      level: cardHit.level,
-      remoteOwner: cardHit.owner,
-      followOut: true,
-      followIn: mutual,
-      followRev: Date.now(),
-      portrait: cardHit.portrait || "",
-      ...(mutual ? { cert: cardHit.cert || person?.cert || "", sign: cardHit.sign || person?.sign || "" } : {}),
-    });
-    if (mutual && saved) stampPersonSign(saved);
+    rememberMutualProfile(person, cardHit, mutual);
     save(state);
+    if (mutual) publishMyProfile().catch(() => {});
     view.peopleHint = mutual
-      ? `Vi seguite con ${who}. Nome, cognome, numero di brevetto e firma entrano nelle prossime immersioni.`
+      ? `Vi seguite con ${who}. Nome, cognome, numero di brevetto e firma sono condivisi per le prossime immersioni.`
       : `Segui ${who}. Quando segue anche te, nome, cognome, brevetto e firma restano pronti per le immersioni nuove.`;
     render();
   } catch {
     view.peopleHint = "Seguito non registrato. Riprova tra poco.";
     render();
+  } finally {
+    followSaveBusy = false;
+  }
+}
+
+async function disconnectSeaPerson(cardHit) {
+  followSaveBusy = true;
+  try {
+    const person = localSeaPerson(cardHit);
+    const res = await setMyFollow({ ...cardHit, remoteOwner: cardHit.owner }, false);
+    if (res.error) {
+      view.peopleHint = "Non sono riuscito a togliere il seguito. Riprova tra poco.";
+      render();
+      return;
+    }
+    const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") || person?.name || "Questo profilo";
+    if (person) {
+      const saved = upsertPerson({
+        id: person.id,
+        role: person.role,
+        name: person.name,
+        firstName: person.firstName,
+        lastName: person.lastName,
+        remoteOwner: person.remoteOwner || cardHit.owner,
+        followOut: false,
+        followIn: Boolean(res.followIn),
+        followRev: Date.now(),
+      });
+      if (saved) {
+        saved.cert = "";
+        saved.sign = "";
+        saved.following = Boolean(saved.followOut && saved.followIn);
+      }
+    }
+    save(state);
+    view.personId = null;
+    view.peopleHint = `${who} non è più tra i contatti. Lo ritrovi con Cerca chi usa SeaDive.`;
+    render();
+  } catch {
+    view.peopleHint = "Non sono riuscito a togliere il seguito. Riprova tra poco.";
+    render();
+  } finally {
+    followSaveBusy = false;
   }
 }
 
@@ -2299,27 +2369,28 @@ async function ensureCommunityLink(mine, other) {
   if (!mine || !remote || mine === remote) return { error: "self" };
   const pair = chatPair(mine, remote);
   if (linkedPairs.has(pair)) return { ok: true, pair };
-  const list = await crudList(COMMUNITY_LINKS);
-  if (list.some((row) => row.pair === pair)) {
-    linkedPairs.add(pair);
-    return { ok: true, pair };
-  }
   const me = personNames({ name: state.profile?.name || "" });
   const otherName = [other.firstName, other.lastName].filter(Boolean).join(" ") || String(other.name || "").trim();
-  const leftIsMine = mine < remote;
-  const body = {
-    pair,
-    left: leftIsMine ? mine : remote,
-    right: leftIsMine ? remote : mine,
-    leftName: (leftIsMine ? me.name : otherName).slice(0, 80),
-    rightName: (leftIsMine ? otherName : me.name).slice(0, 80),
-    leftCert: (leftIsMine ? String(state.profile?.certNumber || "") : String(other.cert || "")).slice(0, 40),
-    rightCert: (leftIsMine ? String(other.cert || "") : String(state.profile?.certNumber || "")).slice(0, 40),
-    leftFollows: false,
-    rightFollows: false,
-  };
   try {
-    await cloudSet(`l-${pair}`, body);
+    await enqueueCloud(async () => {
+      const board = await loadCommunityBoard(0);
+      if (board.links && board.links[pair]) return;
+      const leftIsMine = mine < remote;
+      const body = {
+        pair,
+        left: leftIsMine ? mine : remote,
+        right: leftIsMine ? remote : mine,
+        leftName: (leftIsMine ? me.name : otherName).slice(0, 80),
+        rightName: (leftIsMine ? otherName : me.name).slice(0, 80),
+        leftCert: (leftIsMine ? String(state.profile?.certNumber || "") : String(other.cert || "")).slice(0, 40),
+        rightCert: (leftIsMine ? String(other.cert || "") : String(state.profile?.certNumber || "")).slice(0, 40),
+        leftFollows: false,
+        rightFollows: false,
+      };
+      const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
+      next.links[pair] = body;
+      await postCommunityBoard(next);
+    });
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
   }
@@ -2339,39 +2410,48 @@ async function setMyFollow(other, on) {
   const remote = String(other?.owner || other?.remoteOwner || "").trim();
   if (!mine || !remote || mine === remote) return { error: "self" };
   const pair = chatPair(mine, remote);
-  const list = await crudList(COMMUNITY_LINKS, true);
-  const current = list.find((row) => row.pair === pair);
-  const local = (state.people || []).find((p) => p.remoteOwner === remote);
   const me = personNames({ name: state.profile?.name || "" });
   const otherName = [other.firstName, other.lastName].filter(Boolean).join(" ") || String(other.name || "").trim();
-  const left = current?.left || (mine < remote ? mine : remote);
-  const right = current?.right || (left === mine ? remote : mine);
-  const mineIsLeft = left === mine;
-  const body = {
-    pair,
-    left,
-    right,
-    leftName: String(current?.leftName || (mineIsLeft ? me.name : otherName)).slice(0, 80),
-    rightName: String(current?.rightName || (mineIsLeft ? otherName : me.name)).slice(0, 80),
-    leftCert: String(current?.leftCert || (mineIsLeft ? state.profile?.certNumber || "" : other.cert || "")).slice(0, 40),
-    rightCert: String(current?.rightCert || (mineIsLeft ? other.cert || "" : state.profile?.certNumber || "")).slice(0, 40),
-    leftFollows: Boolean(current?.leftFollows),
-    rightFollows: Boolean(current?.rightFollows),
-  };
-  const theyFollow = Boolean(local?.followIn) || (mineIsLeft ? Boolean(current?.rightFollows) : Boolean(current?.leftFollows));
-  if (theyFollow) {
-    if (mineIsLeft) body.rightFollows = true;
-    else body.leftFollows = true;
-  }
-  if (mineIsLeft) body.leftFollows = Boolean(on);
-  else body.rightFollows = Boolean(on);
   try {
-    await cloudSet(`l-${pair}`, body);
+    const body = await enqueueCloud(async () => {
+      const board = await loadCommunityBoard(0);
+      const current = board.links?.[pair] || null;
+      const local = (state.people || []).find((p) => p.remoteOwner === remote);
+      const left = current?.left || (mine < remote ? mine : remote);
+      const right = current?.right || (left === mine ? remote : mine);
+      const mineIsLeft = left === mine;
+      const nextBody = {
+        pair,
+        left,
+        right,
+        leftName: String(current?.leftName || (mineIsLeft ? me.name : otherName)).slice(0, 80),
+        rightName: String(current?.rightName || (mineIsLeft ? otherName : me.name)).slice(0, 80),
+        leftCert: String(current?.leftCert || (mineIsLeft ? state.profile?.certNumber || "" : other.cert || "")).slice(0, 40),
+        rightCert: String(current?.rightCert || (mineIsLeft ? other.cert || "" : state.profile?.certNumber || "")).slice(0, 40),
+        leftFollows: Boolean(current?.leftFollows),
+        rightFollows: Boolean(current?.rightFollows),
+      };
+      const theyFollow = Boolean(local?.followIn) || (mineIsLeft ? Boolean(current?.rightFollows) : Boolean(current?.leftFollows));
+      if (theyFollow) {
+        if (mineIsLeft) nextBody.rightFollows = true;
+        else nextBody.leftFollows = true;
+      }
+      if (mineIsLeft) nextBody.leftFollows = Boolean(on);
+      else nextBody.rightFollows = Boolean(on);
+      if (nextBody.leftFollows && nextBody.rightFollows) {
+        nextBody.leftCert = String(mineIsLeft ? state.profile?.certNumber || current?.leftCert || "" : other.cert || current?.leftCert || "").slice(0, 40);
+        nextBody.rightCert = String(mineIsLeft ? other.cert || current?.rightCert || "" : state.profile?.certNumber || current?.rightCert || "").slice(0, 40);
+      }
+      const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
+      next.links[pair] = nextBody;
+      await postCommunityBoard(next);
+      return nextBody;
+    });
+    linkedPairs.add(pair);
+    return { ok: true, ...linkFollowFlags(body, mine) };
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
   }
-  linkedPairs.add(pair);
-  return { ok: true, ...linkFollowFlags(body, mine) };
 }
 
 async function syncIncomingLinks() {
@@ -2396,7 +2476,11 @@ async function syncIncomingLinks() {
     const flags = linkFollowFlags(row, mine);
     const personEarly = (state.people || []).find((p) => p.remoteOwner === remote);
     if (personEarly && Number(personEarly.followRev) > fetchedAt) return;
-    if (personEarly?.followOut && !flags.followOut && Date.now() - Number(personEarly.followRev) < 20000) return;
+    if (
+      personEarly &&
+      Date.now() - Number(personEarly.followRev) < 20000 &&
+      (Boolean(personEarly.followOut) !== flags.followOut || Boolean(personEarly.followIn) !== flags.followIn)
+    ) return;
     const card = cardByOwner.get(remote) || null;
     const names = personNames({ name: card ? `${card.firstName} ${card.lastName}` : remoteName });
     const person = (state.people || []).find(
@@ -3463,7 +3547,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 146</p>
+        <p class="hint">Versione 147</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3893,7 +3977,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=146")
+    divelogsPromise = fetch("./divelogs-sites.json?v=147")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5577,6 +5661,7 @@ function renderPeople() {
   const role = view.peopleRole || "all";
   const people = [...(state.people || [])]
     .filter((p) => role === "all" || p.role === role)
+    .filter((p) => !p.remoteOwner || p.followOut || samePersonName(p.name, state.profile?.name))
     .sort((a, b) => {
       const ao = samePersonName(a.name, state.profile.name) ? 0 : 1;
       const bo = samePersonName(b.name, state.profile.name) ? 0 : 1;
@@ -5668,11 +5753,9 @@ function renderPeople() {
     const known = localSeaPerson(cardHit);
     const mode = !known ? "none" : known.followOut && known.followIn ? "mutual" : known.followOut ? "out" : known.followIn ? "in" : "none";
     const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "In attesa del suo seguito" : mode === "in" ? "Ti segue" : "";
-    const followBtn = mode === "mutual"
-      ? ""
-      : mode === "out"
-        ? `<button class="btn ghost" type="button" disabled>In attesa</button>`
-        : `<button class="btn primary" type="button" data-follow>${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
+    const followBtn = mode === "mutual" || mode === "out"
+      ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>`
+      : `<button class="btn primary" type="button" data-follow>${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
     const photo = portraitImage(cardHit.portrait);
     const initials = `${(cardHit.firstName || "?").slice(0, 1)}${(cardHit.lastName || "").slice(0, 1)}`.toUpperCase();
     const row = document.createElement("article");
@@ -5701,6 +5784,14 @@ function renderPeople() {
       button.disabled = true;
       button.textContent = "Salvo…";
       await connectSeaPerson(cardHit, false);
+    });
+    row.querySelector("[data-unfollow]")?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const button = e.currentTarget;
+      button.disabled = true;
+      button.textContent = "Tolgo…";
+      await disconnectSeaPerson(cardHit);
     });
     sea.append(row);
   });
@@ -5851,7 +5942,7 @@ function renderPeople() {
     const queryNow = typing ? findEl.value : null;
     Promise.all([syncIncomingLinks().catch(() => false), refreshSeaDirectory().catch(() => null)])
       .then(([changed]) => {
-        if (stamp !== communitySyncStamp || view.name !== "people" || view.personId) return;
+        if (followSaveBusy || stamp !== communitySyncStamp || view.name !== "people" || view.personId) return;
         const after = (seaDirectory.list || []).map((c) => c.owner).join("|");
         if (!(changed || !had || before !== after)) return;
         if (queryNow != null) view.peopleQuery = queryNow;
@@ -6021,68 +6112,41 @@ function renderPerson() {
       alert("Scrivi nome e cognome nel profilo, poi segui questa persona.");
       return;
     }
-    const res = await setMyFollow(current, true);
-    if (res.error) {
-      view.peopleHint = "Seguito non registrato. Riprova tra poco.";
-      view.personId = current.id;
-      render();
+    const card = (seaDirectory.list || []).find((hit) => hit.owner === current.remoteOwner) || {
+      owner: current.remoteOwner,
+      firstName: current.firstName,
+      lastName: current.lastName,
+      name: current.name,
+      cert: current.cert,
+      sign: current.sign,
+      level: current.level,
+      portrait: current.portrait,
+    };
+    await connectSeaPerson(card, false);
+  });
+  form.querySelector("[data-unfollow]")?.addEventListener("click", async () => {
+    if (current.remoteOwner) {
+      await disconnectSeaPerson({
+        owner: current.remoteOwner,
+        firstName: current.firstName,
+        lastName: current.lastName,
+        name: current.name,
+        cert: current.cert,
+      });
       return;
     }
-    const card = (seaDirectory.list || []).find((hit) => hit.owner === current.remoteOwner);
-    const mutual = Boolean(res.followIn) || Boolean(current.followIn);
-    const saved = upsertPerson({
+    upsertPerson({
       id: current.id,
       role: current.role,
       name: current.name,
       firstName: current.firstName,
       lastName: current.lastName,
-      remoteOwner: current.remoteOwner,
-      followOut: true,
-      followIn: mutual,
-      followRev: Date.now(),
-      ...(mutual && card ? { cert: card.cert || current.cert, sign: card.sign || current.sign || "", level: card.level || current.level } : {}),
+      cert: current.cert,
+      following: false,
     });
-    if (mutual && saved) stampPersonSign(saved);
     save(state);
-    view.personId = current.id;
-    view.peopleHint = mutual
-      ? `Vi seguite con ${current.name}. Nome, cognome, brevetto e firma entrano nella nuova immersione.`
-      : `Segui ${current.name}. Quando segue anche te, brevetto e firma entrano nell'immersione.`;
-    render();
-  });
-  form.querySelector("[data-unfollow]")?.addEventListener("click", async () => {
-    if (current.remoteOwner) {
-      const res = await setMyFollow(current, false);
-      if (res.error) {
-        view.peopleHint = "Non sono riuscito a togliere il seguito. Riprova tra poco.";
-        view.personId = current.id;
-        render();
-        return;
-      }
-      upsertPerson({
-        id: current.id,
-        role: current.role,
-        name: current.name,
-        firstName: current.firstName,
-        lastName: current.lastName,
-        remoteOwner: current.remoteOwner,
-        followOut: false,
-        followIn: Boolean(res.followIn),
-        followRev: Date.now(),
-      });
-    } else {
-      upsertPerson({
-        id: current.id,
-        role: current.role,
-        name: current.name,
-        firstName: current.firstName,
-        lastName: current.lastName,
-        cert: current.cert,
-        following: false,
-      });
-    }
-    save(state);
-    view.personId = current.id;
+    view.personId = null;
+    view.peopleHint = `${current.name} non è più tra i seguiti.`;
     render();
   });
   form.querySelector("[data-del]")?.addEventListener("click", async (e) => {
