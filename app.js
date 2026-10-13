@@ -3629,7 +3629,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 148</p>
+        <p class="hint">Versione 149</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4059,7 +4059,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=148")
+    divelogsPromise = fetch("./divelogs-sites.json?v=149")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5756,7 +5756,7 @@ function renderPeople() {
     <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" inputmode="search" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <h3 class="serif people-block">Chi usa SeaDive</h3>
-    <div class="people-list" data-sea></div>
+    <div class="sea-strip" data-sea></div>
     <h3 class="serif people-block">I tuoi contatti</h3>
     <div class="chips" data-roles></div>
     <div class="people-list" data-list></div>
@@ -5800,36 +5800,35 @@ function renderPeople() {
   const seaWait = document.createElement("p");
   seaWait.className = "hint";
   seaWait.setAttribute("data-sea-wait", "");
+  const seaRow = document.createElement("div");
+  seaRow.className = "sea-row";
   sea.append(seaWait);
+  sea.append(seaRow);
   seaPeople.forEach((cardHit) => {
     const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
     const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
     if (cardHit.self) {
       const whoSelf = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
       const extraSelf = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
-      const selfStatus = profileOnlineStatus === "online"
-        ? "Sei tu · visibile a chi usa SeaDive"
-        : profileOnlineStatus === "short"
-          ? "Sei tu · servono nome e cognome"
-          : "Sei tu · ti pubblico tra gli altri";
+      const selfPhoto = portraitImage(cardHit.portrait);
+      const selfInitials = `${(cardHit.firstName || "?").slice(0, 1)}${(cardHit.lastName || "").slice(0, 1)}`.toUpperCase();
       const selfRow = document.createElement("article");
-      selfRow.className = "people-row";
+      selfRow.className = "sea-person";
       selfRow.setAttribute("data-self", "");
       selfRow.setAttribute("data-q", [whoSelf, extraSelf].filter(Boolean).join(" "));
       selfRow.innerHTML = `
-        <button type="button" class="people-open${cardHit.portrait ? " has-photo" : ""}">
-          ${avatarHtml(cardHit.portrait, whoSelf)}
-          <span>
-            <strong>${escapeHtml(whoSelf)}</strong>
-            <small>${escapeHtml(selfStatus)}${extraSelf ? " · " + escapeHtml(extraSelf) : ""}</small>
-          </span>
+        <button type="button" class="sea-open">
+          ${selfPhoto ? `<img class="sea-photo" alt="" src="${escapeHtml(selfPhoto)}" />` : `<span class="sea-photo sea-photo-fallback">${escapeHtml(selfInitials)}</span>`}
+          <strong class="sea-first">${escapeHtml(cardHit.firstName || "")}</strong>
+          <strong class="sea-last">${escapeHtml(cardHit.lastName || "")}</strong>
+          <small class="sea-status">Sei tu</small>
         </button>
       `;
-      selfRow.querySelector(".people-open").onclick = () => {
+      selfRow.querySelector(".sea-open").onclick = () => {
         view.name = "profile";
         render();
       };
-      sea.append(selfRow);
+      seaRow.append(selfRow);
       return;
     }
     const known = localSeaPerson(cardHit);
@@ -5849,16 +5848,9 @@ function renderPeople() {
       <strong class="sea-last">${escapeHtml(cardHit.lastName || "")}</strong>
       ${status ? `<small class="sea-status">${escapeHtml(status)}</small>` : ""}
       <div class="people-actions">
-        <button class="btn ghost people-chat" type="button">Chat</button>
         ${followBtn}
       </div>
     `;
-    row.querySelector(".people-chat").onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      askChatNotice();
-      connectSeaPerson(cardHit, true);
-    };
     row.querySelector("[data-follow]")?.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -5875,7 +5867,7 @@ function renderPeople() {
       button.textContent = "Tolgo…";
       await disconnectSeaPerson(cardHit);
     });
-    sea.append(row);
+    seaRow.append(row);
   });
   const localWait = document.createElement("p");
   localWait.className = "hint";

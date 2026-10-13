@@ -681,25 +681,48 @@ button.people-row { cursor: pointer; }
 }
 .people-card .people-actions { flex: none; width: 100%; justify-content: stretch; }
 .people-card .people-actions .btn { flex: 1; }
+.sea-strip { margin: 8px 0 4px; }
+.sea-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 18px;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  -webkit-overflow-scrolling: touch;
+}
 .sea-person {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 2px;
+  gap: 1px;
+  flex: 0 0 92px;
+  width: 92px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.sea-open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   width: 100%;
-  border: 1px solid var(--line);
-  background: #fff;
-  border-radius: 16px;
-  padding: 14px 12px 12px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 .sea-photo {
-  width: 84px;
-  height: 84px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
   object-fit: cover;
   background: #e7eef2;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .sea-photo-fallback {
   display: grid;
@@ -710,12 +733,29 @@ button.people-row { cursor: pointer; }
 }
 .sea-first, .sea-last {
   display: block;
-  font-size: 18px;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
   line-height: 1.15;
 }
-.sea-status { display: block; margin-top: 4px; opacity: 0.7; font-size: 13px; }
-.sea-person .people-actions { justify-content: center; margin-top: 8px; flex: none; width: 100%; position: relative; z-index: 2; }
-.sea-person .people-actions .btn { min-width: 108px; min-height: 44px; touch-action: manipulation; }
+.sea-status { display: block; margin-top: 3px; opacity: 0.7; font-size: 12px; line-height: 1.2; }
+.sea-person .people-actions { justify-content: center; margin-top: 0; flex: none; width: 100%; position: relative; z-index: 2; }
+.sea-person .people-actions .btn {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  padding: 2px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #1d7fe0;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: normal;
+  touch-action: manipulation;
+}
 .chat-log {
   display: flex;
   flex-direction: column;
