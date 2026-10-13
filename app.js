@@ -4132,7 +4132,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 163</p>
+        <p class="hint">Versione 164</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4176,7 +4176,7 @@ function renderNav() {
     ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Biologia"],
     ["computer", "⌚", "Computer"],
-    ["profile", "👤", "Profilo"],
+    ["profile", `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="12.2" cy="7.2" r="4.4" fill="#f6c7a8" stroke="#083848" stroke-width="1.4"/><rect x="9.2" y="5.8" width="6.2" height="3" rx="1.1" fill="#16324f"/><rect x="8.4" y="12.2" width="8" height="8.6" rx="3.2" fill="#083848"/><rect x="16.8" y="12.6" width="4.6" height="8" rx="1.8" fill="#f2c14a" stroke="#083848" stroke-width="1.2"/><path d="M10.4 20.8 8.4 26.2" stroke="#083848" stroke-width="2.3" stroke-linecap="round"/><path d="M14.4 20.8 16.4 26.2" stroke="#083848" stroke-width="2.3" stroke-linecap="round"/><path d="M6.2 25.2h3.6l-.6 2.4H7z" fill="#3aa0ff"/><path d="M15.2 25.2h3.6l-.8 2.4h-2.2z" fill="#3aa0ff"/></svg>`, "Profilo"],
   ];
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");
@@ -4185,7 +4185,8 @@ function renderNav() {
     if (id === "bio") b.classList.add("bio-nav");
     if (id === "people") b.dataset.chatnav = "1";
     const badge = id === "people" && chatUnreadTotal() > 0 ? " " + chatUnreadTotal() : "";
-    b.innerHTML = `<span${id === "people" ? " class=\"nav-divers\"" : ""}>${icon}</span><small>${label}${badge}</small>`;
+    const spanClass = id === "people" ? "nav-divers" : id === "profile" ? "nav-diver" : "";
+    b.innerHTML = `<span${spanClass ? ` class="${spanClass}"` : ""}>${icon}</span><small>${label}${badge}</small>`;
     b.onclick = () => {
       view = {
         name: id,
@@ -4562,7 +4563,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=163")
+    divelogsPromise = fetch("./divelogs-sites.json?v=164")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();

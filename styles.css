@@ -563,6 +563,14 @@ body.page-home .section-head h3 { color: #1c2430; }
   line-height: 1;
   white-space: nowrap;
 }
+.nav button span.nav-diver {
+  font-size: 0;
+}
+.nav button span.nav-diver svg {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
 .nav button small {
   display: block;
   width: 100%;
