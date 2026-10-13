@@ -1662,6 +1662,7 @@ const COMMUNITY_LINKS_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1b
 const COMMUNITY_API = "profiles";
 const COMMUNITY_LINKS = "links";
 const COMMUNITY_MESSAGES = "messages";
+const CHAT_ROOM = "sala";
 
 function blankCommunityBoard() {
   return { profiles: {}, links: {}, messages: [] };
@@ -2168,7 +2169,7 @@ async function connectSeaPerson(cardHit, chat) {
     if (chat && person) {
       save(state);
       view.peopleHint = "";
-      await openPersonChat(person);
+      openMainChat();
       return;
     }
     const alreadyIn = Boolean((state.people || []).find((p) => cardHit.owner && p.remoteOwner === cardHit.owner)?.followIn);
@@ -2337,19 +2338,77 @@ function paintChatBadge() {
   label.textContent = chatUnread > 0 ? "Community " + chatUnread : "Community";
 }
 
-function openChatFromOwner(owner) {
-  const person = (state.people || []).find((p) => p.remoteOwner === owner);
+function openMainChat() {
   chatUnread = 0;
-  if (!person) {
-    view.name = "people";
-    view.personId = null;
-    render();
-    return;
-  }
+  paintChatBadge();
   view.name = "chat";
-  view.chatPersonId = person.id;
+  view.chatPersonId = null;
+  view.personId = null;
   view.peopleHint = "";
   render();
+}
+
+function openChatFromOwner() {
+  openMainChat();
+}
+
+function chatCircle(mine, links) {
+  const adj = new Map();
+  const touch = (id) => {
+    const key = String(id || "");
+    if (!adj.has(key)) adj.set(key, new Set());
+    return adj.get(key);
+  };
+  Object.values(links || {}).forEach((row) => {
+    if (!row?.left || !row?.right || row.left === row.right) return;
+    if (!row.leftFollows || !row.rightFollows) return;
+    touch(row.left).add(String(row.right));
+    touch(row.right).add(String(row.left));
+  });
+  const seen = new Set();
+  const stack = [String(mine || "")];
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    (adj.get(id) || []).forEach((next) => {
+      if (!seen.has(next)) stack.push(next);
+    });
+  }
+  if (seen.size < 2) return new Set();
+  return seen;
+}
+
+function chatInitials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0] || "?").slice(0, 1) + (parts[1] || "").slice(0, 1)).toUpperCase();
+}
+
+function chatMembers(mine, circle, links, profiles) {
+  const byOwner = new Map((profiles || []).filter((card) => card.owner).map((card) => [card.owner, card]));
+  const nameOf = (id) => {
+    if (id === mine) return personNames({ name: state.profile?.name || "" }).name || "Tu";
+    const card = byOwner.get(id);
+    const remote = card ? [card.firstName, card.lastName].filter(Boolean).join(" ") : "";
+    if (remote) return remote;
+    const local = (state.people || []).find((p) => p.remoteOwner === id);
+    if (local?.name) return local.name;
+    for (const row of Object.values(links || {})) {
+      if (row?.left === id && row.leftName) return String(row.leftName);
+      if (row?.right === id && row.rightName) return String(row.rightName);
+    }
+    return "Subacqueo";
+  };
+  const portraitOf = (id) => {
+    if (id === mine) return profilePortraitImage();
+    const card = byOwner.get(id);
+    if (card?.portrait) return card.portrait;
+    const local = (state.people || []).find((p) => p.remoteOwner === id);
+    return personPortrait(local);
+  };
+  return [...circle]
+    .map((id) => ({ id, name: nameOf(id), portrait: portraitOf(id), self: id === mine }))
+    .sort((a, b) => (a.self === b.self ? a.name.localeCompare(b.name, "it") : a.self ? -1 : 1));
 }
 
 async function showChatNotice(title, body, from) {
@@ -2389,6 +2448,12 @@ async function watchChatNotices() {
     return;
   }
   const mine = await profileOwnerKey();
+  let circle = new Set();
+  try {
+    circle = chatCircle(mine, await loadMergedLinks(false));
+  } catch {
+    return;
+  }
   const since = localStorage.getItem("seadive-chat-seen-at") || "";
   const firstOpen = !chatNoticeReady && !since;
   for (const row of rows) {
@@ -2398,14 +2463,12 @@ async function watchChatNotices() {
     const text = String(row.text || "").trim();
     const from = String(row.from || "");
     const at = String(row.at || "");
+    if (String(row.thread || "") !== CHAT_ROOM) continue;
+    if (!circle.has(from)) continue;
     if (firstOpen || !text || !from || from === mine) continue;
     if (since && at <= since) continue;
     const person = (state.people || []).find((p) => p.remoteOwner === from);
-    const looking =
-      view.name === "chat" &&
-      person &&
-      view.chatPersonId === person.id &&
-      document.visibilityState === "visible";
+    const looking = view.name === "chat" && document.visibilityState === "visible";
     if (looking) continue;
     chatUnread += 1;
     paintChatBadge();
@@ -2598,62 +2661,9 @@ async function syncIncomingLinks() {
   return changed;
 }
 
-async function openPersonChat(person) {
-  if (!person || person.role === "center") return;
-  const mine = await profileOwnerKey();
-  let remote = String(person.remoteOwner || "");
-  let card = null;
-  if (!remote || remote === mine) {
-    const found = await findOnlineProfiles(person.name);
-    const hits = (found.hits || []).filter((hit) => hit.owner && hit.owner !== mine);
-    card = hits.length === 1 ? hits[0] : null;
-    remote = card?.owner || "";
-  }
-  if (!remote) {
-    view.name = "people";
-    view.personId = person.id;
-    view.peopleHint = "Per la chat questa persona deve aprire l'app con nome e cognome nel profilo.";
-    render();
-    return;
-  }
-  upsertPerson({
-    id: person.id,
-    role: person.role,
-    name: person.name,
-    firstName: person.firstName,
-    lastName: person.lastName,
-    remoteOwner: remote,
-  });
-  let linked = { error: "network" };
-  try {
-    linked = await ensureCommunityLink(mine, {
-      owner: remote,
-      firstName: card?.firstName || person.firstName,
-      lastName: card?.lastName || person.lastName,
-      name: person.name,
-      cert: card?.cert || person.cert,
-    });
-  } catch {
-    linked = { error: "network" };
-  }
-  save(state);
-  if (linked.error) {
-    view.name = "people";
-    view.personId = null;
-    view.peopleHint = "Chat non raggiungibile. Riprova tra poco.";
-    render();
-    return;
-  }
-  view.name = "chat";
-  view.chatPersonId = person.id;
-  view.peopleHint = "";
-  render();
-}
-
 function renderChat() {
-  const person = (state.people || []).find((p) => p.id === view.chatPersonId);
   const frag = document.createDocumentFragment();
-  frag.append(topbar(person?.name || "Chat"));
+  frag.append(topbar("Chat"));
   const card = document.createElement("section");
   card.className = "card chat-screen";
   const back = () => {
@@ -2661,30 +2671,47 @@ function renderChat() {
     view.chatPersonId = null;
     render();
   };
-  if (!person?.remoteOwner) {
-    card.innerHTML = `<p class="hint">Contatto non collegato.</p><button class="btn ghost" type="button" data-back>Torna a Community</button>`;
-    card.querySelector("[data-back]").onclick = back;
-    frag.append(card);
-    return frag;
-  }
   card.innerHTML = `
-    <h2 class="serif" style="margin:0">${escapeHtml(person.name)}</h2>
-    <p class="hint">Siete collegati. I messaggi arrivano in pochi secondi e, se le notifiche sono consentite, l’avviso arriva sul telefono. Il diario non viene inviato.</p>
-    <div class="chat-log" data-log><p class="hint">Carico la chat…</p></div>
-    <form class="chat-compose">
-      <input name="text" maxlength="400" placeholder="Scrivi un messaggio" autocomplete="off" enterkeyhint="send" />
+    <h2 class="serif" style="margin:0">Chat</h2>
+    <p class="hint">Una chat sola per chi si segue. Se due persone si seguono e una segue anche un’altra, entrano tutti e tre. Chi non si segue resta fuori. Il diario non viene inviato.</p>
+    <div class="chat-members" data-members></div>
+    <p class="hint" data-gate>Carico chi è dentro…</p>
+    <div class="chat-log" data-log hidden></div>
+    <form class="chat-compose" hidden>
+      <input name="text" maxlength="400" placeholder="Scrivi a chi si segue" autocomplete="off" enterkeyhint="send" />
       <button class="btn primary" type="submit">Invia</button>
     </form>
     <p class="hint" data-chatstatus></p>
     <button class="btn ghost" type="button" data-back>Torna a Community</button>
   `;
   card.querySelector("[data-back]").onclick = back;
+  const members = card.querySelector("[data-members]");
+  const gate = card.querySelector("[data-gate]");
   const log = card.querySelector("[data-log]");
   const status = card.querySelector("[data-chatstatus]");
   const form = card.querySelector("form");
   let owner = "";
-  let thread = "";
+  let circle = new Set();
   let stick = true;
+  const paintMembers = (people) => {
+    members.replaceChildren();
+    people.forEach((person) => {
+      const chip = document.createElement("div");
+      chip.className = "chat-member";
+      const photo = portraitImage(person.portrait);
+      const face = document.createElement(photo ? "img" : "span");
+      if (photo) {
+        face.alt = "";
+        face.src = photo;
+      } else {
+        face.textContent = chatInitials(person.self ? "Tu" : person.name);
+      }
+      const label = document.createElement("small");
+      label.textContent = person.self ? "Tu" : person.name;
+      chip.append(face, label);
+      members.append(chip);
+    });
+  };
   const draw = (rows) => {
     const near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
     log.replaceChildren();
@@ -2698,6 +2725,12 @@ function renderChat() {
     rows.forEach((row) => {
       const bubble = document.createElement("div");
       bubble.className = "chat-bubble" + (row.from === owner ? " mine" : "");
+      if (row.from !== owner) {
+        const who = document.createElement("strong");
+        who.className = "chat-who";
+        who.textContent = row.name || "Subacqueo";
+        bubble.append(who);
+      }
       const text = document.createElement("span");
       text.textContent = row.text;
       const time = document.createElement("time");
@@ -2712,18 +2745,34 @@ function renderChat() {
     stick = false;
   };
   const pull = async () => {
-    if (!thread || view.name !== "chat" || view.chatPersonId !== person.id || !log.isConnected) return;
+    if (view.name !== "chat" || !log.isConnected || !owner) return;
     try {
-      const all = await crudList(COMMUNITY_MESSAGES, true);
+      const [links, all, profiles] = await Promise.all([
+        loadMergedLinks(true),
+        crudList(COMMUNITY_MESSAGES, true),
+        loadOnlineProfiles(),
+      ]);
+      if (!log.isConnected) return;
+      circle = chatCircle(owner, links);
+      const open = circle.has(owner);
+      const people = open ? chatMembers(owner, circle, links, profiles.list || []) : [];
+      paintMembers(people);
+      gate.hidden = open;
+      log.hidden = !open;
+      form.hidden = !open;
+      if (!open) {
+        gate.textContent = "Ancora fuori. Appena tu e un’altra persona vi seguite, la chat si apre da sola. Chi è collegato di incrocio entra con voi.";
+        return;
+      }
       const rows = all
-        .filter((row) => row.thread === thread && String(row.text || "").trim())
+        .filter((row) => row.thread === CHAT_ROOM && circle.has(String(row.from || "")) && String(row.text || "").trim())
         .map((row) => ({
           from: String(row.from || ""),
+          name: String(row.name || "").slice(0, 80),
           text: String(row.text || "").slice(0, 400),
           at: String(row.at || ""),
         }))
         .sort((a, b) => a.at.localeCompare(b.at));
-      if (!log.isConnected) return;
       draw(rows);
       status.textContent = "";
     } catch {
@@ -2734,22 +2783,29 @@ function renderChat() {
     e.preventDefault();
     const input = form.querySelector("[name=text]");
     const text = String(input.value || "").trim().slice(0, 400);
-    if (!text || !thread || !owner) return;
+    if (!text || !owner || !circle.has(owner)) return;
     input.disabled = true;
     try {
-      const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
-      const msg = {
-        _id: uid().replace(/-/g, ""),
-        thread,
-        from: owner,
-        name: sender.slice(0, 80),
-        text,
-        at: new Date().toISOString(),
-      };
-      await cloudSet(`m-${msg._id}`, msg);
-      input.value = "";
-      stick = true;
-      await pull();
+      const links = await loadMergedLinks(true);
+      circle = chatCircle(owner, links);
+      if (!circle.has(owner)) {
+        status.textContent = "Sei uscito dalla chat: non vi seguite più.";
+        await pull();
+      } else {
+        const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
+        const msg = {
+          _id: uid().replace(/-/g, ""),
+          thread: CHAT_ROOM,
+          from: owner,
+          name: sender.slice(0, 80),
+          text,
+          at: new Date().toISOString(),
+        };
+        await cloudSet(`m-${msg._id}`, msg);
+        input.value = "";
+        stick = true;
+        await pull();
+      }
     } catch {
       status.textContent = "Messaggio non inviato. Riprova.";
     }
@@ -2759,7 +2815,6 @@ function renderChat() {
   profileOwnerKey().then((mine) => {
     if (!card.isConnected) return;
     owner = mine;
-    thread = chatPair(mine, person.remoteOwner);
     pull();
     stopChatPoll();
     chatTimer = setInterval(pull, 15000);
@@ -3629,7 +3684,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 154</p>
+        <p class="hint">Versione 155</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4059,7 +4114,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=154")
+    divelogsPromise = fetch("./divelogs-sites.json?v=155")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5753,6 +5808,7 @@ function renderPeople() {
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
     <p class="hint">Cerca chi usa SeaDive e seguilo. I profili stanno nel cloud della Community; il diario resta sul tuo Drive. Nome, cognome, brevetto e firma entrano in immersione solo se vi seguite entrambi.</p>
+    <button class="chat-entry" type="button" data-openchat>Chat di chi si segue</button>
     <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" inputmode="search" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
     <h3 class="serif people-block">Chi usa SeaDive</h3>
@@ -5907,7 +5963,6 @@ function renderPeople() {
           </span>
         </button>
         <div class="contact-links">
-          ${p.role === "center" ? "" : `<button class="contact-chat" type="button">Chat</button>`}
           <button class="contact-del" type="button">Elimina</button>
         </div>
       `;
@@ -5916,12 +5971,6 @@ function renderPeople() {
         view.peopleHint = "";
         render();
       };
-      row.querySelector(".contact-chat")?.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        askChatNotice();
-        openPersonChat(p);
-      });
       row.querySelector(".contact-del").onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -5940,6 +5989,10 @@ function renderPeople() {
     if (e.key === "Enter") e.preventDefault();
   };
   applyPeopleSearch(card);
+  card.querySelector("[data-openchat]").onclick = () => {
+    askChatNotice();
+    openMainChat();
+  };
   card.querySelector("[data-addperson]").onclick = () => {
     view.personId = "new";
     view.personDraft = { id: uid(), role: "buddy", name: "", firstName: "", lastName: "", cert: "", lead: "", note: "", following: true };
