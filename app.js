@@ -3741,7 +3741,7 @@ function setPageSkin() {
   let color = "#021018";
   if (!loadSession()) color = "#0c3a42";
   else if (view.name === "map") color = "#061018";
-  else if (view.name === "bio") color = "#c8eef4";
+  else if (view.name === "bio") color = "#d7f6ff";
   else if (view.name === "people" && !view.personId) color = "#d7f6ff";
   else if (view.name === "profile") color = "#08343c";
   meta.setAttribute("content", color);
@@ -3894,7 +3894,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 161</p>
+        <p class="hint">Versione 162</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4324,7 +4324,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=161")
+    divelogsPromise = fetch("./divelogs-sites.json?v=162")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
