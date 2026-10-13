@@ -1134,7 +1134,7 @@ function divesForPerson(p) {
 }
 
 function stampPersonSign(person) {
-  if (!person || person.role === "center" || !mutualFollow(person)) return;
+  if (!person || person.role === "center" || !diveContactReady(person)) return;
   const sign = personKnownSign(person);
   if (!sign) return;
   const signKey = person.role === "guide" ? "guideSign" : "buddySign";
@@ -1151,7 +1151,7 @@ function applyPersonOntoDives(before, person) {
   if (!before || before.role !== person.role) return;
   const oldKey = personKey(before.role, before.name);
   (state.dives || []).forEach((d) => {
-    const ready = mutualFollow(person);
+    const ready = diveContactReady(person);
     if (person.role === "buddy" && (d.buddyId === before.id || personKey("buddy", d.buddyName) === oldKey)) {
       d.buddyId = person.id;
       d.buddyName = person.name;
@@ -2156,7 +2156,7 @@ function rememberMutualProfile(person, cardHit, mutual) {
   if (cert) payload.cert = cert;
   if (typeof sign === "string" && sign.startsWith("data:image")) payload.sign = sign;
   const saved = upsertPerson(payload);
-  if (mutual && saved) stampPersonSign(saved);
+  if (saved) stampPersonSign(saved);
   return saved;
 }
 
@@ -2190,10 +2190,8 @@ async function connectSeaPerson(cardHit, chat) {
       if (mutual) publishMyProfile().catch(() => {});
     }
     view.peopleHint = res.error
-      ? `Segui ${who}. Il profilo è sul tuo Drive. Il collegamento cloud riprova tra poco.`
-      : mutual
-        ? `Vi seguite con ${who}. Nome, cognome, numero di brevetto e firma sono sul tuo Drive e nelle prossime immersioni.`
-        : `Segui ${who}. Nome, cognome, brevetto e firma sono sul tuo Drive. In immersione entrano quando segue anche te.`;
+      ? `Segui ${who}. Nome, cognome, brevetto e firma sono sul tuo Drive. Il collegamento cloud riprova tra poco.`
+      : `Segui ${who}. Nome, cognome, numero di brevetto e firma sono sul tuo Drive e nella nuova immersione.`;
     render();
   } catch {
     view.peopleHint = "Seguito non registrato. Riprova tra poco.";
@@ -3629,7 +3627,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 151</p>
+        <p class="hint">Versione 152</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4059,7 +4057,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=151")
+    divelogsPromise = fetch("./divelogs-sites.json?v=152")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();

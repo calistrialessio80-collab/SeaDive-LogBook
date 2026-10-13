@@ -687,7 +687,7 @@ button.people-row { cursor: pointer; }
   flex-direction: row;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 16px 18px;
+  gap: 8px 10px;
   width: 100%;
   max-width: 100%;
   overflow: visible;
@@ -699,8 +699,8 @@ button.people-row { cursor: pointer; }
   align-items: center;
   text-align: center;
   gap: 1px;
-  flex: 0 0 92px;
-  width: 92px;
+  flex: 0 0 64px;
+  width: 64px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -719,12 +719,12 @@ button.people-row { cursor: pointer; }
   cursor: pointer;
 }
 .sea-photo {
-  width: 72px;
-  height: 72px;
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   object-fit: cover;
   background: #e7eef2;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .sea-photo-fallback {
   display: grid;
@@ -735,14 +735,14 @@ button.people-row { cursor: pointer; }
 }
 .sea-first, .sea-last {
   display: block;
-  max-width: 92px;
+  max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.15;
 }
-.sea-status { display: block; margin-top: 3px; opacity: 0.7; font-size: 12px; line-height: 1.2; }
+.sea-status { display: block; margin-top: 2px; opacity: 0.7; font-size: 11px; line-height: 1.15; }
 .sea-person .people-actions { justify-content: center; margin-top: 0; flex: none; width: 100%; position: relative; z-index: 2; }
 .sea-person .people-actions .btn {
   min-width: 0;
@@ -753,7 +753,7 @@ button.people-row { cursor: pointer; }
   border-radius: 0;
   background: transparent;
   color: #1d7fe0;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.25;
   white-space: normal;
   touch-action: manipulation;
