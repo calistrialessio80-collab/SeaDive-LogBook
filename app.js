@@ -4132,7 +4132,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 166</p>
+        <p class="hint">Versione 167</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4176,7 +4176,7 @@ function renderNav() {
     ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Biologia"],
     ["computer", "⌚", "Computer"],
-    ["profile", `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="12.2" cy="7.2" r="4.4" fill="#f6c7a8" stroke="#083848" stroke-width="1.4"/><rect x="9.2" y="5.8" width="6.2" height="3" rx="1.1" fill="#16324f"/><rect x="8.4" y="12.2" width="8" height="8.6" rx="3.2" fill="#083848"/><rect x="16.8" y="12.6" width="4.6" height="8" rx="1.8" fill="#f2c14a" stroke="#083848" stroke-width="1.2"/><path d="M10.4 20.8 8.4 26.2" stroke="#083848" stroke-width="2.3" stroke-linecap="round"/><path d="M14.4 20.8 16.4 26.2" stroke="#083848" stroke-width="2.3" stroke-linecap="round"/><path d="M6.2 25.2h3.6l-.6 2.4H7z" fill="#3aa0ff"/><path d="M15.2 25.2h3.6l-.8 2.4h-2.2z" fill="#3aa0ff"/></svg>`, "Profilo"],
+    ["profile", `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="5.6" cy="5.4" r="1.15" fill="#9adcf6"/><circle cx="8.7" cy="7.6" r="1.65" fill="#c7eefc"/><rect x="13.4" y="9.2" width="5.4" height="8.2" rx="2.2" fill="#ffd34d" stroke="#083848" stroke-width="1.2"/><rect x="15" y="7.7" width="2.2" height="2" rx=".6" fill="#083848"/><ellipse cx="14.2" cy="16.6" rx="5.5" ry="3.3" fill="#083848"/><circle cx="9.2" cy="15.4" r="4.5" fill="#083848"/><rect x="4.4" y="13.6" width="6.2" height="3.5" rx="1.6" fill="#e8f8ff" stroke="#083848" stroke-width="1.05"/><path d="M18.2 17.4 20.4 17.2" fill="none" stroke="#083848" stroke-width="2.7" stroke-linecap="round"/><path fill="#5ec8ff" stroke="#083848" stroke-width="1.1" stroke-linejoin="round" d="M19.8 15.6 30.2 12.6 28.4 17.2Z"/><path fill="#2f9fe8" stroke="#083848" stroke-width="1.1" stroke-linejoin="round" d="M19.8 17.8 30.6 18.6 28.6 23.4 20.2 20.8Z"/></svg>`, "Profilo"],
   ];
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");
@@ -4563,7 +4563,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=166")
+    divelogsPromise = fetch("./divelogs-sites.json?v=167")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
