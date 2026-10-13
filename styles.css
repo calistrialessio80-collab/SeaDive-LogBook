@@ -539,6 +539,12 @@ body.page-home .section-head h3 { color: #1c2430; }
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   font-style: normal;
 }
+.nav button span.nav-divers {
+  font-size: 12px;
+  letter-spacing: -3px;
+  line-height: 1;
+  white-space: nowrap;
+}
 .nav button small {
   display: block; font-size: 9px; font-weight: 600; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; padding: 0 1px;
@@ -1821,6 +1827,49 @@ body.page-bio .brand p {
 }
 body.page-bio .nav-dock {
   background: linear-gradient(180deg, rgba(195, 235, 243, 0), #c3ebf3 42%);
+}
+body.page-app.page-people {
+  background: #9fe4f4;
+}
+body.page-app.page-people::before {
+  background:
+    radial-gradient(ellipse at 50% -12%, rgba(255, 250, 214, 0.92), rgba(255, 250, 214, 0) 46%),
+    repeating-linear-gradient(108deg, transparent 0 54px, rgba(255, 255, 255, 0.24) 62px, transparent 108px),
+    linear-gradient(180deg, #e7fcff 0%, #9fe4f4 36%, #67cfe4 70%, #b7e7d0 100%);
+}
+body.page-app.page-people::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 16% 20%, rgba(255, 255, 255, 0.95) 0 3px, transparent 4.5px),
+    radial-gradient(circle at 74% 14%, rgba(255, 255, 255, 0.8) 0 2px, transparent 3.5px),
+    radial-gradient(circle at 42% 46%, rgba(255, 255, 255, 0.72) 0 2.5px, transparent 4px),
+    radial-gradient(circle at 86% 54%, rgba(255, 255, 255, 0.78) 0 4px, transparent 5.5px),
+    radial-gradient(circle at 10% 68%, rgba(255, 255, 255, 0.66) 0 2px, transparent 3px),
+    radial-gradient(circle at 58% 80%, rgba(255, 255, 255, 0.84) 0 3px, transparent 4.5px),
+    radial-gradient(circle at 28% 34%, rgba(255, 255, 255, 0.5) 0 1.5px, transparent 2.5px);
+  animation: rise 22s linear infinite;
+}
+body.page-people .ocean { display: block; }
+body.page-people .floor { opacity: 0.22; }
+body.page-people .kelp { opacity: 0.35; }
+body.page-people .school { fill: #0c6478; opacity: 0.7; }
+body.page-people .turtle { opacity: 0.55; }
+body.page-people .status-scrim { background: #d9f6fc; }
+body.page-people .brand h1,
+body.page-people .brand p {
+  color: #083848;
+  text-shadow: none;
+}
+body.page-people .nav-dock {
+  background: linear-gradient(180deg, rgba(183, 231, 208, 0), #b7e7d0 48%);
+}
+body.page-people .community-page {
+  background: transparent;
+  box-shadow: none;
 }
 .card.bio-page {
   overflow: visible;

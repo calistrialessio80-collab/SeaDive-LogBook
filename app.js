@@ -3469,12 +3469,14 @@ function setPageSkin() {
   document.body.classList.toggle("page-map", Boolean(loadSession()) && view.name === "map");
   document.body.classList.toggle("page-profile", Boolean(loadSession()) && view.name === "profile");
   document.body.classList.toggle("page-bio", Boolean(loadSession()) && view.name === "bio");
+  document.body.classList.toggle("page-people", Boolean(loadSession()) && view.name === "people" && !view.personId);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) return;
   let color = "#021018";
   if (!loadSession()) color = "#0c3a42";
   else if (view.name === "map") color = "#061018";
   else if (view.name === "bio") color = "#c8eef4";
+  else if (view.name === "people" && !view.personId) color = "#d7f6ff";
   else if (view.name === "profile") color = "#08343c";
   meta.setAttribute("content", color);
 }
@@ -3627,7 +3629,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 153</p>
+        <p class="hint">Versione 154</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -3667,7 +3669,7 @@ function renderNav() {
   const items = [
     ["home", "🌊", "SeaDive"],
     ["log", "📒", "Diario"],
-    ["people", "👥", "Community"],
+    ["people", "🤿🤿", "Community"],
     ["map", "🗺️", "Mappa"],
     ["bio", "🌿", "Biologia"],
     ["computer", "⌚", "Computer"],
@@ -3680,7 +3682,7 @@ function renderNav() {
     if (id === "bio") b.classList.add("bio-nav");
     if (id === "people") b.dataset.chatnav = "1";
     const badge = id === "people" && chatUnread > 0 ? " " + chatUnread : "";
-    b.innerHTML = `<span>${icon}</span><small>${label}${badge}</small>`;
+    b.innerHTML = `<span${id === "people" ? " class=\"nav-divers\"" : ""}>${icon}</span><small>${label}${badge}</small>`;
     b.onclick = () => {
       view = {
         name: id,
@@ -4057,7 +4059,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=153")
+    divelogsPromise = fetch("./divelogs-sites.json?v=154")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5737,7 +5739,7 @@ function renderPeople() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("Community"));
   const card = document.createElement("section");
-  card.className = "card";
+  card.className = "card community-page";
   const role = view.peopleRole || "all";
   const people = [...(state.people || [])]
     .filter((p) => role === "all" || p.role === role)
