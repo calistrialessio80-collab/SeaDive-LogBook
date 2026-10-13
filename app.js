@@ -3894,7 +3894,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 160</p>
+        <p class="hint">Versione 161</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4324,7 +4324,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=160")
+    divelogsPromise = fetch("./divelogs-sites.json?v=161")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5111,95 +5111,281 @@ function drawTempDepth(canvas, points) {
 let bioThumbGen = 0;
 let bioPhotoSearch = null;
 
+function photoColorName(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const light = (max + min) / 2 / 255;
+  const sat = max === 0 ? 0 : (max - min) / max;
+  if (light < 0.12) return "nero";
+  if (sat < 0.14) {
+    if (light > 0.8) return "bianco";
+    if (light < 0.28) return "nero";
+    return "grigio";
+  }
+  let hue = 0;
+  const delta = max - min || 1;
+  if (max === r) hue = ((g - b) / delta) % 6;
+  else if (max === g) hue = (b - r) / delta + 2;
+  else hue = (r - g) / delta + 4;
+  hue *= 60;
+  if (hue < 0) hue += 360;
+  if (hue < 18 || hue >= 345) return "rosso";
+  if (hue < 45) return light < 0.42 ? "bruno" : "arancio";
+  if (hue < 70) return light < 0.35 ? "bruno" : "giallo";
+  if (hue < 165) return sat < 0.28 && light < 0.45 ? "bruno" : "verde";
+  if (hue < 255) return "blu";
+  if (hue < 320) return "viola";
+  return "rosa";
+}
+
 function readPhotoSignals(bitmap) {
-  const size = 48;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const side = Math.min(bitmap.width, bitmap.height);
-  const crop = side * 0.62;
-  const sx = (bitmap.width - crop) / 2;
-  const sy = (bitmap.height - crop) / 2;
-  ctx.drawImage(bitmap, sx, sy, crop, crop, 0, 0, size, size);
-  const pixels = ctx.getImageData(0, 0, size, size).data;
+  const maxSide = 120;
+  const scale = maxSide / Math.max(bitmap.width, bitmap.height, 1);
+  const w = Math.max(12, Math.round(bitmap.width * scale));
+  const h = Math.max(12, Math.round(bitmap.height * scale));
+  const work = document.createElement("canvas");
+  work.width = w;
+  work.height = h;
+  const ctx = work.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const count = w * h;
+  const rgbAt = (p) => [data[p * 4], data[p * 4 + 1], data[p * 4 + 2]];
+  const gap = (a, b) => {
+    const dr = a[0] - b[0];
+    const dg = a[1] - b[1];
+    const db = a[2] - b[2];
+    return Math.sqrt(dr * dr * 0.45 + dg * dg + db * db * 0.75);
+  };
+  const border = [];
+  const step = Math.max(1, Math.floor(Math.min(w, h) / 18));
+  for (let x = 0; x < w; x += step) border.push(rgbAt(x), rgbAt((h - 1) * w + x));
+  for (let y = step; y < h - 1; y += step) border.push(rgbAt(y * w), rgbAt(y * w + w - 1));
+  const buckets = new Map();
+  border.forEach(([r, g, b]) => {
+    const key = `${r >> 4},${g >> 4},${b >> 4}`;
+    const row = buckets.get(key) || { r: 0, g: 0, b: 0, n: 0 };
+    row.r += r;
+    row.g += g;
+    row.b += b;
+    row.n += 1;
+    buckets.set(key, row);
+  });
+  let palette = [...buckets.values()]
+    .filter((row) => row.n / border.length >= 0.08)
+    .map((row) => [row.r / row.n, row.g / row.n, row.b / row.n]);
+  if (!palette.length) {
+    const sum = border.reduce((acc, px) => [acc[0] + px[0], acc[1] + px[1], acc[2] + px[2]], [0, 0, 0]);
+    palette = [[sum[0] / border.length, sum[1] / border.length, sum[2] / border.length]];
+  }
+  const nearest = (px) => palette.reduce((best, color) => Math.min(best, gap(px, color)), 1e9);
+  const borderGaps = border.map(nearest).sort((a, b) => a - b);
+  const threshold = Math.max(26, Math.min(58, (borderGaps[Math.floor(borderGaps.length * 0.8)] || 12) * 2.4 + 16));
+  const raw = new Uint8Array(count);
+  const seen = new Uint8Array(count);
+  const queue = [];
+  for (let x = 0; x < w; x += 1) queue.push(x, (h - 1) * w + x);
+  for (let y = 1; y < h - 1; y += 1) queue.push(y * w, y * w + w - 1);
+  queue.forEach((p) => {
+    seen[p] = 1;
+  });
+  for (let head = 0; head < queue.length; head += 1) {
+    const p = queue[head];
+    const x = p % w;
+    const y = (p - x) / w;
+    const next = [];
+    if (x > 0) next.push(p - 1);
+    if (x + 1 < w) next.push(p + 1);
+    if (y > 0) next.push(p - w);
+    if (y + 1 < h) next.push(p + w);
+    next.forEach((q) => {
+      if (seen[q] || nearest(rgbAt(q)) > threshold) return;
+      seen[q] = 1;
+      queue.push(q);
+    });
+  }
+  for (let p = 0; p < count; p += 1) if (!seen[p]) raw[p] = 1;
+  const mask = new Uint8Array(count);
+  for (let y = 1; y < h - 1; y += 1) {
+    for (let x = 1; x < w - 1; x += 1) {
+      const p = y * w + x;
+      if (!raw[p]) continue;
+      let near = 0;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) near += raw[p + dy * w + dx];
+      }
+      if (near >= 4) mask[p] = 1;
+    }
+  }
+  const visited = new Uint8Array(count);
+  const parts = [];
+  for (let p = 0; p < count; p += 1) {
+    if (!mask[p] || visited[p]) continue;
+    const stack = [p];
+    visited[p] = 1;
+    let n = 0;
+    let minX = w;
+    let minY = h;
+    let maxX = 0;
+    let maxY = 0;
+    while (stack.length) {
+      const q = stack.pop();
+      n += 1;
+      const x = q % w;
+      const y = (q - x) / w;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (x > 0 && mask[q - 1] && !visited[q - 1]) {
+        visited[q - 1] = 1;
+        stack.push(q - 1);
+      }
+      if (x + 1 < w && mask[q + 1] && !visited[q + 1]) {
+        visited[q + 1] = 1;
+        stack.push(q + 1);
+      }
+      if (y > 0 && mask[q - w] && !visited[q - w]) {
+        visited[q - w] = 1;
+        stack.push(q - w);
+      }
+      if (y + 1 < h && mask[q + w] && !visited[q + w]) {
+        visited[q + w] = 1;
+        stack.push(q + w);
+      }
+    }
+    parts.push({ n, minX, minY, maxX, maxY });
+  }
+  parts.sort((a, b) => b.n - a.n);
+  const kept = parts.filter((part) => part.n / count >= 0.03);
+  const subject = kept.length ? kept : parts.filter((part) => part.n / count >= 0.018).slice(0, 1);
+  let framed = subject.length > 0;
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  subject.forEach((part) => {
+    if (part.minX < minX) minX = part.minX;
+    if (part.minY < minY) minY = part.minY;
+    if (part.maxX > maxX) maxX = part.maxX;
+    if (part.maxY > maxY) maxY = part.maxY;
+  });
+  if (!framed) {
+    const side = Math.round(Math.min(w, h) * 0.7);
+    minX = Math.round((w - side) / 2);
+    minY = Math.round((h - side) / 2);
+    maxX = minX + side - 1;
+    maxY = minY + side - 1;
+  }
+  const padX = Math.round((maxX - minX + 1) * 0.14);
+  const padY = Math.round((maxY - minY + 1) * 0.14);
+  minX = Math.max(0, minX - padX);
+  minY = Math.max(0, minY - padY);
+  maxX = Math.min(w - 1, maxX + padX);
+  maxY = Math.min(h - 1, maxY + padY);
   const bins = {
     rosso: 0, arancio: 0, giallo: 0, verde: 0, blu: 0, viola: 0, rosa: 0, bianco: 0, nero: 0, bruno: 0, grigio: 0,
   };
-  const lum = new Array(size * size);
-  for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
-    const r = pixels[i];
-    const g = pixels[i + 1];
-    const b = pixels[i + 2];
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const light = (max + min) / 2 / 255;
-    const sat = max === 0 ? 0 : (max - min) / max;
-    lum[p] = 0.3 * r + 0.59 * g + 0.11 * b;
-    if (light < 0.14) {
-      bins.nero += 1;
-      continue;
+  const lum = new Float32Array(count);
+  let used = 0;
+  const bgNames = new Set(palette.map((px) => photoColorName(px[0], px[1], px[2])));
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const p = y * w + x;
+      const px = rgbAt(p);
+      lum[p] = 0.3 * px[0] + 0.59 * px[1] + 0.11 * px[2];
+      if (framed && !mask[p]) continue;
+      if (framed && nearest(px) <= threshold * 0.72) continue;
+      bins[photoColorName(px[0], px[1], px[2])] += 1;
+      used += 1;
     }
-    if (sat < 0.16) {
-      if (light > 0.78) bins.bianco += 1;
-      else if (light < 0.32) bins.nero += 1;
-      else bins.grigio += 1;
-      continue;
-    }
-    let hue = 0;
-    const delta = max - min || 1;
-    if (max === r) hue = ((g - b) / delta) % 6;
-    else if (max === g) hue = (b - r) / delta + 2;
-    else hue = (r - g) / delta + 4;
-    hue *= 60;
-    if (hue < 0) hue += 360;
-    if (hue < 18 || hue >= 345) bins.rosso += 1;
-    else if (hue < 45) bins[light < 0.46 ? "bruno" : "arancio"] += 1;
-    else if (hue < 70) bins.giallo += 1;
-    else if (hue < 165) bins.verde += 1;
-    else if (hue < 255) bins.blu += 1;
-    else if (hue < 320) bins.viola += 1;
-    else bins.rosa += 1;
   }
-  const total = size * size;
+  if (used < 12) {
+    used = 0;
+    Object.keys(bins).forEach((name) => {
+      bins[name] = 0;
+    });
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const px = rgbAt(y * w + x);
+        bins[photoColorName(px[0], px[1], px[2])] += 1;
+        used += 1;
+      }
+    }
+  }
   let colors = Object.entries(bins)
-    .filter(([, count]) => count / total > 0.07)
+    .filter(([, n]) => used > 0 && n / used >= 0.1)
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name);
-  if (colors[0] === "blu" && bins.blu / total > 0.42 && colors.length > 1) colors = colors.filter((name) => name !== "blu");
+  const dull = new Set(["grigio", "nero", "bruno", "bianco"]);
+  const vivid = colors.filter((name) => !dull.has(name) && !bgNames.has(name));
+  if (colors.length && (dull.has(colors[0]) || bgNames.has(colors[0])) && vivid.length) {
+    colors = [...vivid, ...colors.filter((name) => !vivid.includes(name))];
+  }
+  const withoutBg = colors.filter((name) => !bgNames.has(name));
+  if (withoutBg.length) colors = withoutBg;
   colors = colors.slice(0, 3);
-  const spread = (sums) => {
-    const avg = sums.map((value) => value / size);
-    const mean = avg.reduce((sum, value) => sum + value, 0) / avg.length;
-    return Math.sqrt(avg.reduce((sum, value) => sum + (value - mean) ** 2, 0) / avg.length);
+  const axis = (horizontal) => {
+    const values = [];
+    const from = horizontal ? minX : minY;
+    const to = horizontal ? maxX : maxY;
+    for (let i = from; i <= to; i += 1) {
+      let sum = 0;
+      let n = 0;
+      if (horizontal) {
+        for (let y = minY; y <= maxY; y += 1) {
+          const p = y * w + i;
+          if (framed && !mask[p]) continue;
+          sum += lum[p];
+          n += 1;
+        }
+      } else {
+        for (let x = minX; x <= maxX; x += 1) {
+          const p = i * w + x;
+          if (framed && !mask[p]) continue;
+          sum += lum[p];
+          n += 1;
+        }
+      }
+      if (n) values.push(sum / n);
+    }
+    let flips = 0;
+    let prev = 0;
+    for (let i = 1; i < values.length; i += 1) {
+      const delta = values[i] - values[i - 1];
+      if (Math.abs(delta) < 6) continue;
+      const sign = Math.sign(delta);
+      if (prev && sign !== prev) flips += 1;
+      prev = sign;
+    }
+    return flips;
   };
-  const cols = Array(size).fill(0);
-  const rows = Array(size).fill(0);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const value = lum[y * size + x];
-      cols[x] += value;
-      rows[y] += value;
-    }
-  }
-  const colSpread = spread(cols);
-  const rowSpread = spread(rows);
   const patterns = [];
-  if (Math.max(colSpread, rowSpread) > 22 && Math.max(colSpread, rowSpread) > Math.min(colSpread, rowSpread) * 1.35) patterns.push("bande");
+  const colFlips = axis(true);
+  const rowFlips = axis(false);
+  if (Math.max(colFlips, rowFlips) >= 3 && Math.max(colFlips, rowFlips) > Math.min(colFlips, rowFlips) * 1.3) patterns.push("bande");
   let peaks = 0;
-  for (let y = 2; y < size - 2; y += 3) {
-    for (let x = 2; x < size - 2; x += 3) {
-      const value = lum[y * size + x];
-      const around = (lum[(y - 2) * size + x] + lum[(y + 2) * size + x] + lum[y * size + (x - 2)] + lum[y * size + (x + 2)]) / 4;
-      if (Math.abs(value - around) > 36) peaks += 1;
+  let samples = 0;
+  for (let y = minY + 2; y <= maxY - 2; y += 2) {
+    for (let x = minX + 2; x <= maxX - 2; x += 2) {
+      const p = y * w + x;
+      if (framed && !mask[p]) continue;
+      samples += 1;
+      const around = (lum[p - w * 2] + lum[p + w * 2] + lum[p - 2] + lum[p + 2]) / 4;
+      if (Math.abs(lum[p] - around) > 32) peaks += 1;
     }
   }
-  if (peaks > 18 && !patterns.includes("bande")) patterns.push("macchie");
+  if (samples > 8 && peaks / samples > 0.14 && !patterns.includes("bande")) patterns.push("macchie");
+  const sx = minX * (bitmap.width / w);
+  const sy = minY * (bitmap.height / h);
+  const sw = Math.max(1, (maxX - minX + 1) * (bitmap.width / w));
+  const sh = Math.max(1, (maxY - minY + 1) * (bitmap.height / h));
+  const long = Math.max(sw, sh);
   const shot = document.createElement("canvas");
-  shot.width = 160;
-  shot.height = 160;
-  shot.getContext("2d").drawImage(bitmap, sx, sy, crop, crop, 0, 0, 160, 160);
-  return { colors, patterns, preview: shot.toDataURL("image/jpeg", 0.72) };
+  shot.width = Math.max(1, Math.round(160 * (sw / long)));
+  shot.height = Math.max(1, Math.round(160 * (sh / long)));
+  shot.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, shot.width, shot.height);
+  return { colors, patterns, framed, preview: shot.toDataURL("image/jpeg", 0.8) };
 }
 
 function bioPhotoHint(signals) {
@@ -5218,8 +5404,8 @@ function bioPhotoHint(signals) {
   };
   const parts = (signals.colors || []).map((color) => colorName[color]).filter(Boolean);
   (signals.patterns || []).forEach((pattern) => parts.push(pattern === "bande" ? "bande" : "macchie"));
-  if (!parts.length) return "Nella foto non distinguo un colore netto. Avvicina l'animale, senza troppo blu intorno, e riprova.";
-  return `Dalla foto: ${parts.join(", ")}. Ecco le specie della guida che ci assomigliano.`;
+  if (!signals.framed || !parts.length) return "Non distinguo il soggetto dallo sfondo. Avvicinalo, con meno acqua intorno, e riprova.";
+  return `Soggetto inquadrato: ${parts.join(", ")}. Ecco le specie della guida che ci assomigliano.`;
 }
 
 function bindBioThumbs(root) {
