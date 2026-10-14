@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 177</p>
+        <p class="hint">Versione 178</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4158,11 +4158,11 @@ function topbar(subtitle, mode) {
 const NAV_SECTIONS = [
   ["home", "🌊", "SeaDive"],
   ["log", "📒", "Diario"],
-  ["people", "🤿🤿", "Community"],
-  ["map", "🗺️", "Mappa"],
   ["bio", "🌿", "Biologia"],
   ["computer", "⌚", "Computer"],
   ["profile", `<img src="./nav-diver.png?v=170" alt="" draggable="false" />`, "Profilo"],
+  ["map", "🗺️", "Mappa"],
+  ["people", "🤿🤿", "Community"],
 ];
 
 function sectionOfView() {
@@ -4653,7 +4653,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=177")
+    divelogsPromise = fetch("./divelogs-sites.json?v=178")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
