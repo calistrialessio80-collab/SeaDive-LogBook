@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 178</p>
+        <p class="hint">Versione 179</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4653,7 +4653,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=178")
+    divelogsPromise = fetch("./divelogs-sites.json?v=179")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6263,42 +6263,91 @@ function bindBioThumbs(root) {
   });
 }
 
+function dataUrlBytes(dataUrl) {
+  const text = String(dataUrl || "");
+  const comma = text.indexOf(",");
+  if (comma < 0) return null;
+  const mime = (text.slice(0, comma).match(/data:([^;,]+)/) || [])[1] || "image/jpeg";
+  const binary = atob(text.slice(comma + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return { mime, bytes };
+}
+
+function imagePixelSize(mime, bytes) {
+  if (mime === "image/png" && bytes.length > 24 && bytes[0] === 0x89) {
+    const width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+    const height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+    if (width > 0 && height > 0) return [width, height];
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < bytes.length) {
+      if (bytes[i] !== 0xff) break;
+      const marker = bytes[i + 1];
+      const len = (bytes[i + 2] << 8) | bytes[i + 3];
+      if (marker >= 0xc0 && marker <= 0xc3) {
+        const height = (bytes[i + 5] << 8) | bytes[i + 6];
+        const width = (bytes[i + 7] << 8) | bytes[i + 8];
+        if (width > 0 && height > 0) return [width, height];
+      }
+      if (len < 2) break;
+      i += 2 + len;
+    }
+  }
+  return [512, 512];
+}
+
 function compareSubjectOnGoogle(dataUrl) {
-  if (!dataUrl) return;
-  const img = new Image();
-  img.onload = () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth || img.width;
-    canvas.height = img.naturalHeight || img.height;
-    canvas.getContext("2d").drawImage(img, 0, 0);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const file = new File([blob], "soggetto.jpg", { type: "image/jpeg" });
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = "https://lens.google.com/v3/upload?hl=it";
-      form.enctype = "multipart/form-data";
-      form.target = "_blank";
-      form.acceptCharset = "UTF-8";
-      form.style.display = "none";
-      const input = document.createElement("input");
-      input.type = "file";
-      input.name = "encoded_image";
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      input.files = transfer.files;
-      form.append(input);
-      const dims = document.createElement("input");
-      dims.type = "hidden";
-      dims.name = "processed_image_dimensions";
-      dims.value = `${canvas.width},${canvas.height}`;
-      form.append(dims);
-      document.body.append(form);
-      form.submit();
-      form.remove();
-    }, "image/jpeg", 0.9);
-  };
-  img.src = dataUrl;
+  const packed = dataUrlBytes(dataUrl);
+  if (!packed?.bytes?.length) return false;
+  const [width, height] = imagePixelSize(packed.mime, packed.bytes);
+  const file = new File([packed.bytes], "soggetto.jpg", { type: packed.mime || "image/jpeg" });
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = `https://lens.google.com/v3/upload?hl=it&ep=ccm&st=${Date.now()}`;
+  form.enctype = "multipart/form-data";
+  form.style.display = "none";
+  const input = document.createElement("input");
+  input.type = "file";
+  input.name = "encoded_image";
+  form.append(input);
+  let ready = false;
+  try {
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    ready = input.files.length === 1 && input.files[0].size > 0;
+  } catch {
+    ready = false;
+  }
+  if (!ready) return false;
+  const dims = document.createElement("input");
+  dims.type = "hidden";
+  dims.name = "processed_image_dimensions";
+  dims.value = `${width},${height}`;
+  form.append(dims);
+  let popup = null;
+  try {
+    popup = window.open("about:blank", "seadive-lens");
+  } catch {
+    popup = null;
+  }
+  if (popup && !popup.closed) {
+    form.target = "seadive-lens";
+    try {
+      popup.document.title = "Google";
+      popup.document.body.textContent = "Apro il confronto su Google…";
+    } catch {
+      /* la finestra passa a Google al passo successivo */
+    }
+  } else {
+    form.target = "_self";
+  }
+  document.body.append(form);
+  form.submit();
+  setTimeout(() => form.remove(), 4000);
+  return true;
 }
 
 function openLifePage(q) {
@@ -6610,6 +6659,7 @@ function renderBioGuide() {
           <div class="bio-actions">
             <button class="btn primary" type="button" data-lens>Confronta su Google</button>
           </div>
+          <p class="hint" data-lensnote hidden></p>
         </div>`
       : "";
     sec.innerHTML = `
@@ -6646,7 +6696,17 @@ function renderBioGuide() {
     render();
     window.scrollTo(0, 0);
   };
-  sec.querySelector("[data-lens]")?.addEventListener("click", () => compareSubjectOnGoogle(view.bioFromPhoto));
+  sec.querySelector("[data-lens]")?.addEventListener("click", () => {
+    const ok = compareSubjectOnGoogle(view.bioFromPhoto);
+    const note = sec.querySelector("[data-lensnote]");
+    if (!note) return;
+    if (ok) {
+      note.hidden = true;
+      return;
+    }
+    note.hidden = false;
+    note.textContent = "Non riesco ad aprire Google da questa pagina. Riprova tra un attimo.";
+  });
   if (x) bindBioGuide(sec, x);
   frag.append(sec);
   return frag;
