@@ -4131,7 +4131,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 181</p>
+        <p class="hint">Versione 182</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4659,7 +4659,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=181")
+    divelogsPromise = fetch("./divelogs-sites.json?v=182")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6304,55 +6304,46 @@ function imagePixelSize(mime, bytes) {
   return [512, 512];
 }
 
-function compareSubjectOnGoogle(dataUrl) {
+function mountGoogleLens(slot, dataUrl) {
   const packed = dataUrlBytes(dataUrl);
-  if (!packed?.bytes?.length) return false;
+  if (!packed?.bytes?.length || !slot) return false;
   const [width, height] = imagePixelSize(packed.mime, packed.bytes);
   const file = new File([packed.bytes], "soggetto.jpg", { type: packed.mime || "image/jpeg" });
   const form = document.createElement("form");
+  form.className = "bio-actions";
   form.method = "POST";
-  form.action = `https://lens.google.com/v3/upload?hl=it&ep=ccm&st=${Date.now()}`;
+  form.action = "https://lens.google.com/v3/upload?hl=it";
   form.enctype = "multipart/form-data";
-  form.style.display = "none";
+  form.target = "_blank";
+  form.style.position = "relative";
   const input = document.createElement("input");
   input.type = "file";
   input.name = "encoded_image";
-  form.append(input);
-  let ready = false;
+  input.tabIndex = -1;
+  input.setAttribute("aria-hidden", "true");
+  input.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;";
   try {
     const transfer = new DataTransfer();
     transfer.items.add(file);
     input.files = transfer.files;
-    ready = input.files.length === 1 && input.files[0].size > 0;
+    if (!input.files.length || input.files[0].size < 1) return false;
   } catch {
-    ready = false;
+    return false;
   }
-  if (!ready) return false;
   const dims = document.createElement("input");
   dims.type = "hidden";
   dims.name = "processed_image_dimensions";
   dims.value = `${width},${height}`;
-  form.append(dims);
-  let popup = null;
-  try {
-    popup = window.open("about:blank", "seadive-lens");
-  } catch {
-    popup = null;
-  }
-  if (popup && !popup.closed) {
-    form.target = "seadive-lens";
-    try {
-      popup.document.title = "Google";
-      popup.document.body.textContent = "Apro il confronto su Google…";
-    } catch {
-      /* la finestra passa a Google al passo successivo */
-    }
-  } else {
-    form.target = "_self";
-  }
-  document.body.append(form);
-  form.submit();
-  setTimeout(() => form.remove(), 4000);
+  const button = document.createElement("button");
+  button.className = "btn primary";
+  button.type = "submit";
+  button.textContent = "Confronta su Google";
+  form.append(input, dims, button);
+  form.addEventListener("submit", () => {
+    const installed = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    if (installed) form.target = "_self";
+  });
+  slot.replaceWith(form);
   return true;
 }
 
@@ -6702,17 +6693,14 @@ function renderBioGuide() {
     render();
     window.scrollTo(0, 0);
   };
-  sec.querySelector("[data-lens]")?.addEventListener("click", () => {
-    const ok = compareSubjectOnGoogle(view.bioFromPhoto);
+  const lensSlot = sec.querySelector("[data-lens]")?.closest(".bio-actions");
+  if (lensSlot && view.bioFromPhoto && !mountGoogleLens(lensSlot, view.bioFromPhoto)) {
     const note = sec.querySelector("[data-lensnote]");
-    if (!note) return;
-    if (ok) {
-      note.hidden = true;
-      return;
+    if (note) {
+      note.hidden = false;
+      note.textContent = "Non riesco a preparare la foto per Google. Riprova con un'altra immagine.";
     }
-    note.hidden = false;
-    note.textContent = "Non riesco ad aprire Google da questa pagina. Riprova tra un attimo.";
-  });
+  }
   if (x) bindBioGuide(sec, x);
   frag.append(sec);
   return frag;
