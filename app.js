@@ -4116,6 +4116,12 @@ function renderAuth() {
   return wrap;
 }
 
+function topTitle(subtitle) {
+  const text = String(subtitle || "").trim();
+  if (!text) return "LogBook";
+  return text.charAt(0).toLocaleUpperCase("it") + text.slice(1);
+}
+
 function topbar(subtitle, mode) {
   const wrap = document.createElement("div");
   wrap.className = mode === "home" ? "topbar home-top" : "topbar";
@@ -4125,7 +4131,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 180</p>
+        <p class="hint">Versione 181</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4146,7 +4152,7 @@ function topbar(subtitle, mode) {
       <div class="mark"><img src="./icon-192.png" alt="" /></div>
       <div>
         <p>SeaDive</p>
-        <h1>${escapeHtml(subtitle || "LogBook")}</h1>
+        <h1>${escapeHtml(topTitle(subtitle))}</h1>
       </div>
     </div>
     <button class="icon-btn add" type="button" data-act="add" aria-label="Nuova immersione">+</button>
@@ -4653,7 +4659,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=180")
+    divelogsPromise = fetch("./divelogs-sites.json?v=181")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
