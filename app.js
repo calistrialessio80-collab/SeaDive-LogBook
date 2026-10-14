@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 175</p>
+        <p class="hint">Versione 176</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4556,7 +4556,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=175")
+    divelogsPromise = fetch("./divelogs-sites.json?v=176")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5795,13 +5795,55 @@ const fishEmbedCache = new Map();
 function loadLifeEmbed() {
   if (!lifeEmbedPromise) {
     lifeEmbedPromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
-      .then(({ pipeline }) => pipeline("image-feature-extraction", "Xenova/clip-vit-base-patch32", { dtype: "q8" }))
+      .then(({ pipeline }) => pipeline("image-feature-extraction", "Xenova/siglip-base-patch16-224", {
+        dtype: "q4",
+        progress_callback: (data) => {
+          if (!data) return;
+          if (data.status === "progress" && data.total) {
+            lifeClipStatus(`Scarico il confronto del soggetto… ${Math.min(100, Math.round((100 * data.loaded) / data.total))}%`);
+          } else if (data.status === "initiate") {
+            lifeClipStatus("Scarico il confronto del soggetto. La prima volta può volerci un po'.");
+          }
+        },
+      }))
       .catch((err) => {
         lifeEmbedPromise = null;
         throw err;
       });
   }
   return lifeEmbedPromise;
+}
+
+let lifeEmbedTail = Promise.resolve();
+
+function withLifeEmbed(task) {
+  const run = lifeEmbedTail.then(task, task);
+  lifeEmbedTail = run.then(() => {}, () => {});
+  return run;
+}
+
+function embedVector(out) {
+  const data = out?.data;
+  if (!data?.length) return null;
+  const dims = out.dims || [];
+  let seq = 0;
+  let hidden = 0;
+  if (dims.length === 3) {
+    seq = dims[1];
+    hidden = dims[2];
+  } else if (dims.length === 2 && dims[0] > 1) {
+    seq = dims[0];
+    hidden = dims[1];
+  }
+  if (!(seq > 1 && hidden > 32 && data.length === seq * hidden)) return Array.from(data);
+  const acc = new Array(hidden).fill(0);
+  for (let i = 0; i < seq; i += 1) {
+    const base = i * hidden;
+    for (let j = 0; j < hidden; j += 1) acc[j] += data[base + j];
+  }
+  const scale = 1 / seq;
+  for (let j = 0; j < hidden; j += 1) acc[j] *= scale;
+  return acc;
 }
 
 function cosineVec(a, b) {
@@ -5830,8 +5872,9 @@ async function speciesEmbed(extractor, species) {
     return null;
   }
   try {
-    const out = await extractor(src);
-    const vec = Array.from(out.data);
+    const out = await withLifeEmbed(() => extractor(src));
+    const vec = embedVector(out);
+    if (!vec) return null;
     fishEmbedCache.set(species.id, vec);
     return vec;
   } catch {
@@ -5839,53 +5882,50 @@ async function speciesEmbed(extractor, species) {
   }
 }
 
-async function rankFishByPhoto(image, kinds, token) {
+async function rankSubjectByPhotos(image, species, token) {
+  const list = (species || []).filter((row) => row?.id);
+  if (!list.length) return null;
+  lifeClipStatus("Carico il confronto del soggetto…");
   const extractor = await loadLifeEmbed();
   if (token !== bioPhotoToken) return null;
-  const queryOut = await extractor(image);
-  const query = Array.from(queryOut.data);
-  const samples = [];
-  for (let i = 0; i < kinds.length; i += 1) {
-    if (token !== bioPhotoToken) return null;
-    const kind = kinds[i];
-    const pool = window.SeaDiveBiology.speciesForPhotoKind(kind);
-    if (!pool.length) continue;
-    lifeClipStatus(`Confronto il soggetto online… ${i + 1}/${kinds.length}`);
-    const picks = [pool[0]];
-    if (pool.length > 3) picks.push(pool[Math.floor(pool.length / 2)]);
-    let bestScore = -1;
-    for (const species of picks) {
-      const vec = await speciesEmbed(extractor, species);
+  const query = embedVector(await withLifeEmbed(() => extractor(image)));
+  if (!query) return null;
+  const scored = [];
+  let cursor = 0;
+  const step = async () => {
+    while (cursor < list.length) {
+      const index = cursor;
+      cursor += 1;
+      if (token !== bioPhotoToken) return;
+      if (index % 4 === 0) lifeClipStatus(`Confronto il soggetto online… ${Math.min(list.length, index + 1)}/${list.length}`);
+      const vec = await speciesEmbed(extractor, list[index]);
       if (!vec) continue;
-      bestScore = Math.max(bestScore, cosineVec(query, vec));
+      scored.push({ species: list[index], score: cosineVec(query, vec) });
     }
-    if (bestScore >= 0) samples.push({ kind, score: bestScore });
-  }
-  samples.sort((a, b) => b.score - a.score);
-  let best = null;
-  for (const row of samples.slice(0, 3)) {
-    const pool = window.SeaDiveBiology.speciesForPhotoKind(row.kind);
-    for (const species of pool) {
-      if (token !== bioPhotoToken) return null;
-      const vec = await speciesEmbed(extractor, species);
-      if (!vec) continue;
-      const score = cosineVec(query, vec);
-      if (!best || score > best.score) best = { kind: row.kind, species, score };
-    }
-  }
-  if (!best) return null;
-  const pool = window.SeaDiveBiology.speciesForPhotoKind(best.kind);
-  const scored = pool.map((species) => {
-    const vec = fishEmbedCache.get(species.id);
-    return { species, score: vec ? cosineVec(query, vec) : 0 };
-  });
+  };
+  await Promise.all(Array.from({ length: Math.min(3, list.length) }, () => step()));
+  if (token !== bioPhotoToken || !scored.length) return null;
   scored.sort((a, b) => b.score - a.score || a.species.it.localeCompare(b.species.it, "it"));
-  const rows = scored.length <= 8 ? scored.map((row) => row.species) : scored.slice(0, 6).map((row) => row.species);
-  const first = rows[0];
-  const hint = rows.length === 1
-    ? `Sembra ${best.kind.phrase}: ${first.it}.`
-    : `Sembra ${best.kind.phrase}. Per primo, ${first.it}.`;
+  const best = scored[0];
+  const near = scored.filter((row, index) => index === 0 || best.score - row.score <= 0.025).slice(0, 4);
+  const rows = near.map((row) => row.species);
+  const hint = `Sembra ${best.species.it}, ${best.species.la}.`;
   return { rows, hint };
+}
+
+function speciesInPhotoClass(chosen) {
+  const life = window.SeaDiveBiology.MARINE_LIFE || [];
+  if (chosen?.id === "pesce") return life.filter((row) => row.group === "pesci");
+  const rows = [];
+  const seen = new Set();
+  (chosen?.kinds || []).forEach((kind) => {
+    (window.SeaDiveBiology.speciesForPhotoKind(kind) || []).forEach((row) => {
+      if (seen.has(row.id)) return;
+      seen.add(row.id);
+      rows.push(row);
+    });
+  });
+  return rows;
 }
 
 async function clipBest(classifier, image, items, labelOf) {
@@ -5947,9 +5987,10 @@ async function recognizePhotoSubject(image, signals, token, focusImage) {
   if (chosen?.id === "pesce") chosenImage = fishImage;
   const kinds = chosen?.kinds || [];
   if (!kinds.length) return null;
-  if (chosen?.id === "pesce") {
+  const photoPool = speciesInPhotoClass(chosen);
+  if (photoPool.length) {
     try {
-      const ranked = await rankFishByPhoto(chosenImage, kinds, token);
+      const ranked = await rankSubjectByPhotos(chosenImage, photoPool, token);
       if (ranked) return ranked;
     } catch {
       /* se il confronto foto non riesce, resta il riconoscimento per tipo */
@@ -6467,7 +6508,7 @@ function renderBioGuide() {
     const fromPhoto = view.bioFromPhoto
       ? `<div class="bio-block">
           <h3>Soggetto della foto</h3>
-          <p>Ho tenuto il soggetto e ho lasciato fuori lo sfondo. Il confronto è con le foto online della guida. Qui sotto c’è la descrizione.</p>
+          <p>Ho isolato il soggetto, senza lo sfondo, e l’ho confrontato con le foto online della guida. Questa è la scheda più vicina.</p>
           <img class="bio-subject" alt="" src="${escapeHtml(view.bioFromPhoto)}" />
           <div class="bio-actions">
             <button class="btn primary" type="button" data-lens>Confronta su Google</button>
