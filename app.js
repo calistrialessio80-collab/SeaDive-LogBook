@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 174</p>
+        <p class="hint">Versione 175</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4556,7 +4556,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=174")
+    divelogsPromise = fetch("./divelogs-sites.json?v=175")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -7719,7 +7719,7 @@ function bindPeoplePicks(form, d) {
 
 function renderProfile() {
   const frag = document.createDocumentFragment();
-  frag.append(topbar("profilo"));
+  frag.append(topbar("Profilo"));
   const form = document.createElement("form");
   form.className = "card profile-form";
   const p = state.profile;
