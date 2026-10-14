@@ -2925,6 +2925,7 @@ const RAY_TAGS = new Set(["Dasiatide", "Rajide", "Miliobatide", "Mobulide", "Tor
 const LIFE_PHOTO_CLASSES = [
   {
     id: "cefalopode",
+    prompt: "a photo of an octopus",
     label: "an octopus, cuttlefish or squid",
     kinds: [
       { id: "polpo", phrase: "un polpo", label: "an octopus", test: (x) => x.tag === "Polpo" },
@@ -2934,6 +2935,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "conchiglia",
+    prompt: "a photo of a seashell",
     label: "a clam, mussel or sea snail",
     kinds: [
       { id: "bivalve", phrase: "un bivalve", label: "a clam or mussel", test: (x) => x.tag === "Bivalve" },
@@ -2942,6 +2944,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "nudibranco",
+    prompt: "a photo of a nudibranch",
     label: "a nudibranch sea slug",
     kinds: [
       { id: "doride", phrase: "un nudibranco doride", label: "a dorid nudibranch", test: (x) => x.tag === "Doride" },
@@ -2952,6 +2955,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "corallo",
+    prompt: "a photo of a coral",
     label: "a coral or gorgonian",
     kinds: [
       { id: "corallo-rosso", phrase: "corallo rosso", label: "the red coral Corallium rubrum", test: (x) => /corallium rubrum/i.test(x.la) },
@@ -2964,6 +2968,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "pesce",
+    prompt: "a photo of a fish",
     label: "a fish",
     kinds: [
       { id: "cernia", phrase: "una cernia", label: "a grouper fish with a heavy body and a big mouth", test: (x) => lifeNorm(x.it).startsWith("cernia") },
@@ -2981,10 +2986,21 @@ const LIFE_PHOTO_CLASSES = [
       { id: "pappagallo", phrase: "un pesce pappagallo", label: "a parrotfish", test: (x) => x.tag === "Scaride" },
       { id: "tonno", phrase: "un tonno", label: "a tuna or mackerel", test: (x) => x.tag === "Scombride" },
       { id: "barracuda", phrase: "un barracuda", label: "a barracuda", test: (x) => x.tag === "Sfirenide" },
+      { id: "carango", phrase: "una ricciola o un carango", label: "a jack, trevally or amberjack fish", test: (x) => x.tag === "Carangide" },
+      { id: "triglia", phrase: "una triglia", label: "a goatfish with barbels on the chin", test: (x) => x.tag === "Mullide" },
+      { id: "chirurgo", phrase: "un pesce chirurgo", label: "a surgeonfish", test: (x) => x.tag === "Acanturide" },
+      { id: "angelo", phrase: "un pesce angelo", label: "an angelfish", test: (x) => x.tag === "Pomacantide" },
+      { id: "farfalla", phrase: "un pesce farfalla", label: "a butterflyfish", test: (x) => x.tag === "Chetodontide" },
+      { id: "palla", phrase: "un pesce palla", label: "a pufferfish", test: (x) => x.tag === "Tetraodontide" || x.tag === "Diodontide" },
+      { id: "spigola", phrase: "una spigola", label: "a sea bass", test: (x) => x.tag === "Moronide" },
+      { id: "ghiozzo", phrase: "un ghiozzo", label: "a goby", test: (x) => x.tag === "Gobiide" },
+      { id: "bavosa", phrase: "una bavosa", label: "a blenny", test: (x) => x.tag === "Blennide" },
+      { id: "tracina", phrase: "una tracina", label: "a weever fish", test: (x) => x.tag === "Trachinide" },
     ],
   },
   {
     id: "cnidario",
+    prompt: "a photo of a jellyfish",
     label: "a jellyfish or sea anemone",
     kinds: [
       { id: "medusa", phrase: "una medusa", label: "a jellyfish", test: (x) => x.tag === "Medusa" || x.tag === "Cubomedusa" || x.tag === "Sifonoforo" },
@@ -2993,6 +3009,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "crostaceo",
+    prompt: "a photo of a crab",
     label: "a crab, lobster or shrimp",
     kinds: [
       { id: "granchio", phrase: "un granchio", label: "a crab", test: (x) => x.tag === "Granchio" || x.tag === "Galateide" },
@@ -3002,6 +3019,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "echinoderma",
+    prompt: "a photo of a starfish",
     label: "a starfish, sea urchin or sea cucumber",
     kinds: [
       { id: "stella", phrase: "una stella marina", label: "a starfish", test: (x) => x.tag === "Stella" },
@@ -3011,6 +3029,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "spugna",
+    prompt: "a photo of a sponge",
     label: "a sea sponge",
     kinds: [
       { id: "spugna", phrase: "una spugna", label: "a sea sponge", test: (x) => x.group === "spugne" },
@@ -3018,6 +3037,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "pianta",
+    prompt: "a photo of seaweed",
     label: "seaweed or seagrass",
     kinds: [
       { id: "alga", phrase: "un'alga", label: "a seaweed", test: (x) => x.group === "flora" && x.tag !== "Pianta" },
@@ -3026,6 +3046,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "rettile",
+    prompt: "a photo of a sea turtle",
     label: "a sea turtle",
     kinds: [
       { id: "tartaruga", phrase: "una tartaruga marina", label: "a sea turtle", test: (x) => x.tag === "Tartaruga" },
@@ -3033,6 +3054,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "mammifero",
+    prompt: "a photo of a dolphin",
     label: "a dolphin or whale",
     kinds: [
       { id: "delfino", phrase: "un delfino", label: "a dolphin", test: (x) => x.tag === "Delfino" },
@@ -3041,6 +3063,7 @@ const LIFE_PHOTO_CLASSES = [
   },
   {
     id: "verme",
+    prompt: "a photo of a tube worm",
     label: "a tube worm",
     kinds: [
       { id: "verme", phrase: "un verme tubicolo", label: "a tube worm", test: (x) => x.group === "vermi" },

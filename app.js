@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 172</p>
+        <p class="hint">Versione 173</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4556,7 +4556,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=172")
+    divelogsPromise = fetch("./divelogs-sites.json?v=173")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5764,6 +5764,105 @@ function loadLifeClip() {
   return lifeClipPromise;
 }
 
+let lifeEmbedPromise = null;
+const fishEmbedCache = new Map();
+
+function loadLifeEmbed() {
+  if (!lifeEmbedPromise) {
+    lifeEmbedPromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
+      .then(({ pipeline }) => pipeline("image-feature-extraction", "Xenova/clip-vit-base-patch32", { dtype: "q8" }))
+      .catch((err) => {
+        lifeEmbedPromise = null;
+        throw err;
+      });
+  }
+  return lifeEmbedPromise;
+}
+
+function cosineVec(a, b) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na < 1e-8 || nb < 1e-8) return 0;
+  return dot / Math.sqrt(na * nb);
+}
+
+async function speciesEmbed(extractor, species) {
+  if (fishEmbedCache.has(species.id)) return fishEmbedCache.get(species.id);
+  let src = "";
+  try {
+    src = await guideThumbUrl(species);
+  } catch {
+    src = "";
+  }
+  if (!src) {
+    fishEmbedCache.set(species.id, null);
+    return null;
+  }
+  try {
+    const out = await extractor(src);
+    const vec = Array.from(out.data);
+    fishEmbedCache.set(species.id, vec);
+    return vec;
+  } catch {
+    return null;
+  }
+}
+
+async function rankFishByPhoto(image, kinds, token) {
+  const extractor = await loadLifeEmbed();
+  if (token !== bioPhotoToken) return null;
+  const queryOut = await extractor(image);
+  const query = Array.from(queryOut.data);
+  const samples = [];
+  for (let i = 0; i < kinds.length; i += 1) {
+    if (token !== bioPhotoToken) return null;
+    const kind = kinds[i];
+    const pool = window.SeaDiveBiology.speciesForPhotoKind(kind);
+    if (!pool.length) continue;
+    lifeClipStatus(`Confronto il pesce con la guida… ${i + 1}/${kinds.length}`);
+    const picks = [pool[0]];
+    if (pool.length > 3) picks.push(pool[Math.floor(pool.length / 2)]);
+    let bestScore = -1;
+    for (const species of picks) {
+      const vec = await speciesEmbed(extractor, species);
+      if (!vec) continue;
+      bestScore = Math.max(bestScore, cosineVec(query, vec));
+    }
+    if (bestScore >= 0) samples.push({ kind, score: bestScore });
+  }
+  samples.sort((a, b) => b.score - a.score);
+  let best = null;
+  for (const row of samples.slice(0, 3)) {
+    const pool = window.SeaDiveBiology.speciesForPhotoKind(row.kind);
+    for (const species of pool) {
+      if (token !== bioPhotoToken) return null;
+      const vec = await speciesEmbed(extractor, species);
+      if (!vec) continue;
+      const score = cosineVec(query, vec);
+      if (!best || score > best.score) best = { kind: row.kind, species, score };
+    }
+  }
+  if (!best) return null;
+  const pool = window.SeaDiveBiology.speciesForPhotoKind(best.kind);
+  const scored = pool.map((species) => {
+    const vec = fishEmbedCache.get(species.id);
+    return { species, score: vec ? cosineVec(query, vec) : 0 };
+  });
+  scored.sort((a, b) => b.score - a.score || a.species.it.localeCompare(b.species.it, "it"));
+  const rows = scored.length <= 8 ? scored.map((row) => row.species) : scored.slice(0, 6).map((row) => row.species);
+  const first = rows[0];
+  const hint = rows.length === 1
+    ? `Sembra ${best.kind.phrase}: ${first.it}.`
+    : `Sembra ${best.kind.phrase}. Per primo, ${first.it}.`;
+  return { rows, hint };
+}
+
 async function clipBest(classifier, image, items, labelOf) {
   const labels = items.map(labelOf);
   const ranked = await classifier(image, labels);
@@ -5777,10 +5876,10 @@ async function clipBest(classifier, image, items, labelOf) {
       bestScore = value;
     }
   });
-  return { best, score };
+  return { best, score: bestScore, scores: score };
 }
 
-async function recognizePhotoSubject(image, signals, token) {
+async function recognizePhotoSubject(image, signals, token, focusImage) {
   lifeClipStatus = (text) => {
     if (token !== bioPhotoToken || !bioPhotoSearch) return;
     bioPhotoSearch.hint = text;
@@ -5790,9 +5889,48 @@ async function recognizePhotoSubject(image, signals, token) {
   lifeClipStatus("Preparo il riconoscimento del soggetto…");
   const classifier = await loadLifeClip();
   if (token !== bioPhotoToken) return null;
-  const kinds = (window.SeaDiveBiology.LIFE_PHOTO_CLASSES || []).flatMap((row) => row.kinds || []);
+  const classes = window.SeaDiveBiology.LIFE_PHOTO_CLASSES || [];
+  const fishClass = classes.find((row) => row.id === "pesce");
+  const shots = [image, focusImage, signals?.framed ? signals.preview : ""].filter(Boolean);
+  const background = new Set(["corallo", "spugna", "pianta", "verme", "conchiglia", "echinoderma"]);
+  let topClass = classes[0];
+  let topScore = -1;
+  let topImage = image;
+  let fishScore = -1;
+  let fishImage = image;
   lifeClipStatus("Guardo che soggetto c’è nella foto…");
-  const kindPick = await clipBest(classifier, image, kinds, (item) => item.label);
+  for (const shot of shots) {
+    if (token !== bioPhotoToken) return null;
+    const picked = await clipBest(classifier, shot, classes, (item) => item.prompt || item.label);
+    const fish = fishClass ? picked.scores.get(fishClass.prompt || fishClass.label) || 0 : 0;
+    if (fish > fishScore) {
+      fishScore = fish;
+      fishImage = shot;
+    }
+    if (picked.score > topScore) {
+      topScore = picked.score;
+      topClass = picked.best;
+      topImage = shot;
+    }
+  }
+  let chosen = topClass;
+  let chosenImage = topImage;
+  if (fishClass && chosen?.id !== "pesce" && background.has(chosen?.id) && fishScore >= topScore * 0.86) {
+    chosen = fishClass;
+    chosenImage = fishImage;
+  }
+  if (chosen?.id === "pesce") chosenImage = fishImage;
+  const kinds = chosen?.kinds || [];
+  if (!kinds.length) return null;
+  if (chosen?.id === "pesce") {
+    try {
+      const ranked = await rankFishByPhoto(chosenImage, kinds, token);
+      if (ranked) return ranked;
+    } catch {
+      /* se il confronto foto non riesce, resta il riconoscimento per tipo */
+    }
+  }
+  const kindPick = await clipBest(classifier, chosenImage, kinds, (item) => item.label);
   const kind = kindPick.best;
   if (token !== bioPhotoToken || !kind) return null;
   let pool = window.SeaDiveBiology.speciesForPhotoKind(kind);
@@ -6197,6 +6335,15 @@ function renderBiology() {
       frame.height = Math.max(1, Math.round(bitmap.height * fit));
       frame.getContext("2d").drawImage(bitmap, 0, 0, frame.width, frame.height);
       const clipImage = frame.toDataURL("image/jpeg", 0.86);
+      const focus = document.createElement("canvas");
+      const side = Math.max(1, Math.round(Math.min(bitmap.width, bitmap.height) * 0.7));
+      const cropX = Math.max(0, Math.round((bitmap.width - side) / 2));
+      const cropY = Math.max(0, Math.round((bitmap.height - side) / 2));
+      const focusFit = Math.min(1, 384 / side);
+      focus.width = Math.max(1, Math.round(side * focusFit));
+      focus.height = focus.width;
+      focus.getContext("2d").drawImage(bitmap, cropX, cropY, side, side, 0, 0, focus.width, focus.height);
+      const focusImage = focus.toDataURL("image/jpeg", 0.86);
       bitmap.close?.();
       bioPhotoSearch = {
         signals,
@@ -6210,7 +6357,7 @@ function renderBiology() {
       photoButton.disabled = false;
       photoButton.textContent = "Cerca con foto";
       try {
-        const found = await recognizePhotoSubject(clipImage, signals, token);
+        const found = await recognizePhotoSubject(clipImage, signals, token, focusImage);
         if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
         bioPhotoSearch.rows = found.rows;
         bioPhotoSearch.hint = found.hint;
