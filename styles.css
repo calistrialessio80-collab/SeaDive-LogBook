@@ -2184,6 +2184,14 @@ body.page-people .community-page {
   cursor: pointer;
 }
 .bio-back::before { content: "← "; }
+.bio-subject {
+  display: block;
+  width: min(100%, 240px);
+  height: auto;
+  margin: 8px 0 12px;
+  border-radius: 16px;
+  background: #e7f3f6;
+}
 .bio-hero {
   position: relative;
   margin-top: 4px;

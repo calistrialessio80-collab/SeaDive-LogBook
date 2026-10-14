@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 173</p>
+        <p class="hint">Versione 174</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4556,7 +4556,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=173")
+    divelogsPromise = fetch("./divelogs-sites.json?v=174")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5732,11 +5732,36 @@ function readPhotoSignals(bitmap) {
   shot.height = Math.max(1, Math.round(160 * (sh / long)));
   shot.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, shot.width, shot.height);
   if (colors.length) framed = true;
-  return { colors, patterns, shape, framed, vector, preview: shot.toDataURL("image/jpeg", 0.8) };
+  return {
+    colors,
+    patterns,
+    shape,
+    framed,
+    vector,
+    box: { sx, sy, sw, sh },
+    preview: shot.toDataURL("image/jpeg", 0.8),
+  };
+}
+
+function subjectPhotoCanvas(bitmap, signals) {
+  const box = signals?.box;
+  if (!bitmap || !box) return null;
+  const sx = Math.max(0, Math.round(box.sx));
+  const sy = Math.max(0, Math.round(box.sy));
+  const sw = Math.max(1, Math.round(Math.min(box.sw, bitmap.width - sx)));
+  const sh = Math.max(1, Math.round(Math.min(box.sh, bitmap.height - sy)));
+  const cover = (sw * sh) / Math.max(1, bitmap.width * bitmap.height);
+  if (cover > 0.86) return null;
+  const fit = Math.min(1, 512 / Math.max(sw, sh));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(sw * fit));
+  canvas.height = Math.max(1, Math.round(sh * fit));
+  canvas.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return canvas;
 }
 
 function bioPhotoHint() {
-  return "Riconosco il soggetto della foto, poi cerco quel tipo nella guida.";
+  return "Isolo il soggetto, senza lo sfondo, e lo confronto online.";
 }
 
 let lifeClipPromise = null;
@@ -5825,7 +5850,7 @@ async function rankFishByPhoto(image, kinds, token) {
     const kind = kinds[i];
     const pool = window.SeaDiveBiology.speciesForPhotoKind(kind);
     if (!pool.length) continue;
-    lifeClipStatus(`Confronto il pesce con la guida… ${i + 1}/${kinds.length}`);
+    lifeClipStatus(`Confronto il soggetto online… ${i + 1}/${kinds.length}`);
     const picks = [pool[0]];
     if (pool.length > 3) picks.push(pool[Math.floor(pool.length / 2)]);
     let bestScore = -1;
@@ -5891,7 +5916,7 @@ async function recognizePhotoSubject(image, signals, token, focusImage) {
   if (token !== bioPhotoToken) return null;
   const classes = window.SeaDiveBiology.LIFE_PHOTO_CLASSES || [];
   const fishClass = classes.find((row) => row.id === "pesce");
-  const shots = [image, focusImage, signals?.framed ? signals.preview : ""].filter(Boolean);
+  const shots = [focusImage || image, !focusImage && signals?.framed ? signals.preview : ""].filter(Boolean);
   const background = new Set(["corallo", "spugna", "pianta", "verme", "conchiglia", "echinoderma"]);
   let topClass = classes[0];
   let topScore = -1;
@@ -6098,6 +6123,44 @@ function bindBioThumbs(root) {
     }, { rootMargin: "120px" });
     io.observe(img);
   });
+}
+
+function compareSubjectOnGoogle(dataUrl) {
+  if (!dataUrl) return;
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], "soggetto.jpg", { type: "image/jpeg" });
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = "https://lens.google.com/v3/upload?hl=it";
+      form.enctype = "multipart/form-data";
+      form.target = "_blank";
+      form.acceptCharset = "UTF-8";
+      form.style.display = "none";
+      const input = document.createElement("input");
+      input.type = "file";
+      input.name = "encoded_image";
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+      form.append(input);
+      const dims = document.createElement("input");
+      dims.type = "hidden";
+      dims.name = "processed_image_dimensions";
+      dims.value = `${canvas.width},${canvas.height}`;
+      form.append(dims);
+      document.body.append(form);
+      form.submit();
+      form.remove();
+    }, "image/jpeg", 0.9);
+  };
+  img.src = dataUrl;
 }
 
 function openLifePage(q) {
@@ -6335,15 +6398,8 @@ function renderBiology() {
       frame.height = Math.max(1, Math.round(bitmap.height * fit));
       frame.getContext("2d").drawImage(bitmap, 0, 0, frame.width, frame.height);
       const clipImage = frame.toDataURL("image/jpeg", 0.86);
-      const focus = document.createElement("canvas");
-      const side = Math.max(1, Math.round(Math.min(bitmap.width, bitmap.height) * 0.7));
-      const cropX = Math.max(0, Math.round((bitmap.width - side) / 2));
-      const cropY = Math.max(0, Math.round((bitmap.height - side) / 2));
-      const focusFit = Math.min(1, 384 / side);
-      focus.width = Math.max(1, Math.round(side * focusFit));
-      focus.height = focus.width;
-      focus.getContext("2d").drawImage(bitmap, cropX, cropY, side, side, 0, 0, focus.width, focus.height);
-      const focusImage = focus.toDataURL("image/jpeg", 0.86);
+      const subject = subjectPhotoCanvas(bitmap, signals);
+      const focusImage = subject ? subject.toDataURL("image/jpeg", 0.9) : "";
       bitmap.close?.();
       bioPhotoSearch = {
         signals,
@@ -6357,11 +6413,18 @@ function renderBiology() {
       photoButton.disabled = false;
       photoButton.textContent = "Cerca con foto";
       try {
-        const found = await recognizePhotoSubject(clipImage, signals, token, focusImage);
+        const found = await recognizePhotoSubject(focusImage || clipImage, signals, token, focusImage);
         if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
         bioPhotoSearch.rows = found.rows;
         bioPhotoSearch.hint = found.hint;
         bioPhotoSearch.pending = false;
+        const first = found.rows?.[0];
+        if (first?.id) {
+          view.bioFromPhoto = focusImage || clipImage;
+          view.bioPhotoName = first.it;
+          openBioGuide(first.id);
+          return;
+        }
         paint();
       } catch {
         if (token !== bioPhotoToken || !bioPhotoSearch) return;
@@ -6401,8 +6464,19 @@ function renderBioGuide() {
     sec.innerHTML = `<p class="hint">Specie non trovata.</p><button class="btn ghost" type="button" data-bioback>Torna all'elenco</button>`;
   } else {
     const section = api.lifeSection(x.group);
+    const fromPhoto = view.bioFromPhoto
+      ? `<div class="bio-block">
+          <h3>Soggetto della foto</h3>
+          <p>Ho tenuto il soggetto e ho lasciato fuori lo sfondo. Il confronto è con le foto online della guida. Qui sotto c’è la descrizione.</p>
+          <img class="bio-subject" alt="" src="${escapeHtml(view.bioFromPhoto)}" />
+          <div class="bio-actions">
+            <button class="btn primary" type="button" data-lens>Confronta su Google</button>
+          </div>
+        </div>`
+      : "";
     sec.innerHTML = `
       <button class="bio-back" type="button" data-bioback>Elenco</button>
+      ${fromPhoto}
       <div class="bio-hero">
         <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
         <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
@@ -6430,10 +6504,11 @@ function renderBioGuide() {
     `;
   }
   sec.querySelector("[data-bioback]").onclick = () => {
-    view = { ...view, name: "bio", bioId: "" };
+    view = { ...view, name: "bio", bioId: "", bioFromPhoto: "", bioPhotoName: "" };
     render();
     window.scrollTo(0, 0);
   };
+  sec.querySelector("[data-lens]")?.addEventListener("click", () => compareSubjectOnGoogle(view.bioFromPhoto));
   if (x) bindBioGuide(sec, x);
   frag.append(sec);
   return frag;
