@@ -338,6 +338,15 @@ function realDiveCount(dives) {
   return (dives || []).filter((d) => !isSeedDive(d)).length;
 }
 
+function driveBackupDue() {
+  return Boolean(
+    realDiveCount(state.dives) ||
+    (state.deletedDiveIds || []).length ||
+    (state.deletedPeople || []).length ||
+    (state.people || []).some((p) => p.remoteOwner && p.followOut)
+  );
+}
+
 function diveScore(d) {
   if (!d) return 0;
   let n = Object.keys(d).filter((k) => d[k] !== "" && d[k] != null && d[k] !== false).length;
@@ -849,7 +858,7 @@ async function syncWithDrive({ interactive = false } = {}) {
       rememberCatalogFromDives();
     }
     cloudHydrated = true;
-    if (realDiveCount(state.dives) || (state.deletedDiveIds || []).length) await maybeBackupDrive();
+    if (driveBackupDue()) await maybeBackupDrive();
     return { ok: true, dives: state.dives.length };
   } catch (err) {
     return { ok: false, reason: err.message || String(err) };
@@ -2408,8 +2417,10 @@ async function connectSeaPerson(cardHit, chat) {
     view.peopleHint = res.error
       ? `Segui ${who}. Nome, cognome, brevetto e firma sono sul tuo Drive. Il collegamento cloud riprova tra poco.`
       : `Segui ${who}. Nome, cognome, numero di brevetto e firma sono sul tuo Drive e nella nuova immersione.`;
+    await silentDrivePush();
     render();
   } catch {
+    await silentDrivePush().catch(() => {});
     view.peopleHint = "Seguito non registrato. Riprova tra poco.";
     render();
   } finally {
@@ -2447,7 +2458,7 @@ async function disconnectSeaPerson(cardHit) {
       }
     }
     save(state);
-    silentDrivePush();
+    await silentDrivePush();
     view.personId = null;
     view.peopleHint = `${who} non è più tra i contatti. Lo ritrovi con Cerca chi usa SeaDive.`;
     render();
@@ -2924,6 +2935,12 @@ function linkFollowFlags(row, mine) {
   return { followOut, followIn };
 }
 
+function savedFollowOut(person, flags) {
+  if (person?.followOut) return true;
+  if (person && Number(person.followRev) > 0) return false;
+  return Boolean(flags?.followOut);
+}
+
 async function setMyFollow(other, on) {
   const mine = await profileOwnerKey();
   const remote = String(other?.owner || other?.remoteOwner || "").trim();
@@ -3000,10 +3017,8 @@ async function syncIncomingLinks() {
         personEarly.following = true;
         changed = true;
       }
-      if (Date.now() - Number(personEarly.followRev) < 120000) {
-        setMyFollow(personEarly, true).catch(() => {});
-        return;
-      }
+      setMyFollow(personEarly, true).catch(() => {});
+      return;
     }
     const theyFollowedBack = Boolean(flags.followIn) && personEarly && !personEarly.followIn;
     if (!theyFollowedBack && personEarly && Number(personEarly.followRev) > fetchedAt) return;
@@ -3019,6 +3034,7 @@ async function syncIncomingLinks() {
       (p) => p.remoteOwner === remote || (p.role !== "center" && samePersonName(p.name, names.name || remoteName))
     );
     const before = person ? `${person.followOut}|${person.followIn}|${person.following}|${person.cert}|${person.sign ? 1 : 0}` : "";
+    const followOut = savedFollowOut(person, flags);
     const payload = {
       id: person?.id,
       role: person?.role && person.role !== "center" ? person.role : "buddy",
@@ -3026,10 +3042,10 @@ async function syncIncomingLinks() {
       firstName: names.firstName,
       lastName: names.lastName,
       remoteOwner: remote,
-      followOut: flags.followOut,
+      followOut,
       followIn: flags.followIn,
     };
-    const mutual = flags.followOut && flags.followIn;
+    const mutual = followOut && flags.followIn;
     if (card?.portrait) payload.portrait = card.portrait;
     if (mutual) {
       const cert = card?.cert || remoteCert || "";
@@ -4109,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 171</p>
+        <p class="hint">Versione 172</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4540,7 +4556,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=171")
+    divelogsPromise = fetch("./divelogs-sites.json?v=172")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
