@@ -4125,7 +4125,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 176</p>
+        <p class="hint">Versione 177</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4155,6 +4155,124 @@ function topbar(subtitle, mode) {
   return wrap;
 }
 
+const NAV_SECTIONS = [
+  ["home", "🌊", "SeaDive"],
+  ["log", "📒", "Diario"],
+  ["people", "🤿🤿", "Community"],
+  ["map", "🗺️", "Mappa"],
+  ["bio", "🌿", "Biologia"],
+  ["computer", "⌚", "Computer"],
+  ["profile", `<img src="./nav-diver.png?v=170" alt="" draggable="false" />`, "Profilo"],
+];
+
+function sectionOfView() {
+  if (view.name === "detail" || view.name === "edit") return "log";
+  if (view.name === "chat") return "people";
+  if (view.name === "stats") return "home";
+  return NAV_SECTIONS.some(([id]) => id === view.name) ? view.name : "";
+}
+
+function openNavSection(id) {
+  view = {
+    name: id,
+    diveId: null,
+    draft: null,
+    query: view.query || "",
+    bioQuery: view.bioQuery || "",
+    bioFilter: view.bioFilter || "all",
+    bioWhere: view.bioWhere || "all",
+    computerHint: view.computerHint || "",
+    peopleRole: view.peopleRole || "all",
+  };
+  render();
+  window.scrollTo(0, 0);
+}
+
+function bindSectionSwipe() {
+  if (bindSectionSwipe.done) return;
+  bindSectionSwipe.done = true;
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
+  let swallowClick = false;
+  const horizontalScroller = (el) => {
+    let node = el;
+    while (node && node !== document.body) {
+      const ox = getComputedStyle(node).overflowX;
+      if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth + 8) return true;
+      node = node.parentElement;
+    }
+    return false;
+  };
+  const blocked = (el) => {
+    if (!loadSession() || document.querySelector("[aria-modal='true']")) return true;
+    if (!el || !el.closest) return true;
+    if (el.closest("input, textarea, select, canvas, .nav, .nav-dock, .world-map, .maplibregl-map, .leaflet-container, .gm-style")) return true;
+    return horizontalScroller(el);
+  };
+  const arm = (x, y, el) => {
+    if (blocked(el)) {
+      tracking = false;
+      return;
+    }
+    tracking = true;
+    startX = x;
+    startY = y;
+  };
+  const finish = (x, y) => {
+    if (!tracking) return;
+    tracking = false;
+    const dx = x - startX;
+    const dy = y - startY;
+    if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    const index = NAV_SECTIONS.findIndex(([id]) => id === sectionOfView());
+    if (index < 0) return;
+    const next = index + (dx < 0 ? 1 : -1);
+    if (next < 0 || next >= NAV_SECTIONS.length) return;
+    swallowClick = true;
+    setTimeout(() => {
+      swallowClick = false;
+    }, 700);
+    openNavSection(NAV_SECTIONS[next][0]);
+  };
+  document.addEventListener("click", (e) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  document.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) {
+      tracking = false;
+      return;
+    }
+    arm(e.touches[0].clientX, e.touches[0].clientY, e.target);
+  }, { passive: true });
+  document.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    if (!t) {
+      tracking = false;
+      return;
+    }
+    finish(t.clientX, t.clientY);
+  }, { passive: true });
+  document.addEventListener("touchcancel", () => {
+    tracking = false;
+  }, { passive: true });
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "touch" || e.button !== 0) return;
+    arm(e.clientX, e.clientY, e.target);
+  });
+  document.addEventListener("pointerup", (e) => {
+    if (e.pointerType === "touch") return;
+    finish(e.clientX, e.clientY);
+  });
+  document.addEventListener("pointercancel", (e) => {
+    if (e.pointerType !== "touch") tracking = false;
+  });
+}
+bindSectionSwipe();
+
 function renderNav() {
   const wrap = document.createDocumentFragment();
   const dock = document.createElement("div");
@@ -4162,15 +4280,7 @@ function renderNav() {
   dock.setAttribute("aria-hidden", "true");
   const nav = document.createElement("nav");
   nav.className = "nav";
-  const items = [
-    ["home", "🌊", "SeaDive"],
-    ["log", "📒", "Diario"],
-    ["people", "🤿🤿", "Community"],
-    ["map", "🗺️", "Mappa"],
-    ["bio", "🌿", "Biologia"],
-    ["computer", "⌚", "Computer"],
-    ["profile", `<img src="./nav-diver.png?v=170" alt="" draggable="false" />`, "Profilo"],
-  ];
+  const items = NAV_SECTIONS;
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");
     const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
@@ -4180,20 +4290,7 @@ function renderNav() {
     const badge = id === "people" && chatUnreadTotal() > 0 ? " " + chatUnreadTotal() : "";
     const spanClass = id === "people" ? "nav-divers" : id === "profile" ? "nav-diver" : "";
     b.innerHTML = `<span${spanClass ? ` class="${spanClass}"` : ""}>${icon}</span><small>${label}${badge}</small>`;
-    b.onclick = () => {
-      view = {
-        name: id,
-        diveId: null,
-        draft: null,
-        query: view.query || "",
-        bioQuery: view.bioQuery || "",
-        bioFilter: view.bioFilter || "all",
-        bioWhere: view.bioWhere || "all",
-        computerHint: view.computerHint || "",
-        peopleRole: view.peopleRole || "all",
-      };
-      render();
-    };
+    b.onclick = () => openNavSection(id);
     nav.append(b);
   });
   wrap.append(dock, nav);
@@ -4556,7 +4653,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=176")
+    divelogsPromise = fetch("./divelogs-sites.json?v=177")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
