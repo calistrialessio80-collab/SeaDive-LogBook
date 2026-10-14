@@ -4109,7 +4109,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 170</p>
+        <p class="hint">Versione 171</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4540,7 +4540,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=170")
+    divelogsPromise = fetch("./divelogs-sites.json?v=171")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6318,8 +6318,10 @@ function renderLog() {
   const listWrap = document.createElement("section");
   listWrap.className = "section";
   const q = (view.query || "").trim().toLowerCase();
-  const ordered = [...state.dives]
-    .sort((a, b) => Number(b.number) - Number(a.number))
+  const ordered = [...state.dives].sort((a, b) => {
+    const byWhen = `${b.date || ""}T${b.timeIn || ""}`.localeCompare(`${a.date || ""}T${a.timeIn || ""}`);
+    return byWhen || Number(b.number) - Number(a.number);
+  })
     .filter((d) => {
       if (!q) return true;
       return [d.site, d.location, d.centerName, d.buddyName, d.notes]
