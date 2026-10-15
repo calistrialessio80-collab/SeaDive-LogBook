@@ -1015,6 +1015,9 @@ function upsertPerson(partial, opts) {
   if (String(partial.lead || "").trim()) found.lead = String(partial.lead).trim();
   if (partial.note != null) found.note = String(partial.note).trim();
   if (partial.address != null) found.address = String(partial.address).trim();
+  if (partial.addressStreet != null) found.addressStreet = String(partial.addressStreet).trim();
+  if (partial.addressNumber != null) found.addressNumber = String(partial.addressNumber).trim();
+  if (partial.addressCity != null) found.addressCity = String(partial.addressCity).trim();
   if (partial.lat != null && partial.lat !== "") {
     const lat = Number(String(partial.lat).replace(",", "."));
     if (Number.isFinite(lat)) found.lat = lat;
@@ -4166,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 187</p>
+        <p class="hint">Versione 188</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4248,7 +4251,7 @@ function bindSectionSwipe() {
   const blocked = (el) => {
     if (!loadSession() || document.querySelector("[aria-modal='true']")) return true;
     if (!el || !el.closest) return true;
-    if (el.closest("input, textarea, select, canvas, .nav, .nav-dock, .world-map, .maplibregl-map, .leaflet-container, .gm-style")) return true;
+    if (el.closest("input, textarea, select, canvas, iframe, .nav, .nav-dock, .world-map, .maplibregl-map, .leaflet-container, .gm-style, .dive-mini")) return true;
     return horizontalScroller(el);
   };
   const arm = (x, y, el) => {
@@ -4694,7 +4697,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=187")
+    divelogsPromise = fetch("./divelogs-sites.json?v=188")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -7977,92 +7980,73 @@ function renderPeople() {
   return frag;
 }
 
-let centerMiniMap = null;
-let centerMiniMarker = null;
+function divingAddressLine(street, civic, city) {
+  const via = String(street || "").trim();
+  const num = String(civic || "").trim();
+  const town = String(city || "").trim();
+  const road = [via, num].filter(Boolean).join(" ");
+  return [road, town].filter(Boolean).join(", ");
+}
 
-async function geocodeAddress(query) {
-  const q = String(query || "").trim();
-  if (q.length < 6) return null;
+async function geocodeAddress(street, civic, city) {
+  const line = divingAddressLine(street, civic, city);
+  if (!String(street || "").trim() || !String(civic || "").trim() || !String(city || "").trim()) return null;
   try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&q=${encodeURIComponent(q)}`,
-      { headers: { "Accept-Language": "it" } }
-    );
-    if (res.ok) {
-      const hit = (await res.json())?.[0];
-      const lat = Number(hit?.lat);
-      const lng = Number(hit?.lon);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        return { lat, lng, label: String(hit.display_name || q), country: String(hit.address?.country || "") };
-      }
+    await loadGoogleMaps();
+    if (window.google?.maps?.Geocoder) {
+      const googleHit = await new Promise((resolve) => {
+        new google.maps.Geocoder().geocode({ address: line, language: "it", region: "it" }, (results, status) => {
+          if (status !== "OK" || !results?.length) {
+            resolve(null);
+            return;
+          }
+          const precise = results.find((row) => row.geometry?.location_type === "ROOFTOP" || row.geometry?.location_type === "RANGE_INTERPOLATED");
+          const hit = precise || results[0];
+          const loc = hit.geometry?.location;
+          if (!loc) {
+            resolve(null);
+            return;
+          }
+          const country = (hit.address_components || []).find((row) => row.types?.includes("country"))?.long_name || "";
+          resolve({
+            lat: loc.lat(),
+            lng: loc.lng(),
+            label: hit.formatted_address || line,
+            country,
+            precise: Boolean(precise),
+          });
+        });
+      });
+      if (googleHit) return googleHit;
     }
   } catch {
-    /* provo l'altro elenco */
+    /* la spunta resta quella di Google Maps */
   }
   try {
-    const res = await fetch(`https://photon.komoot.io/api/?limit=1&lang=it&q=${encodeURIComponent(q)}`);
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&street=${encodeURIComponent(`${street} ${civic}`.trim())}&city=${encodeURIComponent(city)}`;
+    const res = await fetch(url, { headers: { "Accept-Language": "it" } });
     if (!res.ok) return null;
-    const feat = (await res.json())?.features?.[0];
-    const coords = feat?.geometry?.coordinates;
-    if (!coords) return null;
-    const props = feat.properties || {};
-    const label = [props.name, props.street, props.housenumber, props.city, props.country].filter(Boolean).join(", ");
-    return { lat: Number(coords[1]), lng: Number(coords[0]), label: label || q, country: String(props.country || "") };
+    const hit = (await res.json())?.[0];
+    const lat = Number(hit?.lat);
+    const lng = Number(hit?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng, label: hit.display_name || line, country: hit.address?.country || "", precise: true };
   } catch {
     return null;
   }
 }
 
-function rasterSeaStyle() {
-  return {
-    version: 8,
-    sources: {
-      sat: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-        maxzoom: 19,
-        attribution: "Immagini © Esri",
-      },
-    },
-    layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#d5e6ee" } },
-      { id: "sat", type: "raster", source: "sat" },
-    ],
-  };
-}
-
-async function placeCenterMap(el, lat, lng, onMove) {
-  if (!el) return;
-  await loadMapLibre();
-  if (!el.isConnected || !window.maplibregl) return;
+function placeCenterMap(el, query) {
+  const q = String(query || "").trim();
+  if (!el || !q) return;
   el.hidden = false;
-  if (centerMiniMap && centerMiniMap.getContainer() === el) {
-    centerMiniMap.resize();
-    centerMiniMap.jumpTo({ center: [lng, lat], zoom: 16 });
-    centerMiniMarker?.setLngLat([lng, lat]);
-    return;
-  }
-  if (centerMiniMap) {
-    try { centerMiniMap.remove(); } catch { /* la mappa precedente è già chiusa */ }
-    centerMiniMap = null;
-    centerMiniMarker = null;
-  }
-  const map = new maplibregl.Map({
-    container: el,
-    style: rasterSeaStyle(),
-    center: [lng, lat],
-    zoom: 16,
-    attributionControl: false,
-  });
-  centerMiniMap = map;
-  map.on("load", () => {
-    if (centerMiniMap !== map) return;
-    const marker = new maplibregl.Marker({ draggable: true, color: "#0b6b68" }).setLngLat([lng, lat]).addTo(map);
-    centerMiniMarker = marker;
-    marker.on("dragend", () => onMove(marker.getLngLat()));
-    map.resize();
-  });
+  const frame = document.createElement("iframe");
+  frame.className = "dive-google";
+  frame.title = "Posizione su Google Maps";
+  frame.src = `https://maps.google.com/maps?q=${encodeURIComponent(q)}&hl=it&z=18&output=embed`;
+  frame.loading = "lazy";
+  frame.referrerPolicy = "no-referrer-when-downgrade";
+  el.replaceChildren(frame);
 }
 
 function renderPerson() {
@@ -8099,12 +8083,14 @@ function renderPerson() {
       <div class="form-grid">
         ${field("name", "Denominazione diving", current.role === "center" ? current.name : "", true)}
         ${field("lead", "Responsabile del diving", current.lead, true)}
-        ${field("address", "Indirizzo preciso", current.address || "", true)}
+        ${field("street", "Via", current.addressStreet || (!current.addressNumber && !current.addressCity ? current.address || "" : ""), true)}
+        ${field("civic", "Numero civico", current.addressNumber || "")}
+        ${field("city", "Città", current.addressCity || "", true)}
       </div>
       <div class="actions">
         <button class="btn ghost" type="button" data-findaddr>Trova sulla mappa</button>
       </div>
-      <p class="hint" data-addrhint>${current.address ? "L'indirizzo posiziona il diving qui e nella sezione Mappa. Puoi spostare il punto." : "Scrivi via, numero e città. La mappa si aggiorna da sola e il diving compare in Mappa."}</p>
+      <p class="hint" data-addrhint>Via, numero civico e città. Trova sulla mappa mette la spunta precisa di Google e lo stesso punto nella sezione Mappa.</p>
       <div class="dive-mini" data-minimap ${Number.isFinite(Number(current.lat)) && Number.isFinite(Number(current.lng)) ? "" : "hidden"}></div>
       <p class="hint">Foto del diving, scattata adesso.</p>
       <button class="dive-shot" type="button" data-centerphoto>${portraitImage(current.portrait) ? `<img alt="" src="${escapeHtml(current.portrait)}" />` : "Scatta foto"}</button>
@@ -8195,39 +8181,44 @@ function renderPerson() {
   };
   const locateCenter = async () => {
     const hint = form.querySelector("[data-addrhint]");
-    const q = String(form.querySelector("[name=address]")?.value || "").trim();
-    if (q.length < 6) {
-      if (hint) hint.textContent = "Scrivi via, numero e città.";
+    const street = String(form.querySelector("[name=street]")?.value || "").trim();
+    const civic = String(form.querySelector("[name=civic]")?.value || "").trim();
+    const city = String(form.querySelector("[name=city]")?.value || "").trim();
+    if (!street || !civic || !city) {
+      if (hint) hint.textContent = "Scrivi via, numero civico e città.";
       return;
     }
-    if (hint) hint.textContent = "Cerco l'indirizzo sulla mappa…";
-    const hit = await geocodeAddress(q);
+    const line = divingAddressLine(street, civic, city);
+    if (hint) hint.textContent = "Cerco l'indirizzo su Google Maps…";
+    placeCenterMap(form.querySelector("[data-minimap]"), line);
+    let hit = null;
+    try {
+      hit = await geocodeAddress(street, civic, city);
+    } catch {
+      hit = null;
+    }
     if (!form.isConnected) return;
     if (!hit) {
-      if (hint) hint.textContent = "Indirizzo non trovato. Aggiungi via, numero e città.";
+      if (hint) hint.textContent = "Google Maps mostra l'indirizzo. Per salvarlo controlla via, numero civico e città.";
       return;
     }
     form.querySelector("[name=lat]").value = String(hit.lat);
     form.querySelector("[name=lng]").value = String(hit.lng);
     form.querySelector("[name=placeCountry]").value = hit.country || "";
-    if (hint) hint.textContent = `${hit.label} Il diving entra in Mappa su questo punto.`;
-    await placeCenterMap(form.querySelector("[data-minimap]"), hit.lat, hit.lng, (point) => {
-      form.querySelector("[name=lat]").value = point.lat.toFixed(6);
-      form.querySelector("[name=lng]").value = point.lng.toFixed(6);
-      const line = form.querySelector("[data-addrhint]");
-      if (line) line.textContent = "Punto spostato. Il diving resta qui nella sezione Mappa.";
-    });
+    if (hint) hint.textContent = `Spunta di Google Maps su ${line}.`;
   };
   form.querySelector("[data-findaddr]")?.addEventListener("click", () => {
     locateCenter();
   });
   let addrTimer = 0;
-  form.querySelector("[name=address]")?.addEventListener("input", () => {
-    window.clearTimeout(addrTimer);
-    addrTimer = window.setTimeout(() => {
-      if (form.querySelector("[data-centerbox]")?.hidden) return;
-      locateCenter();
-    }, 800);
+  ["street", "civic", "city"].forEach((name) => {
+    form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
+      window.clearTimeout(addrTimer);
+      addrTimer = window.setTimeout(() => {
+        if (form.querySelector("[data-centerbox]")?.hidden) return;
+        locateCenter();
+      }, 800);
+    });
   });
   const photoBtn = form.querySelector("[data-centerphoto]");
   const photoFile = form.querySelector("[data-centerfile]");
@@ -8260,12 +8251,8 @@ function renderPerson() {
       const lat = Number(current.lat);
       const lng = Number(current.lng);
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        placeCenterMap(form.querySelector("[data-minimap]"), lat, lng, (point) => {
-          form.querySelector("[name=lat]").value = point.lat.toFixed(6);
-          form.querySelector("[name=lng]").value = point.lng.toFixed(6);
-          const line = form.querySelector("[data-addrhint]");
-          if (line) line.textContent = "Punto spostato. Il diving resta qui nella sezione Mappa.";
-        });
+        const saved = divingAddressLine(current.addressStreet, current.addressNumber, current.addressCity) || current.address || `${lat},${lng}`;
+        placeCenterMap(form.querySelector("[data-minimap]"), saved);
       }
     }
   });
@@ -8276,7 +8263,10 @@ function renderPerson() {
     const lastName = String(fd.get("lastName") || "").trim();
     const denom = String(fd.get("name") || "").trim();
     const role = fd.get("role") || current.role;
-    const address = String(fd.get("address") || "").trim();
+    const street = String(fd.get("street") || "").trim();
+    const civic = String(fd.get("civic") || "").trim();
+    const city = String(fd.get("city") || "").trim();
+    const address = divingAddressLine(street, civic, city);
     const lat = Number(String(fd.get("lat") || "").replace(",", "."));
     const lng = Number(String(fd.get("lng") || "").replace(",", "."));
     const name = role === "center" ? denom : [firstName, lastName].filter(Boolean).join(" ");
@@ -8284,8 +8274,8 @@ function renderPerson() {
       alert(role === "center" ? "Scrivi la denominazione del diving." : "Scrivi nome e cognome.");
       return;
     }
-    if (role === "center" && !address) {
-      alert("Scrivi l'indirizzo preciso del diving.");
+    if (role === "center" && (!street || !civic || !city)) {
+      alert("Scrivi via, numero civico e città del diving.");
       return;
     }
     if (role === "center" && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
@@ -8305,7 +8295,16 @@ function renderPerson() {
       following: role === "center" ? false : current.following !== false,
       sign: personSign,
       ...(role === "center"
-        ? { address, lat, lng, portrait: centerPhoto, centerSiteId: current.centerSiteId || "" }
+        ? {
+            address,
+            addressStreet: street,
+            addressNumber: civic,
+            addressCity: city,
+            lat,
+            lng,
+            portrait: centerPhoto,
+            centerSiteId: current.centerSiteId || "",
+          }
         : {}),
     });
     if (role === "center" && person) {
