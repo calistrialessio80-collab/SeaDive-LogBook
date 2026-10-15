@@ -4131,7 +4131,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 182</p>
+        <p class="hint">Versione 183</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4659,7 +4659,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=182")
+    divelogsPromise = fetch("./divelogs-sites.json?v=183")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6404,10 +6404,10 @@ function renderBiology() {
     <header class="bio-head">
       <p class="bio-kicker">Guida da immersione</p>
       <h2 class="serif">Biologia Marina</h2>
-      <p class="bio-lead">Pesci, coralli, nudibranchi e gli altri gruppi. Apri una specie per riconoscimento, habitat e note in acqua.</p>
+      <p class="bio-lead">La guida è per l’immersione. Dal terzo carattere la ricerca aggiunge il registro mondiale: pesci, flora, coralli e il resto della fauna marina.</p>
     </header>
     <div class="bio-search">
-      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nome, gruppo o ambiente" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
+      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nella guida o nel registro mondiale" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
       <div class="bio-search-actions">
         <button class="btn ghost" type="button" data-biophoto>Cerca con foto</button>
         <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
@@ -6428,6 +6428,7 @@ function renderBiology() {
     <p class="hint" data-bioblurb></p>
     <p class="meta" data-biocount></p>
     <div class="bio-list" data-biolist></div>
+    <div class="bio-list" data-bioworld></div>
   `;
   const input = sec.querySelector("[data-bioq]");
   const list = sec.querySelector("[data-biolist]");
@@ -6465,7 +6466,8 @@ function renderBiology() {
     if (!rows.length) {
       list.innerHTML = photo
         ? `<p class="hint">${escapeHtml(photo.pending ? photo.hint : "Non ho riconosciuto questo soggetto nella guida. Avvicina l’animale e riprova.")}</p>`
-        : `<p class="hint">Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».</p>`;
+        : `<p class="hint">${q.trim().length >= 3 ? "Nella guida questo nome non c’è. Se esiste, compare nel registro mondiale qui sotto." : `Nessuna specie in elenco. Premi Cerca in rete per aprire Wikipedia con «${escapeHtml(q || "biologia marina")}».`}</p>`;
+      showWorld();
       return;
     }
     if (photo || group === "all") {
@@ -6480,6 +6482,40 @@ function renderBiology() {
       list.innerHTML = rows.map((x) => bioCardHtml(api, x)).join("");
     }
     bindBioThumbs(list);
+    showWorld();
+  };
+  let worldTimer = 0;
+  let worldToken = 0;
+  const showWorld = () => {
+    window.clearTimeout(worldTimer);
+    const box = sec.querySelector("[data-bioworld]");
+    const q = input.value.trim();
+    const where = bioWhereOn();
+    if (!box) return;
+    if (bioPhotoSearch || q.length < 3 || (where !== "all" && where !== "world")) {
+      box.innerHTML = "";
+      return;
+    }
+    box.innerHTML = `<p class="hint">Cerco nel registro mondiale…</p>`;
+    worldTimer = window.setTimeout(async () => {
+      const token = ++worldToken;
+      let found = [];
+      try {
+        found = await api.searchWorldLife(q);
+      } catch {
+        found = [];
+      }
+      if (token !== worldToken || !box.isConnected) return;
+      const known = new Set((api.MARINE_LIFE || []).map((row) => lifeNorm(row.la)));
+      const group = bioGroupOn();
+      const extra = found.filter((row) => !known.has(lifeNorm(row.la)) && (group === "all" || row.group === group));
+      if (!extra.length) {
+        box.innerHTML = `<p class="hint">Nessun’altra specie nel registro mondiale per questo nome.</p>`;
+        return;
+      }
+      box.innerHTML = `<h3 class="bio-sec"><i>🌊</i><span>Registro mondiale</span><em>${extra.length}</em></h3><p class="hint">Pesci, flora, coralli e il resto della fauna, dal World Register of Marine Species.</p>${extra.map((row) => bioCardHtml(api, row)).join("")}`;
+      bindBioThumbs(box);
+    }, 380);
   };
   const openFromList = (id) => {
     if (id) openBioGuide(id);
@@ -6490,6 +6526,19 @@ function renderBiology() {
     openFromList(card.dataset.bioid);
   };
   list.onkeydown = (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest("[data-bioid]");
+    if (!card) return;
+    e.preventDefault();
+    openFromList(card.dataset.bioid);
+  };
+  const worldBox = sec.querySelector("[data-bioworld]");
+  worldBox.onclick = (e) => {
+    const card = e.target.closest("[data-bioid]");
+    if (!card || !worldBox.contains(card)) return;
+    openFromList(card.dataset.bioid);
+  };
+  worldBox.onkeydown = (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
     const card = e.target.closest("[data-bioid]");
     if (!card) return;
@@ -6523,13 +6572,26 @@ function renderBiology() {
     whereChips.append(b);
   });
   input.oninput = paint;
-  input.onkeydown = (e) => {
+  input.onkeydown = async (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
     const q = input.value.trim();
     const rows = api.filterMarineLife(q, bioGroupOn(), bioWhereOn());
-    const hit = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q)) || rows[0];
-    if (hit) openBioGuide(hit.id);
+    const exact = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q));
+    if (exact) {
+      openBioGuide(exact.id);
+      return;
+    }
+    if (q.length >= 3 && bioWhereOn() !== "med" && bioWhereOn() !== "alien") {
+      const world = await api.searchWorldLife(q);
+      const known = new Set((api.MARINE_LIFE || []).map((row) => lifeNorm(row.la)));
+      const hit = world.find((row) => !known.has(lifeNorm(row.la)) && lifeNorm(row.la) === lifeNorm(q)) || world.find((row) => !known.has(lifeNorm(row.la)));
+      if (hit) {
+        openBioGuide(hit.id);
+        return;
+      }
+    }
+    if (rows[0]) openBioGuide(rows[0].id);
     else openLifePage(q);
   };
   sec.querySelector("[data-bioweb]").onclick = () => {
@@ -6667,11 +6729,19 @@ function renderBioGuide() {
         <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         <div class="bio-hero-caption">
           <p>${escapeHtml(section?.emoji || "")} ${escapeHtml(section?.label || "")} · ${escapeHtml(x.where)}</p>
-          <h2 class="serif">${escapeHtml(x.it)}</h2>
+          <h2 class="serif" data-bioname>${escapeHtml(x.it)}</h2>
           <p class="bio-la">${escapeHtml(x.la)}</p>
         </div>
       </div>
-      <div class="kv">
+      ${x.worms ? `<div class="kv">
+        <div><b>Rango</b>${escapeHtml(x.rank || "Specie")}</div>
+        <div><b>Stato</b>${escapeHtml(x.statusLabel || "")}</div>
+        <div><b>Famiglia</b>${escapeHtml(x.tag || "")}</div>
+        <div><b>Gruppo</b>${escapeHtml(section?.label || "")}</div>
+      </div>
+      <div class="bio-block"><h3>Classificazione</h3><p>${escapeHtml(x.habitat)}</p></div>
+      <div class="bio-block" data-wormnames><p class="hint">Cerco i nomi comuni…</p></div>
+      <div class="bio-block"><h3>Registro mondiale</h3><p>${escapeHtml(x.life)}</p></div>` : `<div class="kv">
         <div><b>Taglia</b>${escapeHtml(x.size)}</div>
         <div><b>Profondità</b>${escapeHtml(x.depth)}</div>
         <div><b>Tipo</b>${escapeHtml(x.tag)}</div>
@@ -6680,7 +6750,7 @@ function renderBioGuide() {
       <div class="bio-block"><h3>Dove vive</h3><p>${escapeHtml(x.habitat)}</p></div>
       <div class="bio-block"><h3>Come riconoscerlo</h3><p>${escapeHtml(x.look)}</p></div>
       <div class="bio-block"><h3>Vita</h3><p>${escapeHtml(x.life)}</p></div>
-      <div class="bio-block"><h3>In immersione</h3><p>${escapeHtml(x.dive)}</p></div>
+      <div class="bio-block"><h3>In immersione</h3><p>${escapeHtml(x.dive)}</p></div>`}
       <div class="bio-block" data-biowiki><p class="hint">Caricamento della scheda enciclopedica…</p></div>
       <div class="bio-actions">
         <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>
@@ -6733,6 +6803,29 @@ function bindBioGuide(root, species) {
       box.innerHTML = `<p class="hint">La scheda enciclopedica si carica quando c'è rete. Riconoscimento, habitat e note restano nella guida anche offline.</p>`;
     }
   });
+  if (species.worms && species.aphia) {
+    api.worldVernaculars(species.aphia).then((names) => {
+      if (gen !== bioThumbGen || !root.isConnected) return;
+      const italian = names.find((row) => row.lang === "ita");
+      const title = root.querySelector("[data-bioname]");
+      if (italian && title) title.textContent = italian.name;
+      const box = root.querySelector("[data-wormnames]");
+      if (!box) return;
+      if (!names.length) {
+        box.innerHTML = `<h3>Nomi comuni</h3><p class="hint">Il registro non ha un nome comune per questa specie.</p>`;
+        return;
+      }
+      const lines = [];
+      const seen = new Set();
+      names.forEach((row) => {
+        const key = lifeNorm(`${row.name} ${row.language}`);
+        if (seen.has(key) || lines.length >= 8) return;
+        seen.add(key);
+        lines.push(`${row.name} (${row.language})`);
+      });
+      box.innerHTML = `<h3>Nomi comuni</h3><p>${escapeHtml(lines.join(", "))}</p>`;
+    });
+  }
 }
 
 function lifeNorm(s) {

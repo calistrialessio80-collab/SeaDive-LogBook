@@ -2775,8 +2775,10 @@ function lifeSection(id) {
   return LIFE_SECTIONS.find((s) => s.id === id) || null;
 }
 
+const worldLife = new Map();
+
 function findMarineLife(id) {
-  return MARINE_LIFE.find((x) => x.id === id) || null;
+  return MARINE_LIFE.find((x) => x.id === id) || worldLife.get(id) || null;
 }
 
 function filterMarineLife(query, group, where) {
@@ -3076,6 +3078,124 @@ function speciesForPhotoKind(kind) {
   return MARINE_LIFE.filter((x) => kind.test(x));
 }
 
+function wormsGroup(row) {
+  const kingdom = lifeNorm(row.kingdom);
+  const phy = lifeNorm(row.phylum);
+  const cls = lifeNorm(row.class);
+  const order = lifeNorm(row.order);
+  if (kingdom === "plantae" || kingdom === "chromista" || phy === "rhodophyta" || phy === "chlorophyta" || phy === "ochrophyta") return "flora";
+  if (phy === "porifera") return "spugne";
+  if (phy === "echinodermata") return "echinodermi";
+  if (phy === "cnidaria" || phy === "ctenophora") {
+    if (/actiniaria|ceriantharia/.test(order)) return "meduse";
+    if (/scleractinia|alcyonacea|malacalcyonacea|scleralcyonacea|antipatharia|zoantharia|pennatulacea|helioporacea|corallimorpharia/.test(order)) return "coralli";
+    if (cls === "octocorallia" || cls === "anthozoa" || cls === "hexacorallia") return "coralli";
+    return "meduse";
+  }
+  if (phy === "mollusca" && order === "nudibranchia") return "nudibranchi";
+  if (phy === "mollusca") return "molluschi";
+  if (phy === "arthropoda") return "crostacei";
+  if (phy === "annelida") return "vermi";
+  if (phy === "bryozoa") return "briozoi";
+  if (phy === "chordata" && /ascidiacea|thaliacea|appendicularia/.test(cls)) return "tunicati";
+  if (phy === "chordata" && cls === "mammalia") return "mammiferi";
+  if (phy === "chordata" && cls === "reptilia") return "rettili";
+  if (phy === "chordata" && cls === "aves") return "altri";
+  if (phy === "chordata") return "pesci";
+  return "altri";
+}
+
+function wormsCard(row) {
+  const name = row.valid_name || row.scientificname || "";
+  const aphia = row.valid_AphiaID || row.AphiaID;
+  const accepted = row.status === "accepted";
+  const env = [row.isMarine ? "Marina" : "", row.isBrackish ? "Anche salmastra" : ""].filter(Boolean).join(", ") || "Ambiente non indicato";
+  const synonym = !accepted && row.valid_name && row.valid_name !== row.scientificname ? ` Nome valido: ${row.valid_name}.` : "";
+  const author = row.valid_authority || row.authority || "";
+  return {
+    id: `worms-${aphia}`,
+    worms: true,
+    aphia,
+    group: wormsGroup(row),
+    it: name,
+    la: name,
+    where: "Mondo",
+    tag: row.family || row.class || row.phylum || "Specie",
+    rank: row.rank || "Species",
+    statusLabel: accepted ? "Accettato" : "Sinonimo",
+    habitat: [row.kingdom, row.phylum, row.class, row.order, row.family, row.genus].filter(Boolean).join(" · "),
+    look: `${row.family || row.phylum || "Specie"} · ${row.rank || "Species"}`,
+    life: `${env}.${synonym}${author ? ` Descritta da ${author}.` : ""} Fonte: World Register of Marine Species.`,
+    dive: "Scheda del registro mondiale: in acqua conta il riconoscimento sul posto, non solo il nome.",
+    size: row.rank || "Specie",
+    depth: accepted ? "Nome accettato" : "Sinonimo",
+  };
+}
+
+async function wormsFetch(url) {
+  const res = await fetch(url);
+  if (res.status === 204) return [];
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+const worldSearchCache = new Map();
+
+async function searchWorldLife(query) {
+  const q = String(query || "").trim();
+  const key = lifeNorm(q);
+  if (key.length < 3) return [];
+  if (worldSearchCache.has(key)) return worldSearchCache.get(key);
+  const enc = encodeURIComponent(q);
+  let bags = [[], []];
+  try {
+    bags = await Promise.all([
+      wormsFetch(`https://www.marinespecies.org/rest/AphiaRecordsByName/${enc}?like=true&marine_only=true&offset=1`),
+      wormsFetch(`https://www.marinespecies.org/rest/AphiaRecordsByVernacular/${enc}?like=false&offset=1`),
+    ]);
+  } catch {
+    bags = [[], []];
+  }
+  const seen = new Set();
+  const rows = [];
+  bags.flat().forEach((row) => {
+    if (!row) return;
+    if (row.isMarine !== 1 && row.isBrackish !== 1) return;
+    if (row.isTerrestrial === 1 && row.isMarine !== 1) return;
+    const rank = lifeNorm(row.rank);
+    if (rank && !["species", "subspecies", "variety", "forma"].includes(rank)) return;
+    const aphia = row.valid_AphiaID || row.AphiaID;
+    if (!aphia || seen.has(aphia)) return;
+    seen.add(aphia);
+    const card = wormsCard(row);
+    worldLife.set(card.id, card);
+    rows.push(card);
+  });
+  rows.sort((a, b) => (a.statusLabel === "Accettato" ? 0 : 1) - (b.statusLabel === "Accettato" ? 0 : 1) || a.la.localeCompare(b.la));
+  const cut = rows.slice(0, 40);
+  worldSearchCache.set(key, cut);
+  return cut;
+}
+
+async function worldVernaculars(aphia) {
+  if (!aphia) return [];
+  try {
+    const rows = await wormsFetch(`https://www.marinespecies.org/rest/AphiaVernacularsByAphiaID/${encodeURIComponent(aphia)}`);
+    const names = rows
+      .map((row) => ({
+        name: String(row.vernacular || "").trim(),
+        lang: String(row.language_code || ""),
+        language: String(row.language || row.language_code || ""),
+      }))
+      .filter((row) => row.name);
+    names.sort((a, b) => (a.lang === "ita" ? 0 : 1) - (b.lang === "ita" ? 0 : 1) || a.language.localeCompare(b.language, "it"));
+    return names;
+  } catch {
+    return [];
+  }
+}
+
 window.SeaDiveBiology = {
   MARINE_LIFE,
   LIFE_SECTIONS,
@@ -3091,4 +3211,6 @@ window.SeaDiveBiology = {
   lifeEmoji,
   lifeThumb,
   lifePage,
+  searchWorldLife,
+  worldVernaculars,
 };
