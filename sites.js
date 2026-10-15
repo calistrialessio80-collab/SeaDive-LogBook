@@ -1202,32 +1202,40 @@ function upsertCustomSite(partial) {
   if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return null;
   const country = String(partial.country || "").trim();
+  const address = String(partial.address || "").trim();
+  const kind = partial.kind === "diving" ? "diving" : "";
   const list = loadCustomSites();
+  const paint = (row) => ({
+    ...row,
+    name,
+    lat,
+    lng,
+    country: country || row.country,
+    address: address || row.address || "",
+    kind: kind || row.kind || "",
+  });
+  if (partial.id) {
+    const byId = list.findIndex((s) => s.id === partial.id);
+    if (byId >= 0) {
+      list[byId] = paint(list[byId]);
+      saveCustomSites(list);
+      return list[byId];
+    }
+  }
   const sameName = list.findIndex((s) => namesClose(s.name, name) && normName(s.name) === normName(name));
   const sameSpot = list.findIndex((s) => haversineKm(s, { lat, lng }) <= 0.12);
   if (sameName >= 0) {
-    list[sameName] = {
-      ...list[sameName],
-      lat,
-      lng,
-      country: country || list[sameName].country,
-    };
+    list[sameName] = paint(list[sameName]);
     saveCustomSites(list);
     return list[sameName];
   }
   if (sameSpot >= 0) {
-    list[sameSpot] = {
-      ...list[sameSpot],
-      name,
-      country: country || list[sameSpot].country,
-      lat,
-      lng,
-    };
+    list[sameSpot] = paint(list[sameSpot]);
     saveCustomSites(list);
     return list[sameSpot];
   }
   const worldNamed = WORLD_SITES.find((s) => normName(s.name) === normName(name));
-  if (worldNamed) return worldNamed;
+  if (worldNamed && kind !== "diving") return worldNamed;
   const site = {
     id: "custom-" + Date.now(),
     name,
@@ -1235,10 +1243,18 @@ function upsertCustomSite(partial) {
     lat,
     lng,
     custom: true,
+    address,
+    kind,
   };
   list.push(site);
   saveCustomSites(list);
   return site;
+}
+
+function removeCustomSite(id) {
+  if (!id) return;
+  const list = loadCustomSites().filter((s) => s.id !== id);
+  saveCustomSites(list);
 }
 
 function matchCatalog(d) {
@@ -1290,6 +1306,8 @@ function mergeCustomSites(incoming) {
       lat: Number(s.lat),
       lng: Number(s.lng),
       custom: true,
+      address: String(s.address || "").trim(),
+      kind: s.kind === "diving" ? "diving" : "",
     });
   });
   saveCustomSites(next);
@@ -1368,6 +1386,7 @@ window.SeaDiveSites = {
   annotateSites,
   addCustomSite,
   upsertCustomSite,
+  removeCustomSite,
   loadCustomSites,
   mergeCustomSites,
   matchCatalog,

@@ -458,6 +458,7 @@ async function removePerson(person) {
     try { await setMyFollow(person, false); } catch { /* il profilo cloud resta cercabile */ }
   }
   rememberDeletedPerson(person);
+  if (person.role === "center" && person.centerSiteId) window.SeaDiveSites?.removeCustomSite?.(person.centerSiteId);
   state.people = (state.people || []).filter((p) => p.id !== person.id && !personIsGone(p, state.deletedPeople));
   save(state);
   silentDrivePush();
@@ -1013,6 +1014,16 @@ function upsertPerson(partial, opts) {
   if (typeof partial.level === "string") found.level = partial.level.trim();
   if (String(partial.lead || "").trim()) found.lead = String(partial.lead).trim();
   if (partial.note != null) found.note = String(partial.note).trim();
+  if (partial.address != null) found.address = String(partial.address).trim();
+  if (partial.lat != null && partial.lat !== "") {
+    const lat = Number(String(partial.lat).replace(",", "."));
+    if (Number.isFinite(lat)) found.lat = lat;
+  }
+  if (partial.lng != null && partial.lng !== "") {
+    const lng = Number(String(partial.lng).replace(",", "."));
+    if (Number.isFinite(lng)) found.lng = lng;
+  }
+  if (typeof partial.centerSiteId === "string") found.centerSiteId = partial.centerSiteId;
   if (typeof partial.remoteOwner === "string" && partial.remoteOwner.trim()) found.remoteOwner = partial.remoteOwner.trim();
   if (partial.followOut === true) found.followOut = true;
   if (partial.followOut === false) found.followOut = false;
@@ -2203,8 +2214,9 @@ function profilePortraitImage() {
 }
 
 function personPortrait(person) {
-  if (!person || person.role === "center") return "";
+  if (!person) return "";
   const own = portraitImage(person.portrait);
+  if (person.role === "center") return own;
   if (own) return own;
   if (samePersonName(person.name, state.profile?.name)) return profilePortraitImage();
   return "";
@@ -2238,6 +2250,29 @@ function shrinkPortrait(dataUrl, maxSide = 240, limit = 14000) {
         out = canvas.toDataURL("image/jpeg", quality);
       }
       resolve(out.startsWith("data:image/") && out.length <= limit + 800 ? out : "");
+    };
+    img.onerror = () => resolve("");
+    img.src = dataUrl;
+  });
+}
+
+function shrinkPhoto(dataUrl, maxSide = 720, limit = 90000) {
+  return new Promise((resolve) => {
+    if (!portraitImage(dataUrl)) return resolve("");
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      let quality = 0.74;
+      let out = canvas.toDataURL("image/jpeg", quality);
+      while (out.length > limit && quality > 0.4) {
+        quality -= 0.08;
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out.startsWith("data:image/") ? out : "");
     };
     img.onerror = () => resolve("");
     img.src = dataUrl;
@@ -4131,7 +4166,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 186</p>
+        <p class="hint">Versione 187</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4659,7 +4694,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=186")
+    divelogsPromise = fetch("./divelogs-sites.json?v=187")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -4756,6 +4791,8 @@ function personalDiveGeo() {
           country: s.country || "",
           done: s.done ? 1 : 0,
           dives: s.dives || 0,
+          kind: s.kind || "",
+          address: s.address || "",
         },
         geometry: { type: "Point", coordinates: [Number(s.lng), Number(s.lat)] },
       })),
@@ -4780,7 +4817,7 @@ function renderWorldMap() {
       <span><i class="flag-ico md"></i> Media, 10–49</span>
       <span><i class="flag-ico lo"></i> Bassa, 1–9</span>
       <span><i class="flag-ico grp">12</i> Zona</span>
-      <span><i class="flag-ico mine"></i> Il tuo sito</span>
+      <span><i class="flag-ico mine"></i> Il tuo sito o diving</span>
     </div>
     <p class="map-legend-note" data-mapstatus>Carico i punti…</p>
     <p class="map-legend-note">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a></p>
@@ -5114,10 +5151,12 @@ function renderWorldMap() {
             if (!feat) return;
             const coords = feat.geometry.coordinates.slice();
             const where = feat.properties.country ? escapeHtml(feat.properties.country) + "<br>" : "";
-            const note = Number(feat.properties.done) ? "Già nel diario" : "Sito aggiunto da te";
+            const diving = feat.properties.kind === "diving";
+            const note = diving ? "Diving" : Number(feat.properties.done) ? "Già nel diario" : "Sito aggiunto da te";
+            const addr = feat.properties.address ? `<br>${escapeHtml(feat.properties.address)}` : "";
             openPopup(
               coords,
-              `<div class="globe-pop"><strong>${escapeHtml(feat.properties.n || "Sito tuo")}</strong>${where}${note}</div>`
+              `<div class="globe-pop"><strong>${escapeHtml(feat.properties.n || "Sito tuo")}</strong><br>${where}${note}${addr}</div>`
             );
             if (map.getZoom() < 13) flyIn(coords, 13.5);
           });
@@ -7938,6 +7977,94 @@ function renderPeople() {
   return frag;
 }
 
+let centerMiniMap = null;
+let centerMiniMarker = null;
+
+async function geocodeAddress(query) {
+  const q = String(query || "").trim();
+  if (q.length < 6) return null;
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&q=${encodeURIComponent(q)}`,
+      { headers: { "Accept-Language": "it" } }
+    );
+    if (res.ok) {
+      const hit = (await res.json())?.[0];
+      const lat = Number(hit?.lat);
+      const lng = Number(hit?.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return { lat, lng, label: String(hit.display_name || q), country: String(hit.address?.country || "") };
+      }
+    }
+  } catch {
+    /* provo l'altro elenco */
+  }
+  try {
+    const res = await fetch(`https://photon.komoot.io/api/?limit=1&lang=it&q=${encodeURIComponent(q)}`);
+    if (!res.ok) return null;
+    const feat = (await res.json())?.features?.[0];
+    const coords = feat?.geometry?.coordinates;
+    if (!coords) return null;
+    const props = feat.properties || {};
+    const label = [props.name, props.street, props.housenumber, props.city, props.country].filter(Boolean).join(", ");
+    return { lat: Number(coords[1]), lng: Number(coords[0]), label: label || q, country: String(props.country || "") };
+  } catch {
+    return null;
+  }
+}
+
+function rasterSeaStyle() {
+  return {
+    version: 8,
+    sources: {
+      sat: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: "Immagini © Esri",
+      },
+    },
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#d5e6ee" } },
+      { id: "sat", type: "raster", source: "sat" },
+    ],
+  };
+}
+
+async function placeCenterMap(el, lat, lng, onMove) {
+  if (!el) return;
+  await loadMapLibre();
+  if (!el.isConnected || !window.maplibregl) return;
+  el.hidden = false;
+  if (centerMiniMap && centerMiniMap.getContainer() === el) {
+    centerMiniMap.resize();
+    centerMiniMap.jumpTo({ center: [lng, lat], zoom: 16 });
+    centerMiniMarker?.setLngLat([lng, lat]);
+    return;
+  }
+  if (centerMiniMap) {
+    try { centerMiniMap.remove(); } catch { /* la mappa precedente è già chiusa */ }
+    centerMiniMap = null;
+    centerMiniMarker = null;
+  }
+  const map = new maplibregl.Map({
+    container: el,
+    style: rasterSeaStyle(),
+    center: [lng, lat],
+    zoom: 16,
+    attributionControl: false,
+  });
+  centerMiniMap = map;
+  map.on("load", () => {
+    if (centerMiniMap !== map) return;
+    const marker = new maplibregl.Marker({ draggable: true, color: "#0b6b68" }).setLngLat([lng, lat]).addTo(map);
+    centerMiniMarker = marker;
+    marker.on("dragend", () => onMove(marker.getLngLat()));
+    map.resize();
+  });
+}
+
 function renderPerson() {
   const creating = view.personId === "new";
   const current = creating ? view.personDraft : (state.people || []).find((p) => p.id === view.personId);
@@ -7956,19 +8083,40 @@ function renderPerson() {
       ${avatarHtml(personPortrait(current), current.name)}
       <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
     </div>
-    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Nome, cognome e brevetto restano pronti sulla scheda." : "Nome, cognome e brevetto si aggiornano anche sulle schede in cui compare già."}</p>
+    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : "Nome, cognome e brevetto si aggiornano anche sulle schede in cui compare già."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
     <div class="chips" data-roles></div>
     <input type="hidden" name="role" value="${escapeHtml(current.role || "buddy")}" />
-    <div class="form-grid" style="margin-top:12px">
+    <input type="hidden" name="lat" value="${Number.isFinite(Number(current.lat)) ? escapeHtml(String(current.lat)) : ""}" />
+    <input type="hidden" name="lng" value="${Number.isFinite(Number(current.lng)) ? escapeHtml(String(current.lng)) : ""}" />
+    <input type="hidden" name="placeCountry" value="" />
+    <div class="form-grid" style="margin-top:12px" data-personfields ${current.role === "center" ? "hidden" : ""}>
       ${field("firstName", "Nome", names.firstName, true)}
       ${field("lastName", "Cognome", names.lastName, true)}
       ${field("cert", "N° brevetto", current.cert, true)}
-      ${field("name", "Denominazione diving", current.role === "center" ? current.name : "", true)}
-      ${field("lead", "Responsabile del diving", current.lead, true)}
+    </div>
+    <div data-centerbox ${current.role === "center" ? "" : "hidden"}>
+      <div class="form-grid">
+        ${field("name", "Denominazione diving", current.role === "center" ? current.name : "", true)}
+        ${field("lead", "Responsabile del diving", current.lead, true)}
+        ${field("address", "Indirizzo preciso", current.address || "", true)}
+      </div>
+      <div class="actions">
+        <button class="btn ghost" type="button" data-findaddr>Trova sulla mappa</button>
+      </div>
+      <p class="hint" data-addrhint>${current.address ? "L'indirizzo posiziona il diving qui e nella sezione Mappa. Puoi spostare il punto." : "Scrivi via, numero e città. La mappa si aggiorna da sola e il diving compare in Mappa."}</p>
+      <div class="dive-mini" data-minimap ${Number.isFinite(Number(current.lat)) && Number.isFinite(Number(current.lng)) ? "" : "hidden"}></div>
+      <p class="hint">Foto del diving, scattata adesso.</p>
+      <button class="dive-shot" type="button" data-centerphoto>${portraitImage(current.portrait) ? `<img alt="" src="${escapeHtml(current.portrait)}" />` : "Scatta foto"}</button>
+      <input type="file" accept="image/*" capture="environment" data-centerfile hidden />
+      <button class="btn ghost" type="button" data-clearcenterphoto ${portraitImage(current.portrait) ? "" : "hidden"}>Togli foto</button>
+      <p class="hint">Firma del responsabile. Resta sul contatto e nella scheda immersione quando scegli questo diving.</p>
+      ${signPad("centerLeadSign", "Firma del responsabile", current.lead || "Responsabile del diving", false)}
+    </div>
+    <div class="form-grid">
       ${field("note", "Note", current.note, true)}
     </div>
-    <p class="hint">${creating ? "Un contatto scritto qui è tuo: brevetto e firma che inserisci restano pronti in immersione." : current.remoteOwner && current.followOut && current.followIn ? "Vi seguite. Nome, cognome, numero di brevetto e firma entrano nella nuova immersione." : current.remoteOwner && current.followOut ? "Lo segui. Brevetto e firma entrano in immersione solo quando segue anche te." : current.remoteOwner && current.followIn ? "Ti segue. Segui anche tu per usare brevetto e firma in immersione." : "Per chi è su SeaDive, brevetto e firma entrano in immersione solo se vi seguite entrambi."}</p>
+    <p class="hint" data-followhint ${current.role === "center" ? "hidden" : ""}>${creating ? "Un contatto scritto qui è tuo: brevetto e firma che inserisci restano pronti in immersione." : current.remoteOwner && current.followOut && current.followIn ? "Vi seguite. Nome, cognome, numero di brevetto e firma entrano nella nuova immersione." : current.remoteOwner && current.followOut ? "Lo segui. Brevetto e firma entrano in immersione solo quando segue anche te." : current.remoteOwner && current.followIn ? "Ti segue. Segui anche tu per usare brevetto e firma in immersione." : "Per chi è su SeaDive, brevetto e firma entrano in immersione solo se vi seguite entrambi."}</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
       <p class="hint">${current.remoteOwner && !(current.followOut && current.followIn) ? "La firma entra in immersione solo quando vi seguite entrambi." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
       ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
@@ -8000,7 +8148,14 @@ function renderPerson() {
         roles.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
         b.classList.add("on");
         const signBox = form.querySelector("[data-personsign]");
+        const centerBox = form.querySelector("[data-centerbox]");
+        const personFields = form.querySelector("[data-personfields]");
+        const followHint = form.querySelector("[data-followhint]");
         if (signBox) signBox.hidden = id === "center";
+        if (centerBox) centerBox.hidden = id !== "center";
+        if (personFields) personFields.hidden = id === "center";
+        if (followHint) followHint.hidden = id === "center";
+        if (id === "center") requestAnimationFrame(() => bindCenterSign());
       };
     } else if (id !== (current.role || "buddy")) {
       b.disabled = true;
@@ -8023,10 +8178,96 @@ function renderPerson() {
       diveBox.append(b);
     });
   let personSign = personKnownSign(current);
+  let centerPhoto = current.role === "center" ? portraitImage(current.portrait) : "";
+  const bindCenterSign = () => {
+    const canvas = form.querySelector('[data-sign="centerLeadSign"]');
+    if (!canvas || canvas.dataset.bound === "1") return;
+    canvas.dataset.bound = "1";
+    bindSign(canvas, personSign, (v) => {
+      personSign = v;
+    });
+  };
+  const paintCenterPhoto = () => {
+    const btn = form.querySelector("[data-centerphoto]");
+    const clear = form.querySelector("[data-clearcenterphoto]");
+    if (btn) btn.innerHTML = centerPhoto ? `<img alt="" src="${escapeHtml(centerPhoto)}" />` : "Scatta foto";
+    if (clear) clear.hidden = !centerPhoto;
+  };
+  const locateCenter = async () => {
+    const hint = form.querySelector("[data-addrhint]");
+    const q = String(form.querySelector("[name=address]")?.value || "").trim();
+    if (q.length < 6) {
+      if (hint) hint.textContent = "Scrivi via, numero e città.";
+      return;
+    }
+    if (hint) hint.textContent = "Cerco l'indirizzo sulla mappa…";
+    const hit = await geocodeAddress(q);
+    if (!form.isConnected) return;
+    if (!hit) {
+      if (hint) hint.textContent = "Indirizzo non trovato. Aggiungi via, numero e città.";
+      return;
+    }
+    form.querySelector("[name=lat]").value = String(hit.lat);
+    form.querySelector("[name=lng]").value = String(hit.lng);
+    form.querySelector("[name=placeCountry]").value = hit.country || "";
+    if (hint) hint.textContent = `${hit.label} Il diving entra in Mappa su questo punto.`;
+    await placeCenterMap(form.querySelector("[data-minimap]"), hit.lat, hit.lng, (point) => {
+      form.querySelector("[name=lat]").value = point.lat.toFixed(6);
+      form.querySelector("[name=lng]").value = point.lng.toFixed(6);
+      const line = form.querySelector("[data-addrhint]");
+      if (line) line.textContent = "Punto spostato. Il diving resta qui nella sezione Mappa.";
+    });
+  };
+  form.querySelector("[data-findaddr]")?.addEventListener("click", () => {
+    locateCenter();
+  });
+  let addrTimer = 0;
+  form.querySelector("[name=address]")?.addEventListener("input", () => {
+    window.clearTimeout(addrTimer);
+    addrTimer = window.setTimeout(() => {
+      if (form.querySelector("[data-centerbox]")?.hidden) return;
+      locateCenter();
+    }, 800);
+  });
+  const photoBtn = form.querySelector("[data-centerphoto]");
+  const photoFile = form.querySelector("[data-centerfile]");
+  photoBtn?.addEventListener("click", () => photoFile?.click());
+  photoFile?.addEventListener("change", async () => {
+    const file = photoFile.files?.[0];
+    photoFile.value = "";
+    if (!file) return;
+    const raw = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
+    });
+    const shrunk = await shrinkPhoto(raw);
+    if (!shrunk) return;
+    centerPhoto = shrunk;
+    paintCenterPhoto();
+  });
+  form.querySelector("[data-clearcenterphoto]")?.addEventListener("click", () => {
+    centerPhoto = "";
+    paintCenterPhoto();
+  });
   queueMicrotask(() => {
     bindSign(form.querySelector('[data-sign="personSign"]'), personSign, (v) => {
       personSign = v;
     });
+    if ((current.role || "buddy") === "center") {
+      bindCenterSign();
+      const lat = Number(current.lat);
+      const lng = Number(current.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        placeCenterMap(form.querySelector("[data-minimap]"), lat, lng, (point) => {
+          form.querySelector("[name=lat]").value = point.lat.toFixed(6);
+          form.querySelector("[name=lng]").value = point.lng.toFixed(6);
+          const line = form.querySelector("[data-addrhint]");
+          if (line) line.textContent = "Punto spostato. Il diving resta qui nella sezione Mappa.";
+        });
+      }
+    }
   });
   form.onsubmit = (e) => {
     e.preventDefault();
@@ -8035,9 +8276,20 @@ function renderPerson() {
     const lastName = String(fd.get("lastName") || "").trim();
     const denom = String(fd.get("name") || "").trim();
     const role = fd.get("role") || current.role;
+    const address = String(fd.get("address") || "").trim();
+    const lat = Number(String(fd.get("lat") || "").replace(",", "."));
+    const lng = Number(String(fd.get("lng") || "").replace(",", "."));
     const name = role === "center" ? denom : [firstName, lastName].filter(Boolean).join(" ");
     if (!name) {
       alert(role === "center" ? "Scrivi la denominazione del diving." : "Scrivi nome e cognome.");
+      return;
+    }
+    if (role === "center" && !address) {
+      alert("Scrivi l'indirizzo preciso del diving.");
+      return;
+    }
+    if (role === "center" && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+      alert("Trova il diving sulla mappa a partire dall'indirizzo.");
       return;
     }
     const before = creating ? null : { ...current };
@@ -8047,12 +8299,27 @@ function renderPerson() {
       name,
       firstName: role === "center" ? "" : firstName,
       lastName: role === "center" ? "" : lastName,
-      cert: fd.get("cert") || "",
+      cert: role === "center" ? "" : fd.get("cert") || "",
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
       following: role === "center" ? false : current.following !== false,
-      sign: role === "center" ? "" : personSign,
+      sign: personSign,
+      ...(role === "center"
+        ? { address, lat, lng, portrait: centerPhoto, centerSiteId: current.centerSiteId || "" }
+        : {}),
     });
+    if (role === "center" && person) {
+      const site = window.SeaDiveSites?.upsertCustomSite?.({
+        id: person.centerSiteId || "",
+        name,
+        country: fd.get("placeCountry") || "",
+        lat,
+        lng,
+        address,
+        kind: "diving",
+      });
+      if (site) person.centerSiteId = site.id;
+    }
     if (before && person) applyPersonOntoDives(before, person);
     if (person) stampPersonSign(person);
     state.peopleSeeded = true;
@@ -8185,6 +8452,13 @@ function bindPeoplePicks(form, d) {
           if (extraInput) extraInput.value = d[extraKey];
           chips.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
           b.classList.add("on");
+          if (role === "center") {
+            const sign = personKnownSign(p);
+            if (sign) {
+              d.centerSign = sign;
+              form._setCenterSign?.(sign);
+            }
+          }
           if (role === "buddy" || role === "guide") {
             const signKey = role === "buddy" ? "buddySign" : "guideSign";
             const sign = diveContactReady(p) ? personKnownSign(p) : "";
@@ -8945,6 +9219,11 @@ function renderEdit() {
       if (v !== applied.guide) applied.guide = "";
     });
     const centerPad = bindSign(form.querySelector('[data-sign="centerSign"]'), d.centerSign, (v) => (d.centerSign = v));
+    form._setCenterSign = (sign) => {
+      if (!sign) return;
+      d.centerSign = sign;
+      centerPad?.set(sign);
+    };
     const stamped = { buddy: null, guide: null };
     form._applyOwnerSign = (opts = {}) => {
       [
