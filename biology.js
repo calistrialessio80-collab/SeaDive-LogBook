@@ -2865,13 +2865,16 @@ function lifeEmoji(x) {
 const lifePageCache = {};
 
 async function lifeInat(la) {
+  const want = String(la || "").trim().toLowerCase();
+  if (want.length < 3) return "";
   for (const extra of ["&rank=species", ""]) {
     try {
-      const res = await fetch(`https://api.inaturalist.org/v1/taxa?q=${encodeURIComponent(la)}${extra}`);
+      const res = await fetch(`https://api.inaturalist.org/v1/taxa?q=${encodeURIComponent(la)}${extra}&per_page=8`);
       if (!res.ok) continue;
       const data = await res.json();
-      const photo = data.results?.[0]?.default_photo;
-      const src = photo?.medium_url || photo?.square_url || photo?.url || "";
+      const exact = (data.results || []).find((row) => String(row.name || "").trim().toLowerCase() === want);
+      const photo = exact?.default_photo;
+      const src = photo?.medium_url || photo?.url || "";
       if (src) return src;
     } catch {
       return "";
@@ -2903,7 +2906,9 @@ async function lifePage(la, it) {
           url: data.content_urls?.desktop?.page || "",
           desc: data.description || "",
         };
-        if (!page.thumb) page.thumb = await lifeInat(la);
+        const animal = await lifeInat(la);
+        if (animal) page.thumb = animal;
+        else if (!page.thumb) page.thumb = "";
         lifePageCache[key] = page;
         return page;
       } catch {

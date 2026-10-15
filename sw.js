@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v184";
+const CACHE = "seadive-logbook-v185";
 const ASSETS = [
   "./",
   "./index.html",
@@ -64,6 +64,9 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html")))
+      .catch(() => {
+        if (new URL(event.request.url).origin !== self.location.origin) return Promise.reject(new Error("offline"));
+        return caches.match(event.request).then((cached) => cached || caches.match("./index.html"));
+      })
   );
 });

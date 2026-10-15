@@ -4131,7 +4131,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 184</p>
+        <p class="hint">Versione 185</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4659,7 +4659,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=184")
+    divelogsPromise = fetch("./divelogs-sites.json?v=185")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6050,15 +6050,97 @@ function subjectPhrase(species, sure) {
   return `Ho confrontato il soggetto con immagini simili. La soluzione più vicina è ${who}.`;
 }
 
+const commonsPhotoCache = new Map();
+
+async function commonsSpeciesPhoto(la) {
+  const name = String(la || "").trim();
+  const key = name.toLowerCase();
+  if (key.length < 3) return "";
+  if (commonsPhotoCache.has(key)) return commonsPhotoCache.get(key);
+  const bad = /map|range|distrib|diagram|icon|logo|pdf|market|potato|cuisine|cooked|fried|stamp|coin|drawing|illustration|schema|flag/i;
+  let src = "";
+  try {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=12&gsrsearch=${encodeURIComponent(`intitle:"${name}"`)}&prop=imageinfo&iiprop=url|mime&iiurlwidth=640`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const pages = Object.values(data.query?.pages || {})
+        .filter((page) => {
+          const info = page.imageinfo?.[0];
+          const title = String(page.title || "");
+          if (!info || !/^image\/(jpeg|png|webp)$/.test(info.mime || "")) return false;
+          if (!title.toLowerCase().includes(key)) return false;
+          if (bad.test(title)) return false;
+          return true;
+        })
+        .sort((a, b) => String(a.title).length - String(b.title).length);
+      const info = pages[0]?.imageinfo?.[0];
+      src = info?.thumburl || info?.url || "";
+    }
+  } catch {
+    src = "";
+  }
+  commonsPhotoCache.set(key, src);
+  return src;
+}
+
+async function confirmSubjectImage(image, ranked, token) {
+  const fallback = ranked?.rows?.[0];
+  if (!fallback) return ranked;
+  const list = (ranked.scored || []).slice(0, 6);
+  if (!list.length || token !== bioPhotoToken) return { ...ranked, photo: "" };
+  lifeClipStatus("Cerco la foto del soggetto…");
+  const extractor = await loadLifeEmbed();
+  if (token !== bioPhotoToken) return null;
+  const query = embedVector(await withLifeEmbed(() => extractor(image)));
+  if (!query) return { ...ranked, photo: "" };
+  let best = fallback;
+  let bestScore = -1;
+  let ownScore = -1;
+  const photos = new Map();
+  for (const row of list) {
+    if (token !== bioPhotoToken) return null;
+    let src = "";
+    try {
+      src = await commonsSpeciesPhoto(row.species.la);
+    } catch {
+      src = "";
+    }
+    if (!src) {
+      try {
+        src = await guideThumbUrl(row.species);
+      } catch {
+        src = "";
+      }
+    }
+    if (!src) continue;
+    photos.set(row.species.id, src);
+    let score = 0;
+    try {
+      const vec = embedVector(await withLifeEmbed(() => extractor(src)));
+      score = vec ? cosineVec(query, vec) : 0;
+    } catch {
+      score = 0;
+    }
+    if (row.species.id === fallback.id) ownScore = score;
+    if (score > bestScore) {
+      bestScore = score;
+      best = row.species;
+    }
+  }
+  if (best.id !== fallback.id && !(bestScore >= ownScore + 0.02)) best = fallback;
+  const sure = bestScore >= 0.9 || (photoMatchSure(ranked) && best.id === fallback.id);
+  return {
+    rows: [best],
+    hint: subjectPhrase(best, sure),
+    photo: photos.get(best.id) || "",
+  };
+}
+
 async function settlePhotoMatch(image, ranked, runnerClass, token) {
   const first = ranked.rows?.[0];
   if (!first) return ranked;
-  if (photoMatchSure(ranked)) {
-    return {
-      rows: [first],
-      hint: subjectPhrase(first, true),
-    };
-  }
+  if (photoMatchSure(ranked)) return confirmSubjectImage(image, ranked, token);
   if (token !== bioPhotoToken) return null;
   lifeClipStatus("Il riscontro non è netto. Confronto immagini simili…");
   const seen = new Set((ranked.scored || []).map((row) => row.species.id));
@@ -6084,23 +6166,11 @@ async function settlePhotoMatch(image, ranked, runnerClass, token) {
     }
     world.slice(0, 12).forEach(push);
   }
-  if (!more.length) {
-    return {
-      rows: ranked.rows,
-      hint: subjectPhrase(first, false),
-    };
-  }
+  if (!more.length) return confirmSubjectImage(image, ranked, token);
   const pool = [...(ranked.scored || []).slice(0, 4).map((row) => row.species), ...more];
   const again = await rankSubjectByPhotos(image, pool, token);
-  if (!again?.rows?.[0]) return ranked;
-  const winner = again.rows[0];
-  if (photoMatchSure(again)) {
-    return { rows: [winner], hint: subjectPhrase(winner, true) };
-  }
-  return {
-    rows: again.rows,
-    hint: subjectPhrase(winner, false),
-  };
+  if (!again?.rows?.[0]) return confirmSubjectImage(image, ranked, token);
+  return confirmSubjectImage(image, again, token);
 }
 
 function samplePhotoClass(chosen, limit) {
@@ -6279,8 +6349,14 @@ async function guideThumbUrl(species) {
       return src;
     }
   }
-  bioThumbUrlCache.set(species.id, "");
-  return "";
+  let commons = "";
+  try {
+    commons = await commonsSpeciesPhoto(species.la);
+  } catch {
+    commons = "";
+  }
+  bioThumbUrlCache.set(species.id, commons || "");
+  return commons || "";
 }
 
 async function speciesPhotoVector(api, species) {
@@ -6764,6 +6840,7 @@ function renderBiology() {
           view.bioFromPhoto = focusImage || clipImage;
           view.bioPhotoName = first.it;
           view.bioPhotoNote = found.hint || "";
+          view.bioSpeciesPhoto = found.photo || "";
           openBioGuide(first.id);
           return;
         }
@@ -6855,7 +6932,7 @@ function renderBioGuide() {
     `;
   }
   sec.querySelector("[data-bioback]").onclick = () => {
-    view = { ...view, name: "bio", bioId: "", bioFromPhoto: "", bioPhotoName: "", bioPhotoNote: "" };
+    view = { ...view, name: "bio", bioId: "", bioFromPhoto: "", bioPhotoName: "", bioPhotoNote: "", bioSpeciesPhoto: "" };
     render();
     window.scrollTo(0, 0);
   };
@@ -6872,22 +6949,30 @@ function renderBioGuide() {
   return frag;
 }
 
+function showSpeciesPhoto(img, src, fallback) {
+  if (!img || !src) return;
+  const show = () => {
+    img.classList.add("on");
+    img.closest(".bio-hero")?.classList.add("has-photo");
+  };
+  img.onload = show;
+  img.onerror = () => {
+    if (fallback && img.getAttribute("src") !== fallback) img.src = fallback;
+  };
+  img.src = src;
+  if (img.complete && img.naturalWidth) show();
+}
+
 function bindBioGuide(root, species) {
   const api = window.SeaDiveBiology;
   const gen = ++bioThumbGen;
+  const img = root.querySelector("[data-bioimg]");
+  const direct = view.bioSpeciesPhoto || "";
+  if (direct) showSpeciesPhoto(img, direct, "");
   api.lifePage(species.la, species.it).then((page) => {
     if (gen !== bioThumbGen || !root.isConnected) return;
-    const img = root.querySelector("[data-bioimg]");
     const src = String(page?.thumb || "");
-    if (img && src) {
-      const show = () => {
-        img.classList.add("on");
-        img.closest(".bio-hero")?.classList.add("has-photo");
-      };
-      img.onload = show;
-      img.src = src;
-      if (img.complete && img.naturalWidth) show();
-    }
+    if (src) showSpeciesPhoto(img, src, direct);
     const box = root.querySelector("[data-biowiki]");
     if (!box) return;
     if (page?.extract) {
