@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 191</p>
+        <p class="hint">Versione 192</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5236,9 +5236,54 @@ function renderWorldMap() {
   return frag;
 }
 
+function homePortLine(id) {
+  if (id === "computer") return "Dal computer al diario";
+  if (id === "log") {
+    const n = totals().n;
+    return n ? `${n} nel diario` : "Le schede immersione";
+  }
+  if (id === "bio") return "Guida e riconoscimento";
+  if (id === "home") return "La pagina in cui sei";
+  if (id === "profile") {
+    const who = String(state.profile?.name || "").trim().split(" ")[0];
+    return who || "Brevetto e firma";
+  }
+  if (id === "people") {
+    const n = (state.people || []).length;
+    return n ? `${n} in Community` : "Chi usa SeaDive";
+  }
+  if (id === "map") return "Siti e diving";
+  return "";
+}
+
+const APP_RATING_KEY = "seadive-app-rating";
+
+function loadAppRating() {
+  const n = Number(localStorage.getItem(APP_RATING_KEY));
+  return n >= 1 && n <= 5 ? n : 0;
+}
+
+function saveAppRating(n) {
+  const next = n >= 1 && n <= 5 ? n : 0;
+  localStorage.setItem(APP_RATING_KEY, String(next));
+  return next;
+}
+
 function renderHome() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("", "home"));
+  const ports = document.createElement("section");
+  ports.className = "home-ports";
+  ports.innerHTML = NAV_SECTIONS.map(
+    ([id, icon, label]) => `<button class="port${id === "home" ? " here" : ""}" type="button" data-port="${id}">
+      <span class="port-scene scene-${id}">${icon}<i></i><i></i></span>
+      <span class="port-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(homePortLine(id))}</small></span>
+    </button>`
+  ).join("");
+  ports.querySelectorAll("[data-port]").forEach((b) => {
+    b.onclick = () => openNavSection(b.dataset.port);
+  });
+  frag.append(ports);
   const t = totals();
   const last = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
   const years = divesByYear();
@@ -5309,6 +5354,35 @@ function renderHome() {
     listWrap.append(ul);
   }
   frag.append(listWrap);
+  const rate = document.createElement("section");
+  rate.className = "app-rate";
+  const rating = loadAppRating();
+  rate.innerHTML = `
+    <p>Ti piace questa app</p>
+    <div class="stars" role="group" aria-label="Ti piace questa app">
+      ${[1, 2, 3, 4, 5]
+        .map(
+          (n) => `<button class="star${n <= rating ? " on" : ""}" type="button" data-star="${n}" aria-label="${n} ${n === 1 ? "stella" : "stelle"}" aria-pressed="${n <= rating ? "true" : "false"}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2l2.4 5.2 5.7.7-4.2 3.9 1.1 5.6L12 16.8 7 18.6l1.1-5.6L3.9 9.1l5.7-.7z"/></svg>
+          </button>`
+        )
+        .join("")}
+    </div>
+  `;
+  const paintStars = (n) => {
+    rate.querySelectorAll(".star").forEach((el) => {
+      const on = Number(el.dataset.star) <= n;
+      el.classList.toggle("on", on);
+      el.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  };
+  rate.querySelectorAll(".star").forEach((el) => {
+    el.onclick = () => {
+      const picked = Number(el.dataset.star);
+      paintStars(saveAppRating(picked === loadAppRating() ? 0 : picked));
+    };
+  });
+  frag.append(rate);
   return frag;
 }
 

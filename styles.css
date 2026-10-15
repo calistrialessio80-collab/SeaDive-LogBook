@@ -113,7 +113,11 @@ body.page-home,
 body.page-app {
   background: #021018 url("./splash.jpg?v=1") center 40% / cover no-repeat scroll;
 }
-body.page-home::before,
+body.page-home::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(2, 16, 24, 0.16) 0%, rgba(2, 16, 24, 0.08) 24%, rgba(3, 22, 34, 0.34) 100%);
+}
 body.page-app::before {
   content: "";
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
@@ -327,7 +331,114 @@ body.page-app .section-head h3 { color: #1c2430; }
 .section { margin-top: 22px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 0 12px; }
 .section-head h3 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
-body.page-home .section-head h3 { color: #1c2430; }
+body.page-home .section-head h3 { color: #fff; text-shadow: 0 1px 8px rgba(2, 16, 24, 0.45); }
+body.page-home .vault-home { color: rgba(255, 255, 255, 0.92); text-shadow: 0 1px 8px rgba(2, 16, 24, 0.4); }
+.home-ports {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 2px 0 14px;
+}
+.port {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 20px;
+  padding: 8px;
+  color: #102028;
+  cursor: pointer;
+  background: rgba(247, 252, 255, 0.78);
+  box-shadow: 0 10px 24px rgba(2, 16, 24, 0.16);
+  backdrop-filter: blur(8px);
+}
+.port.here { outline: 2px solid rgba(255, 214, 92, 0.9); }
+.port-scene {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-size: 24px;
+  line-height: 1;
+}
+.port-scene i {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+}
+.port-scene i:first-of-type { width: 8px; height: 8px; right: 7px; top: 8px; }
+.port-scene i:last-of-type { width: 5px; height: 5px; left: 8px; bottom: 9px; }
+.scene-computer { background: linear-gradient(160deg, #7fd4ea, #14556e); }
+.scene-log { background: linear-gradient(160deg, #f3e2b0, #2f8f9a); }
+.scene-bio { background: linear-gradient(160deg, #b7e38a, #0e6b62); }
+.scene-home { background: linear-gradient(160deg, #9fd8ff, #1a4f86); }
+.scene-profile { background: linear-gradient(160deg, #d7c4ff, #3d4f86); font-size: 0; }
+.scene-profile img { width: 36px; height: 36px; object-fit: contain; }
+.scene-people { background: linear-gradient(160deg, #8fd0ff, #2458a6); font-size: 16px; letter-spacing: -4px; }
+.scene-map { background: linear-gradient(160deg, #67d0c4, #0c4f62); }
+.port-copy { min-width: 0; }
+.port-copy strong, .port-copy small { display: block; }
+.port:last-child { grid-column: 1 / -1; }
+.port-copy strong {
+  font-size: 13px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  white-space: normal;
+}
+.port-copy small {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #3d5360;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-rate {
+  margin: 18px 0 8px;
+  padding: 12px 14px 10px;
+  border-radius: 22px;
+  text-align: center;
+  color: #fff;
+  background: rgba(8, 32, 44, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 10px 24px rgba(2, 16, 24, 0.18);
+  backdrop-filter: blur(8px);
+}
+.app-rate p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 8px rgba(2, 16, 24, 0.35);
+}
+.app-rate .stars { display: flex; justify-content: center; gap: 4px; }
+.app-rate .star {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  padding: 6px;
+  border-radius: 50%;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+}
+.app-rate .star svg { width: 100%; height: 100%; display: block; }
+.app-rate .star path {
+  fill: transparent;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.app-rate .star.on path {
+  fill: #ffd15a;
+  stroke: #ffe7a3;
+}
 .feed { margin-top: 18px; }
 
 .search {
