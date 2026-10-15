@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 193</p>
+        <p class="hint">Versione 194</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5283,9 +5283,8 @@ function renderHome() {
   ports.querySelectorAll("[data-port]").forEach((b) => {
     b.onclick = () => openNavSection(b.dataset.port);
   });
-  frag.append(ports);
   const t = totals();
-  const last = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+  const last = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (Number(b.number) || 0) - (Number(a.number) || 0))[0];
   const years = divesByYear();
   const maxY = Math.max(1, ...years.map((y) => y.n));
   const dash = document.createElement("section");
@@ -5341,16 +5340,16 @@ function renderHome() {
   vault.className = "hint vault-home";
   vault.textContent = vaultStatusLine();
   frag.append(vault);
+  frag.append(ports);
 
   const listWrap = document.createElement("section");
   listWrap.className = "section feed";
-  listWrap.innerHTML = `<div class="section-head"><h3>Le tue immersioni</h3></div>`;
-  const recent = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 8);
-  if (!recent.length) listWrap.append(emptyState());
+  listWrap.innerHTML = `<div class="section-head"><h3>Ultima immersione</h3></div>`;
+  if (!last) listWrap.append(emptyState());
   else {
     const ul = document.createElement("div");
     ul.className = "dive-list";
-    recent.forEach((d) => ul.append(diveCard(d)));
+    ul.append(diveCard(last));
     listWrap.append(ul);
   }
   frag.append(listWrap);
