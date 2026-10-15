@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 188</p>
+        <p class="hint">Versione 189</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4980,6 +4980,9 @@ function renderWorldMap() {
         const badges = document.createElement("div");
         badges.className = "cluster-badges";
         el.appendChild(badges);
+        const divingNames = document.createElement("div");
+        divingNames.className = "diving-names";
+        el.appendChild(divingNames);
         let popup = null;
         const openPopup = (lngLat, html) => {
           popup?.remove();
@@ -5008,6 +5011,22 @@ function renderWorldMap() {
             );
           });
           badges.innerHTML = parts.join("");
+          if (!map.getLayer("mine")) return;
+          const named = map.queryRenderedFeatures({ layers: ["mine"] }).filter((f) => f.properties?.kind === "diving" && f.properties?.n);
+          const seenNames = new Set();
+          divingNames.replaceChildren();
+          named.forEach((f) => {
+            const coords = f.geometry?.coordinates;
+            if (!coords) return;
+            const key = `${f.properties.n}|${Number(coords[0]).toFixed(5)}|${Number(coords[1]).toFixed(5)}`;
+            if (seenNames.has(key)) return;
+            seenNames.add(key);
+            const pt = map.project(coords);
+            const tag = document.createElement("span");
+            tag.textContent = f.properties.n;
+            tag.style.transform = `translate(${pt.x}px, ${pt.y + 6}px) translate(-50%, 0)`;
+            divingNames.append(tag);
+          });
         };
         let badgeFrame = 0;
         const queueBadges = () => {
@@ -8043,7 +8062,7 @@ function placeCenterMap(el, query) {
   const frame = document.createElement("iframe");
   frame.className = "dive-google";
   frame.title = "Posizione su Google Maps";
-  frame.src = `https://maps.google.com/maps?q=${encodeURIComponent(q)}&hl=it&z=18&output=embed`;
+  frame.src = `https://maps.google.com/maps?q=${encodeURIComponent(q)}&hl=it&z=18&t=k&output=embed`;
   frame.loading = "lazy";
   frame.referrerPolicy = "no-referrer-when-downgrade";
   el.replaceChildren(frame);
@@ -8083,6 +8102,7 @@ function renderPerson() {
       <div class="form-grid">
         ${field("name", "Denominazione diving", current.role === "center" ? current.name : "", true)}
         ${field("lead", "Responsabile del diving", current.lead, true)}
+        ${field("centerCert", "N° brevetto", current.cert, true)}
         ${field("street", "Via", current.addressStreet || (!current.addressNumber && !current.addressCity ? current.address || "" : ""), true)}
         ${field("civic", "Numero civico", current.addressNumber || "")}
         ${field("city", "Città", current.addressCity || "", true)}
@@ -8289,7 +8309,7 @@ function renderPerson() {
       name,
       firstName: role === "center" ? "" : firstName,
       lastName: role === "center" ? "" : lastName,
-      cert: role === "center" ? "" : fd.get("cert") || "",
+      cert: role === "center" ? fd.get("centerCert") || "" : fd.get("cert") || "",
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
       following: role === "center" ? false : current.following !== false,

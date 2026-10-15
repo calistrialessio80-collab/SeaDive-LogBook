@@ -1326,6 +1326,31 @@ body.page-map .nav-dock { background: transparent; }
   overflow: hidden;
   pointer-events: none;
 }
+.world-map .diving-names {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+.world-map .diving-names span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 180px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: #f7fbff;
+  color: #102028;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .world-map .cluster-badges b {
   position: absolute;
   left: 0;
