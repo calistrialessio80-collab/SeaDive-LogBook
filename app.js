@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 192</p>
+        <p class="hint">Versione 193</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4327,7 +4327,7 @@ function renderNav() {
   const items = NAV_SECTIONS;
   items.forEach(([id, icon, label]) => {
     const b = document.createElement("button");
-    const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
+    const on = view.name === id || (id === "home" && view.name === "stats") || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
     b.className = on ? "active" : "";
     if (id === "bio") b.classList.add("bio-nav");
     if (id === "home") b.classList.add("nav-home");

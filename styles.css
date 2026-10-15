@@ -663,10 +663,12 @@ body.page-home .vault-home { color: rgba(255, 255, 255, 0.92); text-shadow: 0 1p
   flex: none;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   font-style: normal;
+  transition: transform 0.16s ease;
 }
 .nav button.active span {
   background: #e8f3ff;
   color: unset;
+  transform: scale(1.16);
 }
 .nav button span.nav-divers {
   font-size: 18px;
