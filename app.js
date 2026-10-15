@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 189</p>
+        <p class="hint">Versione 190</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4200,10 +4200,10 @@ function topbar(subtitle, mode) {
 }
 
 const NAV_SECTIONS = [
-  ["home", "🌊", "SeaDive"],
+  ["computer", "⌚", "Computer"],
   ["log", "📒", "Diario"],
   ["bio", "🌿", "Biologia"],
-  ["computer", "⌚", "Computer"],
+  ["home", "🌊", "SeaDive Home"],
   ["profile", `<img src="./nav-diver.png?v=170" alt="" draggable="false" />`, "Profilo"],
   ["people", "🤿🤿", "Community"],
   ["map", "🗺️", "Mappa"],
@@ -4330,6 +4330,7 @@ function renderNav() {
     const on = view.name === id || (id === "log" && (view.name === "detail" || view.name === "edit")) || (id === "people" && view.name === "chat");
     b.className = on ? "active" : "";
     if (id === "bio") b.classList.add("bio-nav");
+    if (id === "home") b.classList.add("nav-home");
     if (id === "people") b.dataset.chatnav = "1";
     const badge = id === "people" && chatUnreadTotal() > 0 ? " " + chatUnreadTotal() : "";
     const spanClass = id === "people" ? "nav-divers" : id === "profile" ? "nav-diver" : "";

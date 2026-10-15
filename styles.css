@@ -587,6 +587,12 @@ body.page-home .section-head h3 { color: #1c2430; }
   text-overflow: ellipsis;
   padding: 0;
 }
+.nav button.nav-home small {
+  font-size: 9px;
+  letter-spacing: -0.05em;
+  line-height: 1.05;
+  white-space: normal;
+}
 
 .btn {
   border: 0; border-radius: 999px; padding: 12px 16px; cursor: pointer; font-weight: 600;
