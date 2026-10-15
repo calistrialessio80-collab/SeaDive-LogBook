@@ -4131,7 +4131,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 185</p>
+        <p class="hint">Versione 186</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4659,7 +4659,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=185")
+    divelogsPromise = fetch("./divelogs-sites.json?v=186")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5962,21 +5962,35 @@ function cosineVec(a, b) {
   return dot / Math.sqrt(na * nb);
 }
 
+async function embedImageSource(extractor, src) {
+  try {
+    const direct = embedVector(await withLifeEmbed(() => extractor(src)));
+    if (direct) return direct;
+  } catch {
+    /* l'indirizzo diretto può essere bloccato: riprovo dal file scaricato */
+  }
+  const res = await fetch(src);
+  if (!res.ok) return null;
+  const blob = await res.blob();
+  const local = URL.createObjectURL(blob);
+  try {
+    return embedVector(await withLifeEmbed(() => extractor(local)));
+  } finally {
+    URL.revokeObjectURL(local);
+  }
+}
+
 async function speciesEmbed(extractor, species) {
   if (fishEmbedCache.has(species.id)) return fishEmbedCache.get(species.id);
   let src = "";
   try {
     src = await guideThumbUrl(species);
   } catch {
-    src = "";
-  }
-  if (!src) {
-    fishEmbedCache.set(species.id, null);
     return null;
   }
+  if (!src) return null;
   try {
-    const out = await withLifeEmbed(() => extractor(src));
-    const vec = embedVector(out);
+    const vec = await embedImageSource(extractor, src);
     if (!vec) return null;
     fishEmbedCache.set(species.id, vec);
     return vec;
@@ -6350,13 +6364,23 @@ async function guideThumbUrl(species) {
     }
   }
   let commons = "";
+  let animal = "";
+  let failed = false;
   try {
     commons = await commonsSpeciesPhoto(species.la);
   } catch {
-    commons = "";
+    failed = true;
   }
-  bioThumbUrlCache.set(species.id, commons || "");
-  return commons || "";
+  if (!commons) {
+    try {
+      animal = await window.SeaDiveBiology.lifeThumb(species.la, species.it);
+    } catch {
+      failed = true;
+    }
+  }
+  const src = commons || animal || "";
+  if (src || !failed) bioThumbUrlCache.set(species.id, src);
+  return src;
 }
 
 async function speciesPhotoVector(api, species) {
