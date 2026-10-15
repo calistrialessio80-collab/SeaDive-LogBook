@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 190</p>
+        <p class="hint">Versione 191</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -6537,70 +6537,24 @@ function dataUrlBytes(dataUrl) {
   return { mime, bytes };
 }
 
-function imagePixelSize(mime, bytes) {
-  if (mime === "image/png" && bytes.length > 24 && bytes[0] === 0x89) {
-    const width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-    const height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
-    if (width > 0 && height > 0) return [width, height];
-  }
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
-    let i = 2;
-    while (i + 9 < bytes.length) {
-      if (bytes[i] !== 0xff) break;
-      const marker = bytes[i + 1];
-      const len = (bytes[i + 2] << 8) | bytes[i + 3];
-      if (marker >= 0xc0 && marker <= 0xc3) {
-        const height = (bytes[i + 5] << 8) | bytes[i + 6];
-        const width = (bytes[i + 7] << 8) | bytes[i + 8];
-        if (width > 0 && height > 0) return [width, height];
-      }
-      if (len < 2) break;
-      i += 2 + len;
-    }
-  }
-  return [512, 512];
-}
-
-function mountGoogleLens(slot, dataUrl) {
+function mountGoogleLens(slot, dataUrl, query) {
   const packed = dataUrlBytes(dataUrl);
   if (!packed?.bytes?.length || !slot) return false;
-  const [width, height] = imagePixelSize(packed.mime, packed.bytes);
-  const file = new File([packed.bytes], "soggetto.jpg", { type: packed.mime || "image/jpeg" });
-  const form = document.createElement("form");
-  form.className = "bio-actions";
-  form.method = "POST";
-  form.action = "https://lens.google.com/v3/upload?hl=it";
-  form.enctype = "multipart/form-data";
-  form.target = "_blank";
-  form.style.position = "relative";
-  const input = document.createElement("input");
-  input.type = "file";
-  input.name = "encoded_image";
-  input.tabIndex = -1;
-  input.setAttribute("aria-hidden", "true");
-  input.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;";
-  try {
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    input.files = transfer.files;
-    if (!input.files.length || input.files[0].size < 1) return false;
-  } catch {
-    return false;
-  }
-  const dims = document.createElement("input");
-  dims.type = "hidden";
-  dims.name = "processed_image_dimensions";
-  dims.value = `${width},${height}`;
+  const q = String(query || "").trim() || "biologia marina";
+  const url = `https://www.google.com/search?hl=it&tbm=isch&q=${encodeURIComponent(q)}`;
+  const wrap = document.createElement("div");
+  wrap.className = "bio-actions";
   const button = document.createElement("button");
   button.className = "btn primary";
-  button.type = "submit";
+  button.type = "button";
   button.textContent = "Confronta su Google";
-  form.append(input, dims, button);
-  form.addEventListener("submit", () => {
+  button.addEventListener("click", () => {
     const installed = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-    if (installed) form.target = "_self";
+    if (installed) window.location.assign(url);
+    else window.open(url, "_blank", "noopener,noreferrer");
   });
-  slot.replaceWith(form);
+  wrap.append(button);
+  slot.replaceWith(wrap);
   return true;
 }
 
@@ -7023,7 +6977,7 @@ function renderBioGuide() {
     window.scrollTo(0, 0);
   };
   const lensSlot = sec.querySelector("[data-lens]")?.closest(".bio-actions");
-  if (lensSlot && view.bioFromPhoto && !mountGoogleLens(lensSlot, view.bioFromPhoto)) {
+  if (lensSlot && view.bioFromPhoto && !mountGoogleLens(lensSlot, view.bioFromPhoto, x ? `${x.la} ${x.it}` : "")) {
     const note = sec.querySelector("[data-lensnote]");
     if (note) {
       note.hidden = false;
