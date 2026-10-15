@@ -4131,7 +4131,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 183</p>
+        <p class="hint">Versione 184</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -4659,7 +4659,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=183")
+    divelogsPromise = fetch("./divelogs-sites.json?v=184")
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -6010,10 +6010,11 @@ async function rankSubjectByPhotos(image, species, token) {
   if (token !== bioPhotoToken || !scored.length) return null;
   scored.sort((a, b) => b.score - a.score || a.species.it.localeCompare(b.species.it, "it"));
   const best = scored[0];
+  const gap = best.score - (scored[1]?.score || 0);
   const near = scored.filter((row, index) => index === 0 || best.score - row.score <= 0.025).slice(0, 4);
   const rows = near.map((row) => row.species);
   const hint = `Sembra ${best.species.it}, ${best.species.la}.`;
-  return { rows, hint };
+  return { rows, hint, bestScore: best.score, gap, scored: scored.slice(0, 8) };
 }
 
 function speciesInPhotoClass(chosen) {
@@ -6029,6 +6030,84 @@ function speciesInPhotoClass(chosen) {
     });
   });
   return rows;
+}
+
+function photoMatchSure(ranked) {
+  return !!ranked && ranked.bestScore >= 0.905 && ranked.gap >= 0.03;
+}
+
+function genusOf(species) {
+  const genus = String(species?.la || "").trim().split(/\s+/)[0] || "";
+  return genus.length >= 4 ? genus : "";
+}
+
+function subjectPhrase(species, sure) {
+  const it = String(species?.it || "").trim();
+  const la = String(species?.la || "").trim();
+  const same = it.toLocaleLowerCase("it") === la.toLocaleLowerCase("it");
+  const who = !it || same ? la || it : `${it}, ${la}`;
+  if (sure) return `Il soggetto è ${who}.`;
+  return `Ho confrontato il soggetto con immagini simili. La soluzione più vicina è ${who}.`;
+}
+
+async function settlePhotoMatch(image, ranked, runnerClass, token) {
+  const first = ranked.rows?.[0];
+  if (!first) return ranked;
+  if (photoMatchSure(ranked)) {
+    return {
+      rows: [first],
+      hint: subjectPhrase(first, true),
+    };
+  }
+  if (token !== bioPhotoToken) return null;
+  lifeClipStatus("Il riscontro non è netto. Confronto immagini simili…");
+  const seen = new Set((ranked.scored || []).map((row) => row.species.id));
+  const more = [];
+  const push = (species) => {
+    if (!species?.id || seen.has(species.id) || more.length >= 24) return;
+    seen.add(species.id);
+    more.push(species);
+  };
+  samplePhotoClass(runnerClass, 12).forEach(push);
+  const genera = [];
+  (ranked.scored || []).slice(0, 2).forEach((row) => {
+    const genus = genusOf(row.species);
+    if (genus && !genera.includes(genus)) genera.push(genus);
+  });
+  for (const genus of genera) {
+    if (token !== bioPhotoToken) return null;
+    let world = [];
+    try {
+      world = await window.SeaDiveBiology.searchWorldLife(genus);
+    } catch {
+      world = [];
+    }
+    world.slice(0, 12).forEach(push);
+  }
+  if (!more.length) {
+    return {
+      rows: ranked.rows,
+      hint: subjectPhrase(first, false),
+    };
+  }
+  const pool = [...(ranked.scored || []).slice(0, 4).map((row) => row.species), ...more];
+  const again = await rankSubjectByPhotos(image, pool, token);
+  if (!again?.rows?.[0]) return ranked;
+  const winner = again.rows[0];
+  if (photoMatchSure(again)) {
+    return { rows: [winner], hint: subjectPhrase(winner, true) };
+  }
+  return {
+    rows: again.rows,
+    hint: subjectPhrase(winner, false),
+  };
+}
+
+function samplePhotoClass(chosen, limit) {
+  const pool = speciesInPhotoClass(chosen);
+  if (pool.length <= limit) return pool;
+  const step = Math.ceil(pool.length / limit);
+  return pool.filter((_, index) => index % step === 0).slice(0, limit);
 }
 
 async function clipBest(classifier, image, items, labelOf) {
@@ -6064,6 +6143,7 @@ async function recognizePhotoSubject(image, signals, token, focusImage) {
   let topClass = classes[0];
   let topScore = -1;
   let topImage = image;
+  let topScores = null;
   let fishScore = -1;
   let fishImage = image;
   lifeClipStatus("Guardo che soggetto c’è nella foto…");
@@ -6079,6 +6159,7 @@ async function recognizePhotoSubject(image, signals, token, focusImage) {
       topScore = picked.score;
       topClass = picked.best;
       topImage = shot;
+      topScores = picked.scores;
     }
   }
   let chosen = topClass;
@@ -6094,7 +6175,21 @@ async function recognizePhotoSubject(image, signals, token, focusImage) {
   if (photoPool.length) {
     try {
       const ranked = await rankSubjectByPhotos(chosenImage, photoPool, token);
-      if (ranked) return ranked;
+      if (ranked) {
+        let runner = null;
+        if (topScores) {
+          let runnerScore = -1;
+          classes.forEach((item) => {
+            if (item.id === chosen?.id) return;
+            const value = topScores.get(item.prompt || item.label) || 0;
+            if (value > runnerScore) {
+              runner = item;
+              runnerScore = value;
+            }
+          });
+        }
+        return await settlePhotoMatch(chosenImage, ranked, runner, token);
+      }
     } catch {
       /* se il confronto foto non riesce, resta il riconoscimento per tipo */
     }
@@ -6668,6 +6763,7 @@ function renderBiology() {
         if (first?.id) {
           view.bioFromPhoto = focusImage || clipImage;
           view.bioPhotoName = first.it;
+          view.bioPhotoNote = found.hint || "";
           openBioGuide(first.id);
           return;
         }
@@ -6713,7 +6809,7 @@ function renderBioGuide() {
     const fromPhoto = view.bioFromPhoto
       ? `<div class="bio-block">
           <h3>Soggetto della foto</h3>
-          <p>Ho isolato il soggetto, senza lo sfondo, e l’ho confrontato con le foto online della guida. Questa è la scheda più vicina.</p>
+          <p>${escapeHtml(view.bioPhotoNote || "Ho isolato il soggetto, senza lo sfondo, e l’ho confrontato con le foto online della guida. Questa è la scheda più vicina.")}</p>
           <img class="bio-subject" alt="" src="${escapeHtml(view.bioFromPhoto)}" />
           <div class="bio-actions">
             <button class="btn primary" type="button" data-lens>Confronta su Google</button>
@@ -6759,7 +6855,7 @@ function renderBioGuide() {
     `;
   }
   sec.querySelector("[data-bioback]").onclick = () => {
-    view = { ...view, name: "bio", bioId: "", bioFromPhoto: "", bioPhotoName: "" };
+    view = { ...view, name: "bio", bioId: "", bioFromPhoto: "", bioPhotoName: "", bioPhotoNote: "" };
     render();
     window.scrollTo(0, 0);
   };
