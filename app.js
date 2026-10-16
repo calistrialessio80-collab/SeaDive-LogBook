@@ -2537,6 +2537,9 @@ function repairCommunityNames() {
       stampPersonSign(person);
       changed = true;
     }
+    if (!person.level || !person.cert || !(typeof person.sign === "string" && person.sign.startsWith("data:image"))) {
+      scheduleMutualRefresh();
+    }
   });
   if (changed) {
     save(state);
@@ -2595,11 +2598,13 @@ function rememberMutualProfile(person, cardHit, mutual) {
     payload.name = handle.name;
   }
   if (mutual) {
-    if (cardHit.level) payload.level = cardHit.level;
-    const cert = String(cardHit.cert || "").trim();
-    const sign = cardHit.sign || "";
+    const board = boardDiverRecord(owner);
+    const level = cardHit.level || board?.level || "";
+    const cert = String(cardHit.cert || board?.cert || "").trim();
+    const sign = (typeof cardHit.sign === "string" && cardHit.sign.startsWith("data:image") ? cardHit.sign : "") || board?.sign || "";
+    if (level) payload.level = level;
     if (cert) payload.cert = cert;
-    if (typeof sign === "string" && sign.startsWith("data:image")) payload.sign = sign;
+    if (sign) payload.sign = sign;
   }
   const saved = upsertPerson(payload);
   if (saved && !mutual) {
@@ -2635,6 +2640,9 @@ async function connectSeaPerson(cardHit, chat) {
       return;
     }
     const mutual = !res.error && (Boolean(res.followIn) || alreadyIn);
+    if (mutual) {
+      try { await loadCommunityBoard(0); } catch { /* usa la scheda già in memoria */ }
+    }
     const shared = mutual ? sharedProfileIdentity(res.link, cardHit.owner) : null;
     if (!res.error) {
       rememberMutualProfile(person, { ...cardHit, ...(shared || {}) }, mutual);
@@ -2647,6 +2655,7 @@ async function connectSeaPerson(cardHit, chat) {
       : listedName && !listedName.startsWith("Sub ")
         ? listedName
         : publicDiverLabel(cardHit.owner).name;
+    if (mutual && (!shared?.level || !shared?.cert || !shared?.sign)) scheduleMutualRefresh();
     view.peopleHint = res.error
       ? `Segui ${label}. Il collegamento riprova tra poco: il profilo resta in Community.`
       : mutual
@@ -2688,6 +2697,7 @@ async function disconnectSeaPerson(cardHit) {
       });
       if (saved) {
         saved.cert = "";
+        saved.level = "";
         saved.sign = "";
         saved.following = Boolean(saved.followOut && saved.followIn);
       }
@@ -3301,9 +3311,11 @@ async function setMyFollow(other, on) {
         }, false);
         let board = communityBoardCache.data;
         if (!board) {
-          try { board = await loadCommunityBoard(); } catch { board = null; }
+          try { board = await loadCommunityBoard(0); } catch { board = null; }
         }
-        fillLinkSide(nextBody, otherSide, profileSideFields(board?.profiles?.[otherId]), true);
+        const otherFields = profileSideFields(board?.profiles?.[otherId]);
+        if (otherFields?.sign) otherFields.sign = await shrinkSign(otherFields.sign);
+        fillLinkSide(nextBody, otherSide, otherFields, true);
       }
       await postLinkBasket({ ...links, [pair]: nextBody });
       return nextBody;
@@ -3324,7 +3336,6 @@ async function syncIncomingLinks() {
   } catch {
     links = [];
   }
-  const fetchedAt = Number(communityBoardCache.at) || 0;
   const profiles = await loadOnlineProfiles();
   const cards = profiles.error ? [] : profiles.list;
   const cardByOwner = new Map(cards.filter((c) => c.owner).map((c) => [c.owner, c]));
@@ -3343,15 +3354,14 @@ async function syncIncomingLinks() {
         changed = true;
       }
       setMyFollow(personEarly, true).catch(() => {});
-      return;
     }
-    const theyFollowedBack = Boolean(flags.followIn) && personEarly && !personEarly.followIn;
-    if (!theyFollowedBack && personEarly && Number(personEarly.followRev) > fetchedAt) return;
+    const followOutNow = Boolean(personEarly?.followOut || flags.followOut);
+    const mutualNow = Boolean(followOutNow && flags.followIn);
     if (
-      !theyFollowedBack &&
+      !mutualNow &&
       personEarly &&
-      Date.now() - Number(personEarly.followRev) < 20000 &&
-      (Boolean(personEarly.followOut) !== flags.followOut || Boolean(personEarly.followIn) !== flags.followIn)
+      Date.now() - Number(personEarly.followRev) < 4000 &&
+      Boolean(personEarly.followOut) !== Boolean(flags.followOut)
     ) return;
     const card = cardByOwner.get(remote) || null;
     const followOut = savedFollowOut(personEarly, flags);
@@ -3370,7 +3380,7 @@ async function syncIncomingLinks() {
     }
     const shared = mutual && ident && (ident.firstName || ident.lastName) ? personNames(ident) : null;
     const person = personEarly;
-    const before = person ? `${person.followOut}|${person.followIn}|${person.following}|${person.cert}|${person.sign ? 1 : 0}|${person.name}` : "";
+    const before = person ? `${person.followOut}|${person.followIn}|${person.following}|${person.level}|${person.cert}|${person.sign ? 1 : 0}|${person.name}` : "";
     const payload = {
       id: person?.id,
       role: person?.role && person.role !== "center" ? person.role : "buddy",
@@ -3395,15 +3405,42 @@ async function syncIncomingLinks() {
       saved.sign = "";
       saved.following = Boolean(saved.followOut && saved.followIn);
     }
-    const after = saved ? `${saved.followOut}|${saved.followIn}|${saved.following}|${saved.cert}|${saved.sign ? 1 : 0}|${saved.name}` : "";
+    if (saved && mutual && ident) {
+      if (ident.level) saved.level = ident.level;
+      if (ident.cert) saved.cert = ident.cert;
+      if (ident.sign) saved.sign = ident.sign;
+    }
+    if (mutual && saved && (!saved.level || !saved.cert || !(typeof saved.sign === "string" && saved.sign.startsWith("data:image")))) {
+      scheduleMutualRefresh();
+    }
+    const after = saved ? `${saved.followOut}|${saved.followIn}|${saved.following}|${saved.level}|${saved.cert}|${saved.sign ? 1 : 0}|${saved.name}` : "";
     if (!person || before !== after) {
       if (saved) saved.followRev = Date.now();
       if (mutual && saved) stampPersonSign(saved);
       changed = true;
     }
   });
-  if (changed) save(state);
+  if (changed) {
+    save(state);
+    silentDrivePush();
+  }
   return changed;
+}
+
+function scheduleMutualRefresh() {
+  if (scheduleMutualRefresh.left == null) scheduleMutualRefresh.left = 4;
+  if (scheduleMutualRefresh.timer || scheduleMutualRefresh.left <= 0) return;
+  scheduleMutualRefresh.left -= 1;
+  scheduleMutualRefresh.timer = setTimeout(async () => {
+    scheduleMutualRefresh.timer = 0;
+    try {
+      await loadCommunityBoard(0);
+      const changed = await syncIncomingLinks();
+      if (changed && (view.name === "people" || view.name === "edit")) render();
+    } catch {
+      /* riprova al prossimo giro */
+    }
+  }, 2500);
 }
 
 function renderChat() {
@@ -3730,15 +3767,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-221")) return;
-        sessionStorage.setItem("seadive-sw-221", "1");
-        location.replace("./?v=221&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-222")) return;
+        sessionStorage.setItem("seadive-sw-222", "1");
+        location.replace("./?v=222&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "221";
+const APP_VERSION = "222";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4486,7 +4523,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 221</p>
+        <p class="hint">Versione 222</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -8488,6 +8525,7 @@ function renderPeople() {
   };
   const otherPeople = seaDirectory.list || [];
   const seaPeople = [selfCard, ...otherPeople].filter(Boolean);
+  let shareDirty = false;
   const seaWait = document.createElement("p");
   seaWait.className = "hint";
   seaWait.setAttribute("data-sea-wait", "");
@@ -8532,7 +8570,19 @@ function renderPeople() {
         ? knownNames
         : listed;
     const mode = mutual ? "mutual" : !known ? "none" : known.followOut ? "out" : known.followIn ? "in" : "none";
-    const sharedLine = mutual ? [known?.level, known?.cert].filter(Boolean).join(" · ") : "";
+    const boardIdent = mutual ? boardDiverRecord(cardHit.owner) : null;
+    if (mutual && known && boardIdent) {
+      if (boardIdent.level && !known.level) { known.level = boardIdent.level; shareDirty = true; }
+      if (boardIdent.cert && !known.cert) { known.cert = boardIdent.cert; shareDirty = true; }
+      if (boardIdent.sign && !(typeof known.sign === "string" && known.sign.startsWith("data:image"))) {
+        known.sign = boardIdent.sign;
+        shareDirty = true;
+      }
+    }
+    const sharedLevel = known?.level || boardIdent?.level || "";
+    const sharedCert = known?.cert || boardIdent?.cert || "";
+    const sharedSign = (typeof known?.sign === "string" && known.sign.startsWith("data:image") ? known.sign : "") || boardIdent?.sign || "";
+    const sharedLine = mutual ? [sharedLevel, sharedCert].filter(Boolean).join(" · ") : "";
     const status = [mode === "mutual" ? "Vi seguite" : mode === "in" ? "Ti segue" : "", sharedLine].filter(Boolean).join(" · ");
     const followBtn = mode === "mutual" || mode === "out"
       ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>`
@@ -8547,6 +8597,7 @@ function renderPeople() {
       <strong class="sea-first">${escapeHtml(shown.firstName || "")}</strong>
       <strong class="sea-last">${escapeHtml(shown.lastName || "")}</strong>
       ${status ? `<small class="sea-status">${escapeHtml(status)}</small>` : ""}
+      ${mutual && sharedSign ? `<img class="sea-sign" alt="Firma" src="${escapeHtml(sharedSign)}" />` : ""}
       <div class="people-actions">
         ${followBtn}
       </div>
@@ -8569,6 +8620,10 @@ function renderPeople() {
     });
     seaRow.append(row);
   });
+  if (shareDirty) {
+    save(state);
+    silentDrivePush();
+  }
   const localWait = document.createElement("p");
   localWait.className = "hint";
   localWait.setAttribute("data-list-wait", "");
@@ -8609,6 +8664,7 @@ function renderPeople() {
           <span class="contact-copy">
             <strong>${escapeHtml([first, last].filter(Boolean).join(" "))}</strong>
             <small>${escapeHtml(status)}</small>
+            ${mutualRemote && typeof p.sign === "string" && p.sign.startsWith("data:image") ? `<img class="contact-sign" alt="Firma" src="${escapeHtml(p.sign)}" />` : ""}
           </span>
         </button>
         <div class="contact-links">
@@ -8802,6 +8858,22 @@ function renderPerson() {
   const dives = creating ? [] : divesForPerson(current);
   const pub = current.remoteOwner ? publicNameFromBoard(current.remoteOwner) : null;
   const names = placeholderDiverName(current) && pub ? pub : personNames(current);
+  if (!creating && mutualFollow(current)) {
+    const board = boardDiverRecord(current.remoteOwner);
+    let filled = false;
+    if (board?.level && !current.level) { current.level = board.level; filled = true; }
+    if (board?.cert && !current.cert) { current.cert = board.cert; filled = true; }
+    if (board?.sign && !(typeof current.sign === "string" && current.sign.startsWith("data:image"))) {
+      current.sign = board.sign;
+      filled = true;
+    }
+    if (filled) {
+      save(state);
+      silentDrivePush();
+    } else if (!current.level || !current.cert || !(typeof current.sign === "string" && current.sign.startsWith("data:image"))) {
+      scheduleMutualRefresh();
+    }
+  }
   const privateRemote = !creating && Boolean(current.remoteOwner) && !mutualFollow(current);
   const shownCert = privateRemote ? "" : current.cert;
   const shownLevel = privateRemote ? "" : current.level || "";
