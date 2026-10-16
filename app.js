@@ -4170,7 +4170,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 200</p>
+        <p class="hint">Versione 201</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -8365,9 +8365,14 @@ function renderPerson() {
       </div>
       <p class="hint" data-addrhint>Via, numero civico e città. Trova sulla mappa mette la spunta precisa di Google e lo stesso punto nella sezione Mappa.</p>
       <div class="dive-mini" data-minimap ${Number.isFinite(Number(current.lat)) && Number.isFinite(Number(current.lng)) ? "" : "hidden"}></div>
-      <p class="hint">Foto del diving, scattata adesso.</p>
-      <button class="dive-shot" type="button" data-centerphoto>${portraitImage(current.portrait) ? `<img alt="" src="${escapeHtml(current.portrait)}" />` : "Scatta foto"}</button>
+      <p class="hint">Foto del diving. Scattala adesso oppure sceglila tra quelle già sul telefono.</p>
+      <button class="dive-shot" type="button" data-centerphoto>${portraitImage(current.portrait) ? `<img alt="" src="${escapeHtml(current.portrait)}" />` : "Nessuna foto"}</button>
+      <div class="center-photo-actions">
+        <button class="btn ghost" type="button" data-centercamera>Scatta foto</button>
+        <button class="btn ghost" type="button" data-centergallery>Dal telefono</button>
+      </div>
       <input type="file" accept="image/*" capture="environment" data-centerfile hidden />
+      <input type="file" accept="image/*" data-centergalleryfile hidden />
       <button class="btn ghost" type="button" data-clearcenterphoto ${portraitImage(current.portrait) ? "" : "hidden"}>Togli foto</button>
       <p class="hint">Firma del responsabile. Resta sul contatto e nella scheda immersione quando scegli questo diving.</p>
       ${signPad("centerLeadSign", "Firma del responsabile", current.lead || "Responsabile del diving", false)}
@@ -8449,7 +8454,7 @@ function renderPerson() {
   const paintCenterPhoto = () => {
     const btn = form.querySelector("[data-centerphoto]");
     const clear = form.querySelector("[data-clearcenterphoto]");
-    if (btn) btn.innerHTML = centerPhoto ? `<img alt="" src="${escapeHtml(centerPhoto)}" />` : "Scatta foto";
+    if (btn) btn.innerHTML = centerPhoto ? `<img alt="" src="${escapeHtml(centerPhoto)}" />` : "Nessuna foto";
     if (clear) clear.hidden = !centerPhoto;
   };
   const locateCenter = async () => {
@@ -8495,10 +8500,10 @@ function renderPerson() {
   });
   const photoBtn = form.querySelector("[data-centerphoto]");
   const photoFile = form.querySelector("[data-centerfile]");
-  photoBtn?.addEventListener("click", () => photoFile?.click());
-  photoFile?.addEventListener("change", async () => {
-    const file = photoFile.files?.[0];
-    photoFile.value = "";
+  const galleryFile = form.querySelector("[data-centergalleryfile]");
+  const readCenterPhoto = async (input) => {
+    const file = input?.files?.[0];
+    if (input) input.value = "";
     if (!file) return;
     const raw = await new Promise((resolve) => {
       const reader = new FileReader();
@@ -8510,7 +8515,13 @@ function renderPerson() {
     if (!shrunk) return;
     centerPhoto = shrunk;
     paintCenterPhoto();
-  });
+  };
+  const openCenterCamera = () => photoFile?.click();
+  photoBtn?.addEventListener("click", openCenterCamera);
+  form.querySelector("[data-centercamera]")?.addEventListener("click", openCenterCamera);
+  form.querySelector("[data-centergallery]")?.addEventListener("click", () => galleryFile?.click());
+  photoFile?.addEventListener("change", () => readCenterPhoto(photoFile));
+  galleryFile?.addEventListener("change", () => readCenterPhoto(galleryFile));
   form.querySelector("[data-clearcenterphoto]")?.addEventListener("click", () => {
     centerPhoto = "";
     paintCenterPhoto();

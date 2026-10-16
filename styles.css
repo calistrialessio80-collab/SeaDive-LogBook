@@ -1811,6 +1811,8 @@ body.page-profile::before {
   cursor: pointer;
 }
 .dive-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.center-photo-actions { display: flex; gap: 8px; margin: 0 0 8px; }
+.center-photo-actions .btn { flex: 1; min-width: 0; }
 .dive-mini {
   height: 190px;
   margin: 8px 0 12px;
