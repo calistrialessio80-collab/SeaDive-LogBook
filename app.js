@@ -2735,6 +2735,12 @@ async function publishMyProfile() {
   const portrait = await shrinkPortrait(profilePortraitImage(), 96, 3500);
   const keptPortrait = portrait || (typeof prev.portrait === "string" && prev.portrait.startsWith("data:image/") ? prev.portrait : "");
   if (keptPortrait) body.portrait = keptPortrait;
+  const level = String(state.profile?.certLevel || prev.level || "").trim();
+  const cert = String(state.profile?.certNumber || prev.cert || "").trim();
+  const keptSign = profileSignImage() || (typeof prev.sign === "string" && prev.sign.startsWith("data:image") ? prev.sign : "");
+  if (level) body.level = level.slice(0, 40);
+  if (cert) body.cert = cert.slice(0, 40);
+  if (keptSign) body.sign = keptSign;
   fitCloudProfile(body);
   try {
     await cloudSet(`p-${owner}`, body);
@@ -3703,15 +3709,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-219")) return;
-        sessionStorage.setItem("seadive-sw-219", "1");
-        location.replace("./?v=219&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-220")) return;
+        sessionStorage.setItem("seadive-sw-220", "1");
+        location.replace("./?v=220&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "219";
+const APP_VERSION = "220";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4459,7 +4465,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 219</p>
+        <p class="hint">Versione 220</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -9136,17 +9142,109 @@ function peoplePicksHtml() {
   return `<div class="people-picks" data-peoplepicks></div>`;
 }
 
+function diveInsertSign(person) {
+  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
+  if (samePersonName(person?.name, state.profile?.name)) return profileSignImage();
+  return "";
+}
+
+function boardDiverRecord(owner) {
+  const row = communityBoardCache.data?.profiles?.[owner];
+  if (!row) return null;
+  const names = personNames(row);
+  if (!names.firstName || names.firstName === "Sub") return null;
+  const legacy = legacyIdentity(row) || {};
+  return {
+    remoteOwner: String(owner || ""),
+    name: names.name,
+    firstName: names.firstName,
+    lastName: names.lastName,
+    level: legacy.level || "",
+    cert: legacy.cert || "",
+    sign: legacy.sign || "",
+  };
+}
+
+function diveBuddyRoster() {
+  const out = [];
+  const add = (person) => {
+    const names = personNames(person);
+    if (!names.name || placeholderDiverName(names)) return;
+    const owner = String(person.remoteOwner || "").trim();
+    const prev = out.find((p) => (owner && p.remoteOwner === owner) || personNameKey(p.name) === personNameKey(names.name));
+    if (prev) {
+      if (!prev.level && person.level) prev.level = person.level;
+      if (!prev.cert && person.cert) prev.cert = person.cert;
+      if (!prev.sign && person.sign) prev.sign = diveInsertSign(person);
+      if (!prev.id && person.id) prev.id = person.id;
+      if (!prev.remoteOwner && owner) prev.remoteOwner = owner;
+      return;
+    }
+    out.push({
+      id: person.id || "",
+      name: names.name,
+      firstName: names.firstName,
+      lastName: names.lastName,
+      level: person.level || "",
+      cert: person.cert || "",
+      sign: diveInsertSign(person),
+      remoteOwner: owner,
+    });
+  };
+  const me = personNames({ name: state.profile?.name || "" });
+  if (me.name) {
+    add({
+      name: me.name,
+      firstName: me.firstName,
+      lastName: me.lastName,
+      level: state.profile?.certLevel || "",
+      cert: state.profile?.certNumber || "",
+      sign: profileSignImage(),
+    });
+  }
+  (state.people || []).forEach((p) => {
+    if (!p || p.role === "center") return;
+    const board = p.remoteOwner ? boardDiverRecord(p.remoteOwner) : null;
+    const named = placeholderDiverName(p) && board ? board : p;
+    add({
+      ...p,
+      name: named.name,
+      firstName: named.firstName,
+      lastName: named.lastName,
+      level: p.level || board?.level || "",
+      cert: p.cert || board?.cert || "",
+      sign: diveInsertSign(p) || board?.sign || "",
+    });
+  });
+  (seaDirectory.list || []).forEach((card) => {
+    const board = boardDiverRecord(card.owner);
+    const names = personNames(card);
+    add({
+      remoteOwner: card.owner,
+      name: names.name || board?.name || "",
+      firstName: names.firstName || board?.firstName || "",
+      lastName: names.lastName || board?.lastName || "",
+      level: board?.level || "",
+      cert: board?.cert || "",
+      sign: board?.sign || "",
+    });
+  });
+  return out.sort((a, b) => a.name.localeCompare(b.name, "it"));
+}
+
 function bindPeoplePicks(form, d) {
   const box = form.querySelector("[data-peoplepicks]");
   if (!box) return;
   box.replaceChildren();
   const groups = [
-    ["buddy", "Vi seguite — buddy", "buddyName", "buddyCert", "buddyId"],
-    ["guide", "Vi seguite — istruttori", "guideName", "guideCert", "guideId"],
+    ["buddy", "Buddy", "buddyName", "buddyCert", "buddyId"],
+    ["guide", "Istruttori", "guideName", "guideCert", "guideId"],
     ["center", "Diving in community", "centerName", "centerLead", "centerId"],
   ];
   groups.forEach(([role, title, nameKey, extraKey, idKey]) => {
-    const list = (state.people || []).filter((p) => p.role === role && (role === "center" || diveContactReady(p)));
+    const list = role === "buddy"
+      ? diveBuddyRoster()
+      : (state.people || []).filter((p) => p.role === role && (role === "center" || diveContactReady(p)));
     if (!list.length) return;
     const wrap = document.createElement("div");
     const hint = document.createElement("p");
@@ -9176,8 +9274,9 @@ function bindPeoplePicks(form, d) {
           d[nameKey] = labelName;
           d[idKey] = p.id;
           const levelKey = role === "buddy" ? "buddyLevel" : role === "guide" ? "guideLevel" : "";
-          if (levelKey && diveContactReady(p)) d[levelKey] = p.level || "";
-          d[extraKey] = role === "center" ? p.lead || "" : diveContactReady(p) ? p.cert || "" : "";
+          const insertReady = role === "buddy" || diveContactReady(p);
+          if (levelKey && insertReady) d[levelKey] = p.level || "";
+          d[extraKey] = role === "center" ? p.lead || "" : insertReady ? p.cert || "" : "";
           const levelInput = levelKey ? form.querySelector(`[name=${levelKey}]`) : null;
           if (levelInput) levelInput.value = d[levelKey] || "";
           const nameInput = form.querySelector(`[name=${nameKey}]`);
@@ -9195,9 +9294,26 @@ function bindPeoplePicks(form, d) {
           }
           if (role === "buddy" || role === "guide") {
             const signKey = role === "buddy" ? "buddySign" : "guideSign";
-            const sign = diveContactReady(p) ? personKnownSign(p) : "";
-            if (sign) d[signKey] = sign;
-            form._applyOwnerSign?.({ forceBuddy: role === "buddy", forceGuide: role === "guide" });
+            const sign = role === "buddy" ? diveInsertSign(p) : diveContactReady(p) ? personKnownSign(p) : "";
+            d[signKey] = sign || "";
+            if (role === "buddy") {
+              const payload = {
+                id: p.id || undefined,
+                role: "buddy",
+                name: labelName,
+                firstName: p.firstName || "",
+                lastName: p.lastName || "",
+                level: p.level || "",
+                cert: p.cert || "",
+                remoteOwner: p.remoteOwner || "",
+              };
+              if (sign) payload.sign = sign;
+              const saved = upsertPerson(payload);
+              if (saved) d.buddyId = saved.id;
+              form._setBuddySign?.(sign);
+            } else {
+              form._applyOwnerSign?.({ forceGuide: true });
+            }
             const line = form.querySelector("[data-pickedperson]");
             if (line) {
               line.hidden = false;
@@ -9801,7 +9917,7 @@ function renderEdit() {
       ${ownerOnDiveHtml()}
       ${peoplePicksHtml()}
       <p class="hint" data-pickedperson hidden></p>
-      <p class="hint">In Community vedi nome e cognome di chi usa SeaDive. Se vi seguite entrambi, tocca il nome: nome, cognome, brevetto, numero e firma entrano in questa scheda e, al salvataggio, nel diario su Drive.</p>
+      <p class="hint">Tocca un buddy: nome, cognome, brevetto, numero e firma digitale entrano in questa scheda e, al salvataggio, nel diario su Drive.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
         ${field("buddyLevel", "Buddy — brevetto", d.buddyLevel)}
@@ -10014,6 +10130,12 @@ function renderEdit() {
       if (!sign) return;
       d.centerSign = sign;
       centerPad?.set(sign);
+    };
+    form._setBuddySign = (sign) => {
+      d.buddySign = sign || "";
+      if (sign) buddyPad?.set(sign);
+      else buddyPad?.clear();
+      showAppliedSign(form.querySelector('[data-pad="buddySign"]'), sign || "");
     };
     const stamped = { buddy: null, guide: null };
     form._applyOwnerSign = (opts = {}) => {
