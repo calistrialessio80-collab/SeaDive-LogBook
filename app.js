@@ -4170,7 +4170,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 201</p>
+        <p class="hint">Versione 204</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5495,37 +5495,134 @@ function renderHome() {
     </button>
     <button class="home-gate gate-map" type="button" data-port="map">
       <span class="home-gate-scene" aria-hidden="true">
-        <svg viewBox="0 0 360 196" preserveAspectRatio="xMidYMid slice">
-          <defs>
-            <linearGradient id="homeCoastSky" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#e9f8ff"/>
-              <stop offset="1" stop-color="#8ed3ef"/>
-            </linearGradient>
-            <linearGradient id="homeCoastSea" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#6ec8e6"/>
-              <stop offset="0.55" stop-color="#1780b0"/>
-              <stop offset="1" stop-color="#0b5674"/>
-            </linearGradient>
-          </defs>
-          <rect width="360" height="196" fill="url(#homeCoastSky)"/>
-          <circle cx="58" cy="34" r="16" fill="#fff3c4"/>
-          <circle cx="58" cy="34" r="30" fill="#fff3c4" opacity="0.35"/>
-          <path d="M210 8 C250 28 286 18 328 40 C352 52 360 48 360 48 L360 78 C320 62 270 84 230 64 C214 56 206 28 210 8 Z" fill="#1c6846"/>
-          <path d="M248 28 C276 18 304 30 332 22 C310 40 280 44 252 52 Z" fill="#145238"/>
-          <path d="M0 62 C70 50 120 74 180 58 C230 46 280 70 360 54 L360 196 L0 196 Z" fill="url(#homeCoastSea)"/>
-          <path d="M0 78 C56 68 96 90 150 78 C210 64 250 92 320 76 C340 70 352 76 360 74" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.7"/>
-          <path d="M0 96 C64 86 110 108 170 94 C230 80 270 108 340 92" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.4"/>
-          <path d="M0 118 C80 104 130 132 200 114 C255 100 300 128 360 112 L360 196 L0 196 Z" fill="#f0d7a4"/>
-          <path d="M0 142 C90 128 150 156 230 136 C280 124 320 148 360 134 L360 196 L0 196 Z" fill="#d7b57e"/>
-          <circle cx="36" cy="132" r="6" fill="#c4a56e"/>
-          <circle cx="118" cy="126" r="4" fill="#cbb88a"/>
-          <g transform="translate(214 18) rotate(-18)">
-            <rect x="0" y="2" width="4.5" height="128" rx="2" fill="#5b4030"/>
-            <rect x="5" y="0" width="132" height="78" rx="2" fill="#d0121c"/>
-            <polygon points="5,16 5,46 137,78 137,48" fill="#ffffff"/>
-            <text x="70" y="52" text-anchor="middle" fill="#c10e18" font-family="Outfit, sans-serif" font-size="22" font-weight="800" letter-spacing="1.6" transform="rotate(13 70 46)">DAN</text>
-          </g>
-        </svg>
+        <span class="coast-scene">
+          <svg class="coast-art" viewBox="0 0 360 196" preserveAspectRatio="xMidYMid slice">
+            <defs>
+              <linearGradient id="hmSky" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#2f86c4"/>
+                <stop offset="0.38" stop-color="#7ec0e6"/>
+                <stop offset="0.62" stop-color="#d5eef8"/>
+                <stop offset="0.8" stop-color="#f6e3c0"/>
+                <stop offset="1" stop-color="#f6e3c0"/>
+              </linearGradient>
+              <linearGradient id="hmSea" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#d7f4f8"/>
+                <stop offset="0.14" stop-color="#3eabd0"/>
+                <stop offset="0.42" stop-color="#1786b0"/>
+                <stop offset="0.74" stop-color="#0e6288"/>
+                <stop offset="1" stop-color="#08425e"/>
+              </linearGradient>
+              <linearGradient id="hmGlare" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#ffffff" stop-opacity="0.7"/>
+                <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="hmSand" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#f3e2b8"/>
+                <stop offset="0.4" stop-color="#e4c68c"/>
+                <stop offset="1" stop-color="#c9a56a"/>
+              </linearGradient>
+            </defs>
+            <rect width="360" height="196" fill="url(#hmSky)"/>
+            <circle cx="68" cy="40" r="48" fill="#ffe7a8" opacity="0.32"/>
+            <circle cx="68" cy="40" r="20" fill="#fff6d4"/>
+            <circle cx="68" cy="40" r="11" fill="#fffdf4"/>
+            <g class="coast-cloud a" fill="#ffffff">
+              <ellipse cx="16" cy="32" rx="14" ry="7" opacity="0.8"/>
+              <ellipse cx="34" cy="27" rx="20" ry="11"/>
+              <ellipse cx="54" cy="33" rx="15" ry="8" opacity="0.92"/>
+            </g>
+            <g class="coast-cloud b" fill="#ffffff" opacity="0.9">
+              <ellipse cx="150" cy="18" rx="11" ry="6"/>
+              <ellipse cx="166" cy="15" rx="15" ry="8"/>
+              <ellipse cx="182" cy="20" rx="10" ry="5"/>
+            </g>
+            <g class="coast-gull" fill="none" stroke="#ffffff" stroke-width="1.35" stroke-linecap="round">
+              <path d="M118 36 q6 -6 11 0"/>
+              <path d="M129 36 q6 -6 11 0"/>
+            </g>
+            <path d="M6 94 C26 80 44 86 60 72 C76 84 96 78 112 90 L112 98 L6 100 Z" fill="#a9c0c4" opacity="0.75"/>
+            <ellipse cx="180" cy="96" rx="190" ry="14" fill="#f7f1e4" opacity="0.45"/>
+            <path d="M118 104 C148 66 168 82 198 34 C228 58 258 26 296 46 C326 62 346 40 360 56 L360 124 L118 116 Z" fill="#93a89c"/>
+            <path d="M146 112 C176 66 198 86 234 38 C266 64 298 40 360 70 L360 136 L146 128 Z" fill="#1b5e36"/>
+            <path d="M154 108 C176 74 196 90 230 44 C222 70 200 90 162 110 Z" fill="#3d8c4c"/>
+            <ellipse cx="214" cy="58" rx="7" ry="15" fill="#143c28"/>
+            <ellipse cx="230" cy="48" rx="6" ry="14" fill="#0f3322"/>
+            <ellipse cx="198" cy="70" rx="8" ry="12" fill="#184630"/>
+            <ellipse cx="262" cy="56" rx="6.5" ry="13" fill="#123828"/>
+            <ellipse cx="286" cy="64" rx="7" ry="12" fill="#143c28"/>
+            <path d="M0 98 C72 88 128 108 196 94 C250 82 308 110 360 92 L360 196 L0 196 Z" fill="url(#hmSea)"/>
+            <polygon class="sea-glare" points="54,100 82,100 74,158 62,158" fill="url(#hmGlare)"/>
+            <path fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.8" stroke-linecap="round" d="M0 112 C24 104 36 120 60 112 S96 104 120 112 S156 120 180 112 S216 104 240 112 S276 120 300 112 S336 104 360 112">
+              <animate attributeName="d" dur="5.6s" repeatCount="indefinite" values="M0 112 C24 104 36 120 60 112 S96 104 120 112 S156 120 180 112 S216 104 240 112 S276 120 300 112 S336 104 360 112;M0 112 C24 120 36 104 60 112 S96 120 120 112 S156 104 180 112 S216 120 240 112 S276 104 300 112 S336 120 360 112;M0 112 C24 104 36 120 60 112 S96 104 120 112 S156 120 180 112 S216 104 240 112 S276 120 300 112 S336 104 360 112"/>
+            </path>
+            <path fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round" d="M0 126 C28 118 40 134 68 126 S108 118 136 126 S176 134 204 126 S244 118 272 126 S312 134 340 126 S360 122 360 126">
+              <animate attributeName="d" dur="7.2s" repeatCount="indefinite" values="M0 126 C28 118 40 134 68 126 S108 118 136 126 S176 134 204 126 S244 118 272 126 S312 134 340 126 S360 122 360 126;M0 126 C28 134 40 118 68 126 S108 134 136 126 S176 118 204 126 S244 134 272 126 S312 118 340 126 S360 130 360 126;M0 126 C28 118 40 134 68 126 S108 118 136 126 S176 134 204 126 S244 118 272 126 S312 134 340 126 S360 122 360 126"/>
+            </path>
+            <g fill="#ffffff">
+              <circle class="sea-glint a" cx="66" cy="120" r="1.3"/>
+              <circle class="sea-glint b" cx="74" cy="134" r="1.05"/>
+              <circle class="sea-glint c" cx="60" cy="146" r="1.35"/>
+            </g>
+            <path d="M0 136 C50 128 90 146 140 136 C200 124 250 148 310 134 C340 128 352 136 360 132" fill="none" stroke="rgba(255,255,255,0.34)" stroke-width="1.4" stroke-linecap="round">
+              <animate attributeName="d" dur="6.4s" repeatCount="indefinite" values="M0 136 C50 128 90 146 140 136 C200 124 250 148 310 134 C340 128 352 136 360 132;M0 136 C50 144 90 126 140 136 C200 148 250 124 310 138 C340 144 352 128 360 136;M0 136 C50 128 90 146 140 136 C200 124 250 148 310 134 C340 128 352 136 360 132"/>
+            </path>
+            <path d="M0 146 C70 156 120 136 180 148 C250 162 300 140 360 152 L360 166 L0 166 Z" fill="#1f9aa4" opacity="0.22"/>
+            <path d="M0 154 C40 148 72 160 112 152 C156 144 188 162 230 152 C274 142 312 160 360 150" fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M0 156 C78 146 134 170 206 154 C266 140 316 168 360 152 L360 196 L0 196 Z" fill="url(#hmSand)"/>
+            <path d="M0 168 C88 156 148 180 220 164 C276 152 322 176 360 162 L360 196 L0 196 Z" fill="#c9a56c"/>
+            <ellipse cx="42" cy="172" rx="7" ry="3.6" fill="#b08958"/>
+            <ellipse cx="108" cy="166" rx="4.2" ry="2.5" fill="#c4a36e"/>
+            <ellipse cx="164" cy="178" rx="5" ry="2.8" fill="#a68452"/>
+            <path d="M286 150 C306 140 330 152 354 142 C360 146 360 160 348 162 C326 170 304 158 288 164 Z" fill="#5c6c68"/>
+            <path d="M300 148 C316 142 332 150 346 144 C342 152 324 156 308 154 Z" fill="#8d9a96"/>
+          </svg>
+          <span class="dan-flag">
+            <span class="dan-shadow"></span>
+            <span class="dan-pole"></span>
+            <svg class="dan-fly" viewBox="0 0 200 118">
+              <defs>
+                <linearGradient id="hmClothRed" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#ee4545"/>
+                  <stop offset="0.48" stop-color="#c4121c"/>
+                  <stop offset="1" stop-color="#7c0e14"/>
+                </linearGradient>
+                <linearGradient id="hmFold" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stop-color="#000000" stop-opacity="0"/>
+                  <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.55"/>
+                  <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+                </linearGradient>
+                <clipPath id="hmClothClip">
+                  <path d="M0 8 C36 2 78 14 128 4 C168 -2 188 8 200 6 L198 102 C150 114 80 96 36 116 C16 122 6 112 0 114 Z">
+                    <animate attributeName="d" dur="1.85s" repeatCount="indefinite" values="M0 8 C36 2 78 14 128 4 C168 -2 188 8 200 6 L198 102 C150 114 80 96 36 116 C16 122 6 112 0 114 Z;M0 8 C36 6 78 0 128 12 C168 18 190 4 200 16 L198 112 C150 100 80 118 36 108 C16 104 6 116 0 114 Z;M0 8 C36 0 78 16 128 -2 C166 6 188 0 200 2 L198 96 C148 118 82 92 36 120 C14 126 6 110 0 114 Z;M0 8 C36 2 78 14 128 4 C168 -2 188 8 200 6 L198 102 C150 114 80 96 36 116 C16 122 6 112 0 114 Z"/>
+                  </path>
+                </clipPath>
+                <filter id="hmWind" x="-6%" y="-22%" width="120%" height="150%" color-interpolation-filters="sRGB">
+                  <feTurbulence type="fractalNoise" baseFrequency="0.008 0.045" numOctaves="1" seed="4" result="n">
+                    <animate attributeName="baseFrequency" dur="1.85s" values="0.008 0.04;0.014 0.06;0.009 0.045;0.008 0.04" repeatCount="indefinite"/>
+                  </feTurbulence>
+                  <feDisplacementMap in="SourceGraphic" in2="n" scale="2" xChannelSelector="R" yChannelSelector="G">
+                    <animate attributeName="scale" dur="1.85s" values="1.5;3.5;2;1.5" repeatCount="indefinite"/>
+                  </feDisplacementMap>
+                </filter>
+              </defs>
+              <g filter="url(#hmWind)" clip-path="url(#hmClothClip)">
+                <rect x="-6" y="-8" width="214" height="136" fill="url(#hmClothRed)"/>
+                <polygon points="0,0 0,34 206,122 206,84" fill="#ffffff"/>
+                <polygon points="0,0 0,9 206,93 206,84" fill="#e6e6e6"/>
+                <polygon points="0,25 0,34 206,122 206,113" fill="#d2d2d2"/>
+                <rect x="190" y="-8" width="16" height="140" fill="#5a0810" opacity="0.4"/>
+                <text x="104" y="74" text-anchor="middle" font-family="Outfit, Arial, sans-serif" font-size="26" font-weight="800" fill="#9a1018" letter-spacing="1.1" transform="rotate(24 100 60)">DAN</text>
+                <rect x="-40" y="-10" width="48" height="140" fill="url(#hmFold)" opacity="0.55">
+                  <animate attributeName="x" values="-48;168;-48" dur="2s" repeatCount="indefinite"/>
+                </rect>
+              </g>
+              <circle cx="6" cy="16" r="2.6" fill="#f4f1ea"/>
+              <circle cx="6" cy="16" r="1.2" fill="#4a3424"/>
+              <circle cx="6" cy="102" r="2.6" fill="#f4f1ea"/>
+              <circle cx="6" cy="102" r="1.2" fill="#4a3424"/>
+            </svg>
+          </span>
+        </span>
       </span>
       <span class="home-gate-copy">
         <small>Siti e diving</small>
