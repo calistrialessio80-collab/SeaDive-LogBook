@@ -1,0 +1,25 @@
+---
+description: Ogni modifica visibile dell'app va pubblicata su GitHub Pages con il numero di versione
+alwaysApply: true
+---
+
+# Pubblicare la versione
+
+Il telefono apre solo questo sito:
+
+https://calistrialessio80-collab.github.io/SeaDive-LogBook/index.html
+
+`http://127.0.0.1:5173` è il computer. Non aggiorna il cellulare.
+
+Quando cambi l'app, alza di 1 lo stesso numero in tutti questi punti, poi fai commit e `git push origin HEAD` su `main`. GitHub Pages pubblica da quel branch.
+
+- `index.html`: `app.js?v=N` e, se è cambiato, `drive.js?v=`
+- `app.js`: testo `Versione N`, `APP_VERSION`, chiave `seadive-sw-N`, redirect `?v=N`
+- `sw.js`: `seadive-logbook-vN` e il controllo `v=N`
+- `manifest.json`: `start_url` `./?v=N`
+- `aggiorna.html`: parametro `v` sull'indirizzo già aperto, senza forzare `127.0.0.1`
+- `version.txt`: solo il numero
+
+Dopo il push, controlla che la pagina pubblica contenga `app.js?v=N`.
+
+Non modificare la config di git. Se il commit chiede l'autore, usa per quel comando l'autore già presente nel repository: `calistrialessio80-collab` / `calistrialessio80-collab@users.noreply.github.com`.
