@@ -61,6 +61,15 @@ const emptyDive = () => ({
   mix: "21",
   pressureStart: "200",
   pressureEnd: "",
+  stage1N2: "",
+  stage1O2: "",
+  stage1L: "",
+  stage2N2: "",
+  stage2O2: "",
+  stage2L: "",
+  stage3N2: "",
+  stage3O2: "",
+  stage3L: "",
   bottomTemp: "",
   cns: "",
   otu: "",
@@ -580,6 +589,14 @@ function mergeDivePair(a, b) {
     const rb = contactRank(b, role);
     if (ra === rb) return;
     copyDiveContact(base, ra > rb ? a : b, role);
+  });
+  STAGE_SLOTS.forEach((slot) => {
+    [slot.n2, slot.o2, slot.l].forEach((key) => {
+      if (!hasText(base[key])) {
+        const from = hasText(a[key]) ? a[key] : hasText(b[key]) ? b[key] : "";
+        if (hasText(from)) base[key] = from;
+      }
+    });
   });
   return base;
 }
@@ -1408,6 +1425,7 @@ function buildDivePdf(d) {
   add("Bombola", shown(d.tank, "L"));
   add("Miscela", shown(d.mix) ? `EAN ${d.mix}` : "");
   add("Pressione", [shown(d.pressureStart), shown(d.pressureEnd)].filter(Boolean).join(" - ") + (shown(d.pressureStart) || shown(d.pressureEnd) ? " bar" : ""));
+  STAGE_SLOTS.forEach((slot) => add(slot.title, stageSummary(d, slot)));
   add("SAC", shown(d.sac, "L/min"));
   add("Corrente", shown(d.current));
   add("Mare", shown(d.seaConditions));
@@ -3590,15 +3608,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-216")) return;
-        sessionStorage.setItem("seadive-sw-216", "1");
-        location.replace("./?v=216&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-217")) return;
+        sessionStorage.setItem("seadive-sw-217", "1");
+        location.replace("./?v=217&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "216";
+const APP_VERSION = "217";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4346,7 +4364,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 216</p>
+        <p class="hint">Versione 217</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -9295,6 +9313,48 @@ function renderProfile() {
   return frag;
 }
 
+const STAGE_SLOTS = [
+  { title: "Decompressiva / Stage 1", n2: "stage1N2", o2: "stage1O2", l: "stage1L" },
+  { title: "Decompressiva / Stage 2", n2: "stage2N2", o2: "stage2O2", l: "stage2L" },
+  { title: "Decompressione / Stage 3", n2: "stage3N2", o2: "stage3O2", l: "stage3L" },
+];
+
+function stageFieldKeys() {
+  return STAGE_SLOTS.flatMap((slot) => [slot.n2, slot.o2, slot.l]);
+}
+
+function stageSummary(d, slot) {
+  const n2 = String(d?.[slot.n2] ?? "").trim();
+  const o2 = String(d?.[slot.o2] ?? "").trim();
+  const liters = String(d?.[slot.l] ?? "").trim();
+  const parts = [];
+  if (n2) parts.push(`Azoto ${n2}%`);
+  if (o2) parts.push(`Ossigeno ${o2}%`);
+  if (liters) parts.push(`${liters} L`);
+  return parts.join(" · ");
+}
+
+function stageFormHtml(d) {
+  return STAGE_SLOTS.map((slot) => `
+    <div class="stage-card">
+      <p class="stage-name">${escapeHtml(slot.title)}</p>
+      <div class="stage-grid">
+        ${field(slot.n2, "Azoto %", d[slot.n2] ?? "", false, "number")}
+        ${field(slot.o2, "Ossigeno %", d[slot.o2] ?? "", false, "number")}
+        ${field(slot.l, "Litri", d[slot.l] ?? "", false, "number")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function stageDetailHtml(d) {
+  return STAGE_SLOTS.map((slot) => {
+    const text = stageSummary(d, slot);
+    if (!text) return "";
+    return `<div><b>${escapeHtml(slot.title)}</b>${escapeHtml(text)}</div>`;
+  }).join("");
+}
+
 function field(name, label, value, full = false, type = "text") {
   const cls = `field${full ? " full" : ""}`;
   if (type === "textarea") {
@@ -9374,6 +9434,7 @@ function renderDetail() {
       <div><b>Muta / zavorra</b>${escapeHtml(d.wetsuit || "—")} mm · ${escapeHtml(d.ballast || "—")} kg</div>
       <div><b>Bombola / miscela</b>${escapeHtml(d.tank || "—")} L · EAN ${escapeHtml(d.mix || "21")}</div>
       <div><b>Pressione</b>${escapeHtml(d.pressureStart || "—")} → ${escapeHtml(d.pressureEnd || "—")} bar</div>
+      ${stageDetailHtml(d)}
       <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
       <div><b>Fuori curva</b>${escapeHtml(d.deco ? "Sì" : "No")}</div>
       <div><b>NDL</b>${escapeHtml(d.ndl !== "" && d.ndl != null ? String(d.ndl) + " min" : "—")}</div>
@@ -9558,6 +9619,9 @@ function renderEdit() {
       ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
     </div>
     <p class="hint">Inizio precompilato a 200 bar e bombola 15 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
+    <h3 class="serif">Decompressive</h3>
+    <p class="hint">Per ogni stage indica la miscela in azoto e ossigeno, e i litri della bombola.</p>
+    ${stageFormHtml(d)}
     <div class="form-grid">
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
       ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
@@ -10015,7 +10079,7 @@ function renderEdit() {
     next.deco = fd.has("hadDeco");
     delete next.hadDeco;
     ensureCircuit(next);
-    ["number", "maxDepth", "avgDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "surfaceInterval", "visibility", "waterTemp", "bottomTemp", "airTemp", "cns", "otu", "tss", "ascentRate", "ascentMax", "sac", "ndl", "pressureStart", "pressureEnd"].forEach((k) => {
+    ["number", "maxDepth", "avgDepth", "plannedDepth", "bottomTime", "totalTime", "safetyStop", "surfaceInterval", "visibility", "waterTemp", "bottomTemp", "airTemp", "cns", "otu", "tss", "ascentRate", "ascentMax", "sac", "ndl", "pressureStart", "pressureEnd", ...stageFieldKeys()].forEach((k) => {
       if (next[k] != null && next[k] !== "") next[k] = dotNumber(next[k]);
     });
     if (!next.computerLog && !next.profileFromComputer) next.manual = true;
