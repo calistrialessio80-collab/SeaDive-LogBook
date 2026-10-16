@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v215";
+const CACHE = "seadive-logbook-v216";
 const ASSETS = [
   "./",
   "./index.html",
@@ -39,8 +39,8 @@ self.addEventListener("activate", (event) => {
     const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     await Promise.all(open.map(async (client) => {
       try {
-        if (String(client.url || "").includes("v=215")) return;
-        const next = new URL("./?v=215", self.location.href);
+        if (String(client.url || "").includes("v=216")) return;
+        const next = new URL("./?v=216", self.location.href);
         if (client.navigate) await client.navigate(next.href);
       } catch (_) {}
     }));

@@ -2368,7 +2368,10 @@ async function loadOnlineProfiles() {
           card.key = String(row?.key || "");
           return card;
         })
-        .filter(Boolean),
+        .filter((card) => {
+          const names = listedDiverName(card);
+          return Boolean(names.firstName && names.firstName !== "Sub");
+        }),
     };
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
@@ -2641,6 +2644,7 @@ async function publishMyProfile() {
   const first = names.firstName || String(prev.firstName || "").trim();
   const last = names.lastName || String(prev.lastName || "").trim();
   const full = names.name || [first, last].filter(Boolean).join(" ") || String(prev.name || "").trim();
+  if (!first || first === "Sub") return { error: "short" };
   const body = {
     id: owner,
     owner,
@@ -3586,15 +3590,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-215")) return;
-        sessionStorage.setItem("seadive-sw-215", "1");
-        location.replace("./?v=215&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-216")) return;
+        sessionStorage.setItem("seadive-sw-216", "1");
+        location.replace("./?v=216&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "215";
+const APP_VERSION = "216";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4342,7 +4346,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 215</p>
+        <p class="hint">Versione 216</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
