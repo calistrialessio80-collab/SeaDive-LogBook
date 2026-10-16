@@ -4170,7 +4170,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 198</p>
+        <p class="hint">Versione 200</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5495,22 +5495,36 @@ function renderHome() {
     </button>
     <button class="home-gate gate-map" type="button" data-port="map">
       <span class="home-gate-scene" aria-hidden="true">
-        <svg viewBox="0 0 360 168" preserveAspectRatio="xMidYMid slice">
+        <svg viewBox="0 0 360 196" preserveAspectRatio="xMidYMid slice">
           <defs>
-            <linearGradient id="homeSea" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#9ad7f2"/>
-              <stop offset="0.42" stop-color="#1d6f98"/>
-              <stop offset="1" stop-color="#041824"/>
+            <linearGradient id="homeCoastSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e9f8ff"/>
+              <stop offset="1" stop-color="#8ed3ef"/>
+            </linearGradient>
+            <linearGradient id="homeCoastSea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#6ec8e6"/>
+              <stop offset="0.55" stop-color="#1780b0"/>
+              <stop offset="1" stop-color="#0b5674"/>
             </linearGradient>
           </defs>
-          <rect width="360" height="168" fill="url(#homeSea)"/>
-          <path d="M0 78 C48 58 78 96 128 72 C176 50 198 92 248 66 C292 46 318 84 360 62 L360 168 L0 168 Z" fill="#0d4a3c" opacity="0.9"/>
-          <path d="M0 108 C70 90 108 128 168 110 C230 92 268 126 360 104 L360 168 L0 168 Z" fill="#07281f"/>
-          <circle cx="86" cy="58" r="5" fill="#ffe7a3"/>
-          <circle cx="148" cy="46" r="4" fill="#7ef0ea"/>
-          <circle cx="214" cy="64" r="5" fill="#ffd15a"/>
-          <circle cx="276" cy="50" r="3.5" fill="#ffffff"/>
-          <circle cx="318" cy="68" r="4" fill="#7ef0ea"/>
+          <rect width="360" height="196" fill="url(#homeCoastSky)"/>
+          <circle cx="58" cy="34" r="16" fill="#fff3c4"/>
+          <circle cx="58" cy="34" r="30" fill="#fff3c4" opacity="0.35"/>
+          <path d="M210 8 C250 28 286 18 328 40 C352 52 360 48 360 48 L360 78 C320 62 270 84 230 64 C214 56 206 28 210 8 Z" fill="#1c6846"/>
+          <path d="M248 28 C276 18 304 30 332 22 C310 40 280 44 252 52 Z" fill="#145238"/>
+          <path d="M0 62 C70 50 120 74 180 58 C230 46 280 70 360 54 L360 196 L0 196 Z" fill="url(#homeCoastSea)"/>
+          <path d="M0 78 C56 68 96 90 150 78 C210 64 250 92 320 76 C340 70 352 76 360 74" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.7"/>
+          <path d="M0 96 C64 86 110 108 170 94 C230 80 270 108 340 92" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.4"/>
+          <path d="M0 118 C80 104 130 132 200 114 C255 100 300 128 360 112 L360 196 L0 196 Z" fill="#f0d7a4"/>
+          <path d="M0 142 C90 128 150 156 230 136 C280 124 320 148 360 134 L360 196 L0 196 Z" fill="#d7b57e"/>
+          <circle cx="36" cy="132" r="6" fill="#c4a56e"/>
+          <circle cx="118" cy="126" r="4" fill="#cbb88a"/>
+          <g transform="translate(214 18) rotate(-18)">
+            <rect x="0" y="2" width="4.5" height="128" rx="2" fill="#5b4030"/>
+            <rect x="5" y="0" width="132" height="78" rx="2" fill="#d0121c"/>
+            <polygon points="5,16 5,46 137,78 137,48" fill="#ffffff"/>
+            <text x="70" y="52" text-anchor="middle" fill="#c10e18" font-family="Outfit, sans-serif" font-size="22" font-weight="800" letter-spacing="1.6" transform="rotate(13 70 46)">DAN</text>
+          </g>
         </svg>
       </span>
       <span class="home-gate-copy">
