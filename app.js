@@ -553,6 +553,27 @@ async function removeDive(d) {
   return true;
 }
 
+async function removeAllDives() {
+  const list = (state.dives || []).filter((d) => d && !diveIsDeleted(d, state.deletedDiveIds));
+  if (!list.length) return false;
+  const n = list.length;
+  const message = n === 1
+    ? "Vuoi davvero eliminare l'unica immersione dal diario? Non si può annullare."
+    : `Vuoi davvero eliminare tutte le ${n} immersioni dal diario? Non si può annullare.`;
+  const ok = await askConfirm({
+    title: "Conferma eliminazione",
+    message,
+    ok: "Elimina tutte",
+    cancel: "Annulla",
+  });
+  if (!ok) return false;
+  list.forEach((d) => rememberDeletedDive(d));
+  state.dives = (state.dives || []).filter((d) => !list.includes(d));
+  save(state);
+  silentDrivePush();
+  return true;
+}
+
 function contactRank(dive, role) {
   const gen = Number(dive?.contactGen?.[role]) || 0;
   const spec = DIVE_CONTACT[role];
@@ -3709,15 +3730,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-220")) return;
-        sessionStorage.setItem("seadive-sw-220", "1");
-        location.replace("./?v=220&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-221")) return;
+        sessionStorage.setItem("seadive-sw-221", "1");
+        location.replace("./?v=221&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "220";
+const APP_VERSION = "221";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4465,7 +4486,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 220</p>
+        <p class="hint">Versione 221</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -7816,6 +7837,18 @@ function renderLog() {
     ul.className = "dive-list";
     ordered.forEach((d) => ul.append(diveCard(d)));
     listWrap.append(ul);
+  }
+  const allDives = (state.dives || []).filter((d) => d && !diveIsDeleted(d, state.deletedDiveIds));
+  if (allDives.length) {
+    const wipe = document.createElement("button");
+    wipe.type = "button";
+    wipe.className = "btn danger btn-block";
+    wipe.textContent = "Elimina tutte le immersioni";
+    wipe.onclick = async () => {
+      if (!(await removeAllDives())) return;
+      render();
+    };
+    listWrap.append(wipe);
   }
   frag.append(listWrap);
   return frag;
