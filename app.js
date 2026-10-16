@@ -1897,6 +1897,7 @@ function storeFollowedPerson(card, role) {
 
 const COMMUNITY_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/board";
 const COMMUNITY_LINKS_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/links";
+const RATINGS_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/ratings";
 const COMMUNITY_API = "profiles";
 const COMMUNITY_LINKS = "links";
 const COMMUNITY_MESSAGES = "messages";
@@ -4169,7 +4170,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 195</p>
+        <p class="hint">Versione 198</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5317,6 +5318,77 @@ function saveAppRating(n) {
   return next;
 }
 
+const RATING_PENDING_KEY = "seadive-app-rating-pending";
+
+function ratingsFromPayload(data) {
+  const board = { v: 1, votes: {}, history: [] };
+  if (!data || typeof data !== "object" || Array.isArray(data)) return board;
+  Object.entries(data.votes || {}).forEach(([id, row]) => {
+    const stars = Number(row?.stars);
+    const key = String(id || "");
+    if (!/^[a-f0-9]{8,32}$/.test(key) || stars < 1 || stars > 5) return;
+    board.votes[key] = { stars, at: String(row.at || "") };
+  });
+  (Array.isArray(data.history) ? data.history : []).forEach((row) => {
+    const stars = Number(row?.stars);
+    const id = String(row?.id || "");
+    if (!/^[a-f0-9]{8}$/.test(id) || stars < 0 || stars > 5) return;
+    board.history.push({ id, stars, at: String(row.at || "") });
+  });
+  board.history = board.history.slice(-400);
+  return board;
+}
+
+function ratingSummaryText(board) {
+  const rows = Object.values(board?.votes || {});
+  const n = rows.length;
+  if (!n) return "";
+  const avg = rows.reduce((sum, row) => sum + Number(row.stars), 0) / n;
+  const shown = (Math.round(avg * 10) / 10).toFixed(1).replace(".", ",");
+  return `Media ${shown} · ${n} ${n === 1 ? "voto" : "voti"}`;
+}
+
+async function loadRatingsBoard() {
+  const res = await fetch(`${RATINGS_CLOUD}?t=${Date.now()}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  if (res.status === 400 || res.status === 404) return { v: 1, votes: {}, history: [] };
+  if (!res.ok) throw new Error("network");
+  return ratingsFromPayload(await res.json());
+}
+
+async function publishAppRating(stars) {
+  const id = await profileOwnerKey();
+  const at = new Date().toISOString();
+  const mark = id.replace(/[^a-f0-9]/gi, "").slice(0, 8).padEnd(8, "0");
+  let lastErr = new Error("network");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const board = await loadRatingsBoard();
+      if (stars >= 1) board.votes[id] = { stars, at };
+      else delete board.votes[id];
+      board.history.push({ id: mark, stars, at });
+      board.history = board.history.slice(-400);
+      const res = await fetch(RATINGS_CLOUD, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(board),
+      });
+      if (!res.ok) throw new Error("network");
+      const saved = await loadRatingsBoard();
+      const got = Number(saved.votes[id]?.stars) || 0;
+      if (got !== stars) throw new Error("network");
+      localStorage.removeItem(RATING_PENDING_KEY);
+      return saved;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  localStorage.setItem(RATING_PENDING_KEY, "1");
+  throw lastErr;
+}
+
 function renderHome() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("", "home"));
@@ -5478,7 +5550,25 @@ function renderHome() {
         )
         .join("")}
     </div>
+    <p class="rate-note" data-ratenote></p>
   `;
+  const note = rate.querySelector("[data-ratenote]");
+  const showRatingLine = (status, board) => {
+    const line = board ? ratingSummaryText(board) : "";
+    note.textContent = [status, line].filter(Boolean).join(" ");
+  };
+  loadRatingsBoard()
+    .then((board) => {
+      if (note.isConnected) showRatingLine("", board);
+    })
+    .catch(() => {});
+  if (localStorage.getItem(RATING_PENDING_KEY) === "1") {
+    publishAppRating(loadAppRating())
+      .then((board) => {
+        if (note.isConnected) showRatingLine("Voto registrato.", board);
+      })
+      .catch(() => {});
+  }
   const paintStars = (n) => {
     rate.querySelectorAll(".star").forEach((el) => {
       const on = Number(el.dataset.star) <= n;
@@ -5489,7 +5579,17 @@ function renderHome() {
   rate.querySelectorAll(".star").forEach((el) => {
     el.onclick = () => {
       const picked = Number(el.dataset.star);
-      paintStars(saveAppRating(picked === loadAppRating() ? 0 : picked));
+      const next = saveAppRating(picked === loadAppRating() ? 0 : picked);
+      paintStars(next);
+      note.textContent = "Registro il voto…";
+      publishAppRating(next)
+        .then((board) => {
+          if (!note.isConnected) return;
+          showRatingLine(next ? "Voto registrato." : "Voto tolto.", board);
+        })
+        .catch(() => {
+          if (note.isConnected) note.textContent = "Voto sul telefono. Il registro si aggiorna appena c’è rete.";
+        });
     };
   });
   frag.append(rate);
