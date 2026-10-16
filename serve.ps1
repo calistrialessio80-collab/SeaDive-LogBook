@@ -2,7 +2,7 @@ $root = $PSScriptRoot
 $port = 5173
 $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $port)
 try {
-  $listener.Start()
+  $listener.Start(64)
 } catch {
   Write-Output "Porta $port occupata. Chiudi l'altro SeaDive e riprova."
   throw
@@ -33,41 +33,72 @@ $mime = @{
   ".webmanifest" = "application/manifest+json"
 }
 
-function Send-Http($stream, $code, $ctype, $bytes) {
-  $reason = switch ($code) { 200 { "OK" } 404 { "Not Found" } default { "OK" } }
-  $head = "HTTP/1.1 $code $reason`r`nContent-Type: $ctype`r`nContent-Length: $($bytes.Length)`r`nAccess-Control-Allow-Origin: *`r`nCache-Control: no-store`r`nConnection: close`r`n`r`n"
-  $hdr = [Text.Encoding]::ASCII.GetBytes($head)
-  $stream.Write($hdr, 0, $hdr.Length)
-  if ($bytes.Length) { $stream.Write($bytes, 0, $bytes.Length) }
-}
+$pool = [runspacefactory]::CreateRunspacePool(1, 32)
+$pool.Open()
+$pending = [System.Collections.Generic.List[object]]::new()
 
-while ($true) {
-  $client = $listener.AcceptTcpClient()
+$handler = {
+  param($client, $root, $mime)
   try {
-    $client.ReceiveTimeout = 8000
+    $client.ReceiveTimeout = 5000
+    $client.SendTimeout = 20000
     $stream = $client.GetStream()
     $buf = New-Object byte[] 8192
     $n = $stream.Read($buf, 0, $buf.Length)
-    if ($n -le 0) { $client.Close(); continue }
+    if ($n -le 0) { return }
     $req = [Text.Encoding]::ASCII.GetString($buf, 0, $n)
     $line = ($req -split "`r`n")[0]
     $rel = "/"
     if ($line -match '^[A-Z]+ (\S+)') { $rel = $Matches[1] }
     $path = [Uri]::UnescapeDataString(($rel -split "\?")[0].TrimStart("/"))
     if ([string]::IsNullOrWhiteSpace($path)) { $path = "index.html" }
-    $full = Join-Path $root $path
+    $full = Join-Path $root ($path -replace "/", "\")
+    $rootFull = [IO.Path]::GetFullPath($root)
+    $full = [IO.Path]::GetFullPath($full)
+    if (-not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { return }
+
+    $send = {
+      param($stream, $code, $ctype, $body)
+      $reason = switch ($code) { 200 { "OK" } 404 { "Not Found" } default { "OK" } }
+      $head = "HTTP/1.1 $code $reason`r`nContent-Type: $ctype`r`nContent-Length: $($body.Length)`r`nAccess-Control-Allow-Origin: *`r`nCache-Control: no-store`r`nConnection: close`r`n`r`n"
+      $hdr = [Text.Encoding]::ASCII.GetBytes($head)
+      $stream.Write($hdr, 0, $hdr.Length)
+      $offset = 0
+      while ($offset -lt $body.Length) {
+        $take = [Math]::Min(65536, $body.Length - $offset)
+        $stream.Write($body, $offset, $take)
+        $offset += $take
+      }
+      $stream.Flush()
+    }
+
     if (-not (Test-Path -LiteralPath $full) -or (Get-Item -LiteralPath $full).PSIsContainer) {
-      Send-Http $stream 404 "text/plain; charset=utf-8" ([Text.Encoding]::UTF8.GetBytes("Not found"))
+      & $send $stream 404 "text/plain; charset=utf-8" ([Text.Encoding]::UTF8.GetBytes("Not found"))
     } else {
       $ext = [IO.Path]::GetExtension($full).ToLowerInvariant()
       $ctype = $mime[$ext]
       if (-not $ctype) { $ctype = "application/octet-stream" }
-      Send-Http $stream 200 $ctype ([IO.File]::ReadAllBytes($full))
+      & $send $stream 200 $ctype ([IO.File]::ReadAllBytes($full))
     }
-    $stream.Flush()
   } catch {
-    # client dropped
+    [Console]::Out.WriteLine("ERR " + $_.Exception.Message)
   } finally {
-    $client.Close()
+    try { $client.Close() } catch {}
+  }
+}
+
+while ($true) {
+  $client = $listener.AcceptTcpClient()
+  $ps = [powershell]::Create()
+  $ps.RunspacePool = $pool
+  [void]$ps.AddScript($handler).AddArgument($client).AddArgument($root).AddArgument($mime)
+  $handle = $ps.BeginInvoke()
+  $pending.Add([pscustomobject]@{ Ps = $ps; Handle = $handle })
+  for ($i = $pending.Count - 1; $i -ge 0; $i--) {
+    if ($pending[$i].Handle.IsCompleted) {
+      try { $pending[$i].Ps.EndInvoke($pending[$i].Handle) } catch {}
+      $pending[$i].Ps.Dispose()
+      $pending.RemoveAt($i)
+    }
   }
 }

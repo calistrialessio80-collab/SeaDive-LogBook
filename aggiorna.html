@@ -34,7 +34,10 @@
             await Promise.all(keys.map(function (k) { return caches.delete(k); }));
           }
         } catch (e) {}
-        location.replace("./index.html?v=205&t=" + Date.now());
+        var next = new URL("./index.html", location.href);
+        next.searchParams.set("v", "214");
+        next.searchParams.set("t", String(Date.now()));
+        location.replace(next.href);
       })();
     </script>
   </body>

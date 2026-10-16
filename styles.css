@@ -2681,7 +2681,7 @@ body.page-people .community-page {
   position: absolute;
   left: 0;
   top: 0;
-  width: 7px;
+  width: 8px;
   height: 100%;
   border-radius: 4px;
   background:
@@ -2702,13 +2702,14 @@ body.page-people .community-page {
 }
 .dan-fly {
   position: absolute;
-  left: 3px;
-  top: 0;
-  width: calc(100% - 2px);
-  height: 62%;
+  left: 5px;
+  top: 2px;
+  width: calc(100% - 4px);
+  height: 70%;
   overflow: visible;
-  transform-origin: 0% 46%;
-  animation: hmFlap 1.85s ease-in-out infinite;
+  transform-origin: 4% 48%;
+  animation: hmBillow 3.6s ease-in-out infinite;
+  filter: drop-shadow(4px 8px 3px rgba(16, 12, 8, 0.3));
 }
 .dan-shadow {
   position: absolute;
@@ -2727,12 +2728,11 @@ body.page-people .community-page {
 @keyframes hmGlare { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 @keyframes hmGlint { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
 @keyframes hmWater { from { background-position: 0 0; } to { background-position: -220px 0; } }
-@keyframes hmFlap {
-  0%, 100% { transform: perspective(700px) rotateY(-3deg) rotate(1.2deg); }
-  40% { transform: perspective(700px) rotateY(-8deg) rotate(-3.4deg); }
-  72% { transform: perspective(700px) rotateY(-4deg) rotate(3.6deg); }
+@keyframes hmBillow {
+  0%, 100% { transform: perspective(640px) rotateY(-4deg) rotate(0.6deg); }
+  50% { transform: perspective(640px) rotateY(-11deg) rotate(-1.2deg); }
 }
-@keyframes hmShadow { 0%, 100% { transform: scaleX(1); opacity: 0.32; } 50% { transform: scaleX(0.9) translateX(5px); opacity: 0.22; } }
+@keyframes hmShadow { 0%, 100% { transform: scaleX(1); opacity: 0.32; } 50% { transform: scaleX(0.86) translateX(6px); opacity: 0.2; } }
 @media (prefers-reduced-motion: reduce) {
   .coast-cloud, .coast-gull, .sea-glare, .sea-glint, .coast-scene::before, .dan-fly, .dan-shadow { animation: none; }
 }

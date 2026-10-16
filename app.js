@@ -772,7 +772,7 @@ const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
 function save(next) {
   persistLocal(next);
   scheduleDriveBackup();
-  if (loadSession()) queueProfilePublish();
+  queueProfilePublish();
 }
 
 function scheduleDriveBackup() {
@@ -791,6 +791,7 @@ function dueFifteenDaySync() {
 
 async function silentDrivePush() {
   if (!loadSession()) return { ok: false, reason: "auth" };
+  if (window.SeaDiveDrive?.googleLoginAllowed?.() === false) return { ok: false, reason: "local" };
   if (syncLock) {
     pushAgain = true;
     return { ok: false, reason: "busy" };
@@ -1870,17 +1871,17 @@ async function importFollowFile(file) {
 
 function storeFollowedPerson(card, role) {
   const handle = publicDiverLabel(card.owner);
-  const realName = [card.firstName, card.lastName].filter(Boolean).join(" ");
+  const listed = card.firstName || card.lastName || card.name ? personNames(card) : null;
   const existing = findFollowMatch(card);
   const online = Boolean(card.owner);
   const granted = !online || card.sharedFile || (card.followOut && card.followIn);
-  const name = granted && realName ? realName : existing?.name || handle.name;
+  const name = listed?.name || existing?.name || handle.name;
   const payload = {
     id: existing?.id,
     role: existing?.role || role || "buddy",
     name,
-    firstName: granted && card.firstName ? card.firstName : existing?.firstName || handle.firstName,
-    lastName: granted && card.lastName ? card.lastName : existing?.lastName || handle.lastName,
+    firstName: listed?.firstName || existing?.firstName || handle.firstName,
+    lastName: listed?.lastName || existing?.lastName || handle.lastName,
     following: online ? false : card.following !== false,
   };
   if (granted && card.cert) payload.cert = card.cert;
@@ -2095,15 +2096,33 @@ function publicDiverLabel(owner) {
   return { firstName: "Sub", lastName: code, name: `Sub ${code}` };
 }
 
+function listedDiverName(card) {
+  const names = personNames({
+    firstName: card?.firstName,
+    lastName: card?.lastName,
+    name: card?.name || "",
+  });
+  if (names.firstName || names.lastName) return names;
+  return publicDiverLabel(card?.owner);
+}
+
 function communityCardFromRow(data) {
   const owner = String(data?.owner || "").trim();
   if (!owner) return null;
+  const names = personNames({
+    firstName: data?.firstName,
+    lastName: data?.lastName,
+    name: data?.name || "",
+  });
   const card = {
     owner,
     id: String(data?._id || owner),
     key: String(data?.key || ""),
     at: String(data?.at || ""),
   };
+  if (names.firstName) card.firstName = names.firstName;
+  if (names.lastName) card.lastName = names.lastName;
+  if (names.name) card.name = names.name;
   const portrait = portraitImage(data?.portrait);
   if (portrait) card.portrait = portrait;
   return card;
@@ -2124,6 +2143,20 @@ function legacyIdentity(row) {
     level: String(row.level || "").trim(),
     cert: String(row.cert || "").trim(),
     sign,
+  };
+}
+
+function sharedProfileIdentity(row, remoteId) {
+  const fromLink = linkIdentityFor(row, remoteId) || { firstName: "", lastName: "", level: "", cert: "", sign: "" };
+  const legacy = legacyIdentity(communityBoardCache.data?.profiles?.[remoteId]) || {};
+  const linkSign = typeof fromLink.sign === "string" && fromLink.sign.startsWith("data:image") ? fromLink.sign : "";
+  const legacySign = typeof legacy.sign === "string" && legacy.sign.startsWith("data:image") ? legacy.sign : "";
+  return {
+    firstName: fromLink.firstName || legacy.firstName || "",
+    lastName: fromLink.lastName || legacy.lastName || "",
+    level: fromLink.level || legacy.level || "",
+    cert: fromLink.cert || legacy.cert || "",
+    sign: linkSign || legacySign,
   };
 }
 
@@ -2389,10 +2422,10 @@ function applyPeopleSearch(root) {
       seaWait.textContent = "Elenco non raggiungibile. Riprova tra poco.";
     } else if (words.length && !seaShown) {
       show(seaWait, true);
-      seaWait.textContent = "Nessuno con questo filtro. Nome e cognome compaiono solo se vi seguite entrambi.";
+      seaWait.textContent = "Nessuno con questo nome. Chi apre l'app compare in questa lista.";
     } else if (!others) {
       show(seaWait, true);
-      seaWait.textContent = "Ancora nessun altro. Chi apre l'app compare qui, anche senza seguirsi.";
+      seaWait.textContent = "Ancora nessun altro. Chi apre l'app compare qui, e puoi scegliere se seguirlo.";
     } else {
       show(seaWait, false);
     }
@@ -2442,13 +2475,13 @@ async function refreshSeaDirectory() {
 function rememberMutualProfile(person, cardHit, mutual) {
   const owner = cardHit.owner || person?.remoteOwner || "";
   const handle = publicDiverLabel(owner);
-  const sharedName = mutual ? [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") : "";
+  const listed = listedDiverName({ ...cardHit, owner });
   const payload = {
     id: person?.id,
     role: person?.role || "buddy",
-    name: sharedName || person?.name || handle.name,
-    firstName: mutual ? cardHit.firstName || person?.firstName || "" : person?.firstName || "",
-    lastName: mutual ? cardHit.lastName || person?.lastName || "" : person?.lastName || "",
+    name: listed.name || person?.name || handle.name,
+    firstName: listed.firstName || person?.firstName || handle.firstName,
+    lastName: listed.lastName || person?.lastName || handle.lastName,
     remoteOwner: owner,
     followOut: true,
     followIn: mutual,
@@ -2501,22 +2534,23 @@ async function connectSeaPerson(cardHit, chat) {
       return;
     }
     const mutual = !res.error && (Boolean(res.followIn) || alreadyIn);
-    const shared = mutual ? linkIdentityFor(res.link, cardHit.owner) : null;
+    const shared = mutual ? sharedProfileIdentity(res.link, cardHit.owner) : null;
     if (!res.error) {
       rememberMutualProfile(person, { ...cardHit, ...(shared || {}) }, mutual);
       save(state);
       silentDrivePush();
     }
+    const listedName = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") || who;
     const label = mutual && shared && (shared.firstName || shared.lastName)
       ? [shared.firstName, shared.lastName].filter(Boolean).join(" ")
-      : who && !who.startsWith("Sub ") && mutual
-        ? who
+      : listedName && !listedName.startsWith("Sub ")
+        ? listedName
         : publicDiverLabel(cardHit.owner).name;
     view.peopleHint = res.error
-      ? `Segui ${publicDiverLabel(cardHit.owner).name}. Il collegamento riprova tra poco: il profilo resta in Community.`
+      ? `Segui ${label}. Il collegamento riprova tra poco: il profilo resta in Community.`
       : mutual
         ? `Vi seguite. Nome, cognome, brevetto, numero e firma di ${label} sono nel contatto.`
-        : `Segui ${publicDiverLabel(cardHit.owner).name}. Nome, cognome, brevetto, numero e firma arrivano solo se segue anche te.`;
+        : `Segui ${label}. Brevetto, numero e firma arrivano solo se segue anche te.`;
     await silentDrivePush();
     render();
   } catch {
@@ -2594,13 +2628,32 @@ async function publishMyProfile() {
   const owner = await profileOwnerKey();
   if (!owner) return { error: "short" };
   const names = personNames({ name: state.profile?.name || "" });
+  let prev = {};
+  try {
+    const board = await loadCommunityBoard(0);
+    const row = board.profiles?.[owner];
+    if (row && typeof row === "object") prev = row;
+  } catch {
+    prev = {};
+  }
+  const first = names.firstName || String(prev.firstName || "").trim();
+  const last = names.lastName || String(prev.lastName || "").trim();
+  const full = names.name || [first, last].filter(Boolean).join(" ") || String(prev.name || "").trim();
   const body = {
     id: owner,
     owner,
     at: new Date().toISOString(),
   };
+  if (first) body.firstName = first.slice(0, 40);
+  if (last) body.lastName = last.slice(0, 40);
+  if (full) {
+    body.name = full.slice(0, 80);
+    const key = communityKey(full) || String(prev.key || "");
+    if (key) body.key = key;
+  } else if (prev.key) body.key = String(prev.key);
   const portrait = await shrinkPortrait(profilePortraitImage(), 96, 3500);
-  if (portrait) body.portrait = portrait;
+  const keptPortrait = portrait || (typeof prev.portrait === "string" && prev.portrait.startsWith("data:image/") ? prev.portrait : "");
+  if (keptPortrait) body.portrait = keptPortrait;
   fitCloudProfile(body);
   try {
     await cloudSet(`p-${owner}`, body);
@@ -2618,7 +2671,6 @@ let profileOnlineStatus = "";
 let profilePublishDue = true;
 
 function queueProfilePublish() {
-  if (!loadSession()) return;
   profilePublishDue = true;
   if (queueProfilePublish.timer || queueProfilePublish.busy) return;
   queueProfilePublish.timer = setTimeout(() => {
@@ -3058,6 +3110,8 @@ async function setMyFollow(other, on) {
   const pair = chatPair(mine, remote);
   const me = personNames({ name: state.profile?.name || "" });
   const sign = on ? await shrinkSign(profileSignImage()) : "";
+  const myLevel = String(state.profile?.certLevel || "").trim().slice(0, 40);
+  const myCert = String(state.profile?.certNumber || "").trim().slice(0, 40);
   try {
     const body = await enqueueCloud(async () => {
       const links = await loadMergedLinks(true);
@@ -3098,12 +3152,12 @@ async function setMyFollow(other, on) {
         blankLinkSide(nextBody, "right");
       } else {
         const side = mineIsLeft ? "left" : "right";
-        nextBody[side + "Name"] = me.name.slice(0, 80);
-        nextBody[side + "First"] = me.firstName.slice(0, 40);
-        nextBody[side + "Last"] = me.lastName.slice(0, 40);
-        nextBody[side + "Level"] = String(state.profile?.certLevel || "").slice(0, 40);
-        nextBody[side + "Cert"] = String(state.profile?.certNumber || "").slice(0, 40);
-        nextBody[side + "Sign"] = sign || "";
+        if (me.name) nextBody[side + "Name"] = me.name.slice(0, 80);
+        if (me.firstName) nextBody[side + "First"] = me.firstName.slice(0, 40);
+        if (me.lastName) nextBody[side + "Last"] = me.lastName.slice(0, 40);
+        if (myLevel) nextBody[side + "Level"] = myLevel;
+        if (myCert) nextBody[side + "Cert"] = myCert;
+        if (sign) nextBody[side + "Sign"] = sign;
       }
       await postLinkBasket({ ...links, [pair]: nextBody });
       return nextBody;
@@ -3156,13 +3210,15 @@ async function syncIncomingLinks() {
     const card = cardByOwner.get(remote) || null;
     const followOut = savedFollowOut(personEarly, flags);
     const mutual = Boolean(followOut && flags.followIn);
-    let ident = mutual ? linkIdentityFor(row, remote) : null;
-    if (mutual && ident && !ident.firstName && !ident.lastName) {
-      ident = legacyIdentity(communityBoardCache.data?.profiles?.[remote]) || ident;
-    }
+    const ident = mutual ? sharedProfileIdentity(row, remote) : null;
+    const listed = card ? listedDiverName(card) : null;
     if (mutual && followOut) {
       const mineSide = row.left === mine ? "left" : "right";
-      if (!String(row[mineSide + "First"] || row[mineSide + "Name"] || "").trim()) {
+      const missingName = !String(row[mineSide + "First"] || row[mineSide + "Name"] || "").trim();
+      const missingCert = Boolean(String(state.profile?.certNumber || "").trim()) && !String(row[mineSide + "Cert"] || "").trim();
+      const missingLevel = Boolean(String(state.profile?.certLevel || "").trim()) && !String(row[mineSide + "Level"] || "").trim();
+      const missingSign = Boolean(profileSignImage()) && !String(row[mineSide + "Sign"] || "").startsWith("data:image");
+      if (missingName || missingCert || missingLevel || missingSign) {
         setMyFollow({ owner: remote, remoteOwner: remote }, true).catch(() => {});
       }
     }
@@ -3172,9 +3228,9 @@ async function syncIncomingLinks() {
     const payload = {
       id: person?.id,
       role: person?.role && person.role !== "center" ? person.role : "buddy",
-      name: shared?.name || person?.name || handle.name,
-      firstName: shared?.firstName || (mutual ? "" : person?.firstName || handle.firstName),
-      lastName: shared?.lastName || (mutual ? "" : person?.lastName || handle.lastName),
+      name: shared?.name || listed?.name || person?.name || handle.name,
+      firstName: shared?.firstName || listed?.firstName || person?.firstName || handle.firstName,
+      lastName: shared?.lastName || listed?.lastName || person?.lastName || handle.lastName,
       remoteOwner: remote,
       followOut,
       followIn: flags.followIn,
@@ -3425,7 +3481,7 @@ async function adoptCommunityProfile(name) {
 function communityMissText(error) {
   if (error === "short") return "Scrivi nome e cognome interi.";
   if (error === "network") return "Elenco profili non raggiungibile. Riprova tra poco.";
-  return "Nessun profilo con questo nome tra chi ti segue a vicenda. In Community le persone compaiono comunque: nome, cognome, brevetto, numero e firma arrivano solo se vi seguite entrambi.";
+  return "Nessun profilo con questo nome. In Community si vede nome e cognome. Brevetto, numero e firma arrivano solo se vi seguite entrambi.";
 }
 
 function scheduleCommunityPull(form) {
@@ -3528,13 +3584,29 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-reload")) return;
-        sessionStorage.setItem("seadive-sw-reload", "1");
-        location.reload();
+        if (sessionStorage.getItem("seadive-sw-214")) return;
+        sessionStorage.setItem("seadive-sw-214", "1");
+        location.replace("./?v=214&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
+
+const APP_VERSION = "214";
+
+function pullFreshApp() {
+  fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
+    .then((res) => (res.ok ? res.text() : ""))
+    .then((text) => {
+      const remote = String(text || "").trim();
+      if (!remote || remote === APP_VERSION) return;
+      if (sessionStorage.getItem("seadive-refresh") === remote) return;
+      sessionStorage.setItem("seadive-refresh", remote);
+      location.replace("./aggiorna.html?t=" + Date.now());
+    })
+    .catch(() => {});
+}
+pullFreshApp();
 
 let state = load();
 rememberCatalogFromDives();
@@ -4166,7 +4238,7 @@ function render() {
   app.replaceChildren();
   document.querySelectorAll(".nav, .nav-dock").forEach((el) => el.remove());
   setPageSkin();
-  if (!loadSession()) {
+  if (!loadSession() && window.SeaDiveDrive?.googleLoginAllowed?.() !== false) {
     app.append(renderAuth());
     return;
   }
@@ -4268,7 +4340,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 205</p>
+        <p class="hint">Versione 214</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5379,10 +5451,8 @@ function homeCrewModel() {
     sea.forEach((c) => {
       const known = localSeaPerson(c);
       const mutual = Boolean(known?.followOut && known?.followIn);
-      const label = mutual ? personNames(known) : publicDiverLabel(c.owner);
-      const initials = mutual
-        ? `${(label.firstName || "?").slice(0, 1)}${(label.lastName || "").slice(0, 1)}`.toUpperCase()
-        : "S";
+      const label = mutual ? personNames(known) : listedDiverName(c);
+      const initials = `${(label.firstName || label.name || "?").slice(0, 1)}${(label.lastName || "").slice(0, 1)}`.toUpperCase();
       push(label.name, portraitImage(c.portrait) || personPortrait(known), initials);
     });
   } else {
@@ -5602,127 +5672,153 @@ function renderHome() {
           <svg class="coast-art" viewBox="0 0 360 196" preserveAspectRatio="xMidYMid slice">
             <defs>
               <linearGradient id="hmSky" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#2f86c4"/>
-                <stop offset="0.38" stop-color="#7ec0e6"/>
-                <stop offset="0.62" stop-color="#d5eef8"/>
-                <stop offset="0.8" stop-color="#f6e3c0"/>
-                <stop offset="1" stop-color="#f6e3c0"/>
+                <stop offset="0" stop-color="#1f6eab"/>
+                <stop offset="0.42" stop-color="#7eb6dc"/>
+                <stop offset="0.72" stop-color="#f3d7b4"/>
+                <stop offset="1" stop-color="#f7e2c4"/>
               </linearGradient>
               <linearGradient id="hmSea" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#d7f4f8"/>
-                <stop offset="0.14" stop-color="#3eabd0"/>
-                <stop offset="0.42" stop-color="#1786b0"/>
-                <stop offset="0.74" stop-color="#0e6288"/>
-                <stop offset="1" stop-color="#08425e"/>
-              </linearGradient>
-              <linearGradient id="hmGlare" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#ffffff" stop-opacity="0.7"/>
-                <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+                <stop offset="0" stop-color="#c5e7ee"/>
+                <stop offset="0.08" stop-color="#3f9fbe"/>
+                <stop offset="0.34" stop-color="#1a749c"/>
+                <stop offset="0.68" stop-color="#0d5578"/>
+                <stop offset="1" stop-color="#08364c"/>
               </linearGradient>
               <linearGradient id="hmSand" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#f3e2b8"/>
-                <stop offset="0.4" stop-color="#e4c68c"/>
-                <stop offset="1" stop-color="#c9a56a"/>
+                <stop offset="0" stop-color="#f6e7c4"/>
+                <stop offset="0.28" stop-color="#e4c892"/>
+                <stop offset="1" stop-color="#c49a62"/>
               </linearGradient>
+              <linearGradient id="hmWet" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#d7c092" stop-opacity="0.15"/>
+                <stop offset="1" stop-color="#8d6a3e" stop-opacity="0.45"/>
+              </linearGradient>
+              <radialGradient id="hmSun" cx="50%" cy="50%" r="50%">
+                <stop offset="0" stop-color="#fffdf6"/>
+                <stop offset="0.45" stop-color="#ffe7a8"/>
+                <stop offset="1" stop-color="#ffe7a8" stop-opacity="0"/>
+              </radialGradient>
             </defs>
             <rect width="360" height="196" fill="url(#hmSky)"/>
-            <circle cx="68" cy="40" r="48" fill="#ffe7a8" opacity="0.32"/>
-            <circle cx="68" cy="40" r="20" fill="#fff6d4"/>
-            <circle cx="68" cy="40" r="11" fill="#fffdf4"/>
-            <g class="coast-cloud a" fill="#ffffff">
-              <ellipse cx="16" cy="32" rx="14" ry="7" opacity="0.8"/>
-              <ellipse cx="34" cy="27" rx="20" ry="11"/>
-              <ellipse cx="54" cy="33" rx="15" ry="8" opacity="0.92"/>
+            <circle cx="64" cy="42" r="46" fill="url(#hmSun)"/>
+            <circle cx="64" cy="42" r="13" fill="#fffaf0"/>
+            <g class="coast-cloud a">
+              <ellipse cx="28" cy="30" rx="22" ry="9" fill="#f7fbff"/>
+              <ellipse cx="46" cy="26" rx="16" ry="10" fill="#ffffff"/>
+              <ellipse cx="18" cy="33" rx="12" ry="6" fill="#d5e2ea"/>
+              <ellipse cx="40" cy="34" rx="18" ry="6" fill="#e4edf2"/>
             </g>
-            <g class="coast-cloud b" fill="#ffffff" opacity="0.9">
-              <ellipse cx="150" cy="18" rx="11" ry="6"/>
-              <ellipse cx="166" cy="15" rx="15" ry="8"/>
-              <ellipse cx="182" cy="20" rx="10" ry="5"/>
+            <g class="coast-cloud b">
+              <ellipse cx="168" cy="18" rx="18" ry="7" fill="#f4f8fb"/>
+              <ellipse cx="184" cy="16" rx="12" ry="6" fill="#ffffff"/>
+              <ellipse cx="174" cy="21" rx="16" ry="4" fill="#d9e4ea"/>
             </g>
-            <g class="coast-gull" fill="none" stroke="#ffffff" stroke-width="1.35" stroke-linecap="round">
-              <path d="M118 36 q6 -6 11 0"/>
-              <path d="M129 36 q6 -6 11 0"/>
+            <g class="coast-gull" fill="#f7f4ee">
+              <ellipse cx="124" cy="38" rx="7" ry="2.2"/>
+              <path d="M116 37 q8 -8 14 1" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/>
+              <path d="M128 38 q7 -7 12 1" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/>
             </g>
-            <path d="M6 94 C26 80 44 86 60 72 C76 84 96 78 112 90 L112 98 L6 100 Z" fill="#a9c0c4" opacity="0.75"/>
-            <ellipse cx="180" cy="96" rx="190" ry="14" fill="#f7f1e4" opacity="0.45"/>
-            <path d="M118 104 C148 66 168 82 198 34 C228 58 258 26 296 46 C326 62 346 40 360 56 L360 124 L118 116 Z" fill="#93a89c"/>
-            <path d="M146 112 C176 66 198 86 234 38 C266 64 298 40 360 70 L360 136 L146 128 Z" fill="#1b5e36"/>
-            <path d="M154 108 C176 74 196 90 230 44 C222 70 200 90 162 110 Z" fill="#3d8c4c"/>
-            <ellipse cx="214" cy="58" rx="7" ry="15" fill="#143c28"/>
-            <ellipse cx="230" cy="48" rx="6" ry="14" fill="#0f3322"/>
-            <ellipse cx="198" cy="70" rx="8" ry="12" fill="#184630"/>
-            <ellipse cx="262" cy="56" rx="6.5" ry="13" fill="#123828"/>
-            <ellipse cx="286" cy="64" rx="7" ry="12" fill="#143c28"/>
-            <path d="M0 98 C72 88 128 108 196 94 C250 82 308 110 360 92 L360 196 L0 196 Z" fill="url(#hmSea)"/>
-            <polygon class="sea-glare" points="54,100 82,100 74,158 62,158" fill="url(#hmGlare)"/>
-            <path fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.8" stroke-linecap="round" d="M0 112 C24 104 36 120 60 112 S96 104 120 112 S156 120 180 112 S216 104 240 112 S276 120 300 112 S336 104 360 112">
-              <animate attributeName="d" dur="5.6s" repeatCount="indefinite" values="M0 112 C24 104 36 120 60 112 S96 104 120 112 S156 120 180 112 S216 104 240 112 S276 120 300 112 S336 104 360 112;M0 112 C24 120 36 104 60 112 S96 120 120 112 S156 104 180 112 S216 120 240 112 S276 104 300 112 S336 120 360 112;M0 112 C24 104 36 120 60 112 S96 104 120 112 S156 120 180 112 S216 104 240 112 S276 120 300 112 S336 104 360 112"/>
+            <path d="M210 78 C250 62 290 70 334 52 C352 46 360 50 360 50 L360 92 C320 78 270 96 230 84 C214 78 206 86 210 78 Z" fill="#8ea4ae"/>
+            <path d="M228 74 C258 64 300 72 340 58 C322 70 286 78 250 80 Z" fill="#6e8a86" opacity="0.7"/>
+            <path d="M150 108 C176 78 196 92 228 58 C258 78 292 52 338 70 C352 78 360 68 360 68 L360 132 L150 124 Z" fill="#6d8f78"/>
+            <path d="M162 112 C188 74 210 90 244 52 C274 74 308 58 360 82 L360 140 L162 132 Z" fill="#1d5a38"/>
+            <path d="M170 108 C196 78 214 92 246 58 C236 78 214 96 176 112 Z" fill="#3e8a4e"/>
+            <path d="M188 96 C206 78 214 86 228 66 C220 84 206 98 190 104 Z" fill="#2f6d40"/>
+            <g fill="#143c28">
+              <ellipse cx="206" cy="70" rx="5" ry="14"/>
+              <ellipse cx="218" cy="60" rx="4.5" ry="16"/>
+              <ellipse cx="232" cy="66" rx="6" ry="13"/>
+              <ellipse cx="248" cy="58" rx="4" ry="15"/>
+              <ellipse cx="262" cy="70" rx="5.5" ry="12"/>
+              <ellipse cx="278" cy="64" rx="4" ry="13"/>
+              <ellipse cx="294" cy="74" rx="6" ry="11"/>
+            </g>
+            <g fill="#0e2e1e">
+              <ellipse cx="212" cy="78" rx="7" ry="4"/>
+              <ellipse cx="236" cy="74" rx="8" ry="4"/>
+              <ellipse cx="258" cy="80" rx="6" ry="3.5"/>
+              <ellipse cx="286" cy="82" rx="8" ry="4"/>
+            </g>
+            <path d="M156 118 C186 108 210 122 236 112 C258 104 286 118 320 108" fill="none" stroke="#0c2418" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+            <path d="M0 96 C70 86 130 106 196 92 C258 80 310 108 360 90 L360 196 L0 196 Z" fill="url(#hmSea)"/>
+            <path d="M0 98 C90 90 170 108 250 96 C310 88 340 100 360 94 L360 118 C280 112 190 126 100 114 C40 106 0 116 0 116 Z" fill="#5ec0cc" opacity="0.38"/>
+            <path d="M0 108 C70 102 120 116 180 108 C230 102 280 114 340 106 C352 104 360 108 360 108 L360 122 C300 118 230 128 160 118 C90 110 40 122 0 116 Z" fill="#187898" opacity="0.35"/>
+            <path d="M88 126 C102 120 118 128 132 122 C126 130 108 132 92 130 Z" fill="rgba(255,255,255,0.8)"/>
+            <path d="M104 134 C114 130 124 136 136 132 C130 138 116 140 106 138 Z" fill="rgba(255,255,255,0.45)"/>
+            <path d="M150 138 C166 132 184 142 200 134 C192 144 170 146 154 142 Z" fill="rgba(255,255,255,0.62)"/>
+            <path d="M176 148 C188 144 200 150 212 146 C206 152 192 154 178 152 Z" fill="rgba(255,255,255,0.4)"/>
+            <path d="M48 98 L70 154" stroke="rgba(255,248,220,0.28)" stroke-width="18" stroke-linecap="round"/>
+            <path d="M56 100 L66 150" stroke="rgba(255,252,236,0.45)" stroke-width="6" stroke-linecap="round"/>
+            <g fill="#fff" class="sea-glint">
+              <ellipse cx="60" cy="112" rx="1.6" ry="0.7"/>
+              <ellipse cx="66" cy="124" rx="1.2" ry="0.55"/>
+              <ellipse cx="58" cy="136" rx="1.8" ry="0.7"/>
+              <ellipse cx="70" cy="146" rx="1.1" ry="0.5"/>
+            </g>
+            <path fill="none" stroke="rgba(255,255,255,0.72)" stroke-width="1.6" stroke-linecap="round" d="M8 114 C22 110 30 118 44 114 C58 110 70 118 86 113">
+              <animate attributeName="d" dur="5.4s" repeatCount="indefinite" values="M8 114 C22 110 30 118 44 114 C58 110 70 118 86 113;M8 114 C22 118 30 110 44 114 C58 118 70 110 86 114;M8 114 C22 110 30 118 44 114 C58 110 70 118 86 113"/>
             </path>
-            <path fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round" d="M0 126 C28 118 40 134 68 126 S108 118 136 126 S176 134 204 126 S244 118 272 126 S312 134 340 126 S360 122 360 126">
-              <animate attributeName="d" dur="7.2s" repeatCount="indefinite" values="M0 126 C28 118 40 134 68 126 S108 118 136 126 S176 134 204 126 S244 118 272 126 S312 134 340 126 S360 122 360 126;M0 126 C28 134 40 118 68 126 S108 134 136 126 S176 118 204 126 S244 134 272 126 S312 118 340 126 S360 130 360 126;M0 126 C28 118 40 134 68 126 S108 118 136 126 S176 134 204 126 S244 118 272 126 S312 134 340 126 S360 122 360 126"/>
-            </path>
-            <g fill="#ffffff">
-              <circle class="sea-glint a" cx="66" cy="120" r="1.3"/>
-              <circle class="sea-glint b" cx="74" cy="134" r="1.05"/>
-              <circle class="sea-glint c" cx="60" cy="146" r="1.35"/>
+            <path fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1.3" stroke-linecap="round" d="M120 122 C138 116 150 126 168 120 C186 114 198 124 214 118"/>
+            <path fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.2" stroke-linecap="round" d="M240 128 C258 122 274 132 296 124 C314 118 332 128 352 122"/>
+            <path d="M0 148 C48 142 86 156 132 148 C186 138 230 158 286 146 C322 140 344 150 360 144 L360 162 L0 164 Z" fill="#1c8f98" opacity="0.22"/>
+            <path d="M0 152 C28 148 46 156 70 151 C96 146 112 156 140 150 C168 144 190 156 220 149" fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="2.2" stroke-linecap="round"/>
+            <path d="M168 156 C196 150 214 160 242 154 C270 148 292 158 324 152 C342 148 352 154 360 152" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M0 156 C78 148 132 168 206 154 C268 142 316 166 360 152 L360 196 L0 196 Z" fill="url(#hmSand)"/>
+            <path d="M0 156 C78 150 132 164 206 156 C268 148 316 162 360 154 L360 168 L0 170 Z" fill="url(#hmWet)"/>
+            <path d="M0 170 C90 160 150 182 224 166 C280 154 326 176 360 164 L360 196 L0 196 Z" fill="#c9a56c"/>
+            <g fill="#b08958">
+              <ellipse cx="36" cy="176" rx="6" ry="2.4"/>
+              <ellipse cx="98" cy="168" rx="3.4" ry="1.6"/>
+              <ellipse cx="154" cy="180" rx="4.2" ry="1.8"/>
+              <ellipse cx="48" cy="164" rx="1.3" ry="0.8" fill="#efe2c4"/>
+              <ellipse cx="122" cy="174" rx="1.1" ry="0.7" fill="#efe2c4"/>
             </g>
-            <path d="M0 136 C50 128 90 146 140 136 C200 124 250 148 310 134 C340 128 352 136 360 132" fill="none" stroke="rgba(255,255,255,0.34)" stroke-width="1.4" stroke-linecap="round">
-              <animate attributeName="d" dur="6.4s" repeatCount="indefinite" values="M0 136 C50 128 90 146 140 136 C200 124 250 148 310 134 C340 128 352 136 360 132;M0 136 C50 144 90 126 140 136 C200 148 250 124 310 138 C340 144 352 128 360 136;M0 136 C50 128 90 146 140 136 C200 124 250 148 310 134 C340 128 352 136 360 132"/>
-            </path>
-            <path d="M0 146 C70 156 120 136 180 148 C250 162 300 140 360 152 L360 166 L0 166 Z" fill="#1f9aa4" opacity="0.22"/>
-            <path d="M0 154 C40 148 72 160 112 152 C156 144 188 162 230 152 C274 142 312 160 360 150" fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="2.4" stroke-linecap="round"/>
-            <path d="M0 156 C78 146 134 170 206 154 C266 140 316 168 360 152 L360 196 L0 196 Z" fill="url(#hmSand)"/>
-            <path d="M0 168 C88 156 148 180 220 164 C276 152 322 176 360 162 L360 196 L0 196 Z" fill="#c9a56c"/>
-            <ellipse cx="42" cy="172" rx="7" ry="3.6" fill="#b08958"/>
-            <ellipse cx="108" cy="166" rx="4.2" ry="2.5" fill="#c4a36e"/>
-            <ellipse cx="164" cy="178" rx="5" ry="2.8" fill="#a68452"/>
-            <path d="M286 150 C306 140 330 152 354 142 C360 146 360 160 348 162 C326 170 304 158 288 164 Z" fill="#5c6c68"/>
-            <path d="M300 148 C316 142 332 150 346 144 C342 152 324 156 308 154 Z" fill="#8d9a96"/>
+            <path d="M300 156 C318 148 338 158 356 150 C360 154 360 166 346 168 C324 176 306 164 300 168 Z" fill="#5a6864"/>
+            <path d="M308 154 C322 150 336 156 348 152 C344 158 328 162 314 158 Z" fill="#9aa6a2"/>
           </svg>
           <span class="dan-flag">
             <span class="dan-shadow"></span>
             <span class="dan-pole"></span>
-            <svg class="dan-fly" viewBox="0 0 200 118">
+            <svg class="dan-fly" viewBox="0 0 220 128">
               <defs>
                 <linearGradient id="hmClothRed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#ee4545"/>
-                  <stop offset="0.48" stop-color="#c4121c"/>
-                  <stop offset="1" stop-color="#7c0e14"/>
+                  <stop offset="0" stop-color="#e23c3c"/>
+                  <stop offset="0.5" stop-color="#c4121c"/>
+                  <stop offset="1" stop-color="#7e1016"/>
                 </linearGradient>
                 <linearGradient id="hmFold" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0" stop-color="#000000" stop-opacity="0"/>
-                  <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.55"/>
-                  <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+                  <stop offset="0" stop-color="#000" stop-opacity="0"/>
+                  <stop offset="0.42" stop-color="#fff" stop-opacity="0.42"/>
+                  <stop offset="1" stop-color="#000" stop-opacity="0.18"/>
                 </linearGradient>
                 <clipPath id="hmClothClip">
-                  <path d="M0 8 C36 2 78 14 128 4 C168 -2 188 8 200 6 L198 102 C150 114 80 96 36 116 C16 122 6 112 0 114 Z">
-                    <animate attributeName="d" dur="1.85s" repeatCount="indefinite" values="M0 8 C36 2 78 14 128 4 C168 -2 188 8 200 6 L198 102 C150 114 80 96 36 116 C16 122 6 112 0 114 Z;M0 8 C36 6 78 0 128 12 C168 18 190 4 200 16 L198 112 C150 100 80 118 36 108 C16 104 6 116 0 114 Z;M0 8 C36 0 78 16 128 -2 C166 6 188 0 200 2 L198 96 C148 118 82 92 36 120 C14 126 6 110 0 114 Z;M0 8 C36 2 78 14 128 4 C168 -2 188 8 200 6 L198 102 C150 114 80 96 36 116 C16 122 6 112 0 114 Z"/>
+                  <path d="M4 16 C48 10 86 26 128 12 C168 2 198 16 214 10 L212 92 C168 108 112 84 64 104 C32 114 12 102 4 106 Z">
+                    <animate attributeName="d" dur="2.4s" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1" keyTimes="0;0.38;0.7;1" values="M4 16 C48 10 86 26 128 12 C168 2 198 16 214 10 L212 92 C168 108 112 84 64 104 C32 114 12 102 4 106 Z;M4 16 C46 20 84 6 126 22 C170 16 200 2 214 20 L212 104 C166 90 114 112 66 94 C30 86 12 108 4 106 Z;M4 16 C50 8 88 24 130 6 C172 14 196 2 214 6 L210 86 C170 112 110 80 62 110 C28 120 10 100 4 106 Z;M4 16 C48 10 86 26 128 12 C168 2 198 16 214 10 L212 92 C168 108 112 84 64 104 C32 114 12 102 4 106 Z"/>
                   </path>
                 </clipPath>
-                <filter id="hmWind" x="-6%" y="-22%" width="120%" height="150%" color-interpolation-filters="sRGB">
-                  <feTurbulence type="fractalNoise" baseFrequency="0.008 0.045" numOctaves="1" seed="4" result="n">
-                    <animate attributeName="baseFrequency" dur="1.85s" values="0.008 0.04;0.014 0.06;0.009 0.045;0.008 0.04" repeatCount="indefinite"/>
+                <filter id="hmWind" x="-10%" y="-24%" width="130%" height="160%" color-interpolation-filters="sRGB">
+                  <feTurbulence type="fractalNoise" baseFrequency="0.015 0.055" numOctaves="2" seed="2" result="n">
+                    <animate attributeName="baseFrequency" dur="2.4s" values="0.012 0.04;0.022 0.08;0.014 0.05;0.012 0.04" repeatCount="indefinite"/>
                   </feTurbulence>
-                  <feDisplacementMap in="SourceGraphic" in2="n" scale="2" xChannelSelector="R" yChannelSelector="G">
-                    <animate attributeName="scale" dur="1.85s" values="1.5;3.5;2;1.5" repeatCount="indefinite"/>
+                  <feDisplacementMap in="SourceGraphic" in2="n" scale="7" xChannelSelector="R" yChannelSelector="G">
+                    <animate attributeName="scale" dur="2.4s" values="4;11;6;4" repeatCount="indefinite"/>
                   </feDisplacementMap>
                 </filter>
               </defs>
-              <g filter="url(#hmWind)" clip-path="url(#hmClothClip)">
-                <rect x="-6" y="-8" width="214" height="136" fill="url(#hmClothRed)"/>
-                <polygon points="0,0 0,34 206,122 206,84" fill="#ffffff"/>
-                <polygon points="0,0 0,9 206,93 206,84" fill="#e6e6e6"/>
-                <polygon points="0,25 0,34 206,122 206,113" fill="#d2d2d2"/>
-                <rect x="190" y="-8" width="16" height="140" fill="#5a0810" opacity="0.4"/>
-                <text x="104" y="74" text-anchor="middle" font-family="Outfit, Arial, sans-serif" font-size="26" font-weight="800" fill="#9a1018" letter-spacing="1.1" transform="rotate(24 100 60)">DAN</text>
-                <rect x="-40" y="-10" width="48" height="140" fill="url(#hmFold)" opacity="0.55">
-                  <animate attributeName="x" values="-48;168;-48" dur="2s" repeatCount="indefinite"/>
+              <g clip-path="url(#hmClothClip)" filter="url(#hmWind)">
+                <rect x="-8" y="-16" width="240" height="160" fill="url(#hmClothRed)"/>
+                <polygon points="-4,2 -4,36 224,118 224,82" fill="#f6f3ec"/>
+                <polygon points="-4,2 -4,11 224,93 224,82" fill="#ffffff"/>
+                <polygon points="-4,27 -4,36 224,118 224,109" fill="#d9d3cb"/>
+                <text x="112" y="78" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="700" fill="#9d1218" transform="rotate(20 108 64)">DAN</text>
+                <rect x="-50" y="-12" width="36" height="150" fill="url(#hmFold)">
+                  <animate attributeName="x" values="-60;190;-60" dur="2.4s" repeatCount="indefinite"/>
                 </rect>
               </g>
-              <circle cx="6" cy="16" r="2.6" fill="#f4f1ea"/>
-              <circle cx="6" cy="16" r="1.2" fill="#4a3424"/>
-              <circle cx="6" cy="102" r="2.6" fill="#f4f1ea"/>
-              <circle cx="6" cy="102" r="1.2" fill="#4a3424"/>
+              <circle cx="8" cy="22" r="2.4" fill="#f4f1ea"/>
+              <circle cx="8" cy="22" r="1.1" fill="#4a3424"/>
+              <circle cx="8" cy="100" r="2.4" fill="#f4f1ea"/>
+              <circle cx="8" cy="100" r="1.1" fill="#4a3424"/>
             </svg>
           </span>
         </span>
@@ -8190,7 +8286,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Chi usa l'app compare qui al primo accesso e a ogni modifica. Puoi seguire o no. Nome, cognome, brevetto, numero e firma si scambiano solo se vi seguite entrambi.</p>
+    <p class="hint">Chi apre l'app compare qui, anche senza account Google. Puoi seguire o no. Brevetto, numero e firma si scambiano solo se vi seguite entrambi.</p>
     <div class="chat-list" data-chatlist>
       <button class="chat-entry" type="button" data-openchat>Chat di chi si segue</button>
     </div>
@@ -8270,19 +8366,18 @@ function renderPeople() {
     }
     const known = localSeaPerson(cardHit);
     const mutual = Boolean(known?.followOut && known?.followIn);
-    const shown = mutual ? personNames(known) : publicDiverLabel(cardHit.owner);
+    const shown = mutual ? personNames(known) : listedDiverName(cardHit);
     const mode = mutual ? "mutual" : !known ? "none" : known.followOut ? "out" : known.followIn ? "in" : "none";
-    const status = mode === "mutual" ? "Vi seguite" : mode === "in" ? "Ti segue" : "";
+    const sharedLine = mutual ? [known?.level, known?.cert].filter(Boolean).join(" · ") : "";
+    const status = [mode === "mutual" ? "Vi seguite" : mode === "in" ? "Ti segue" : "", sharedLine].filter(Boolean).join(" · ");
     const followBtn = mode === "mutual" || mode === "out"
       ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>`
       : `<button class="btn primary" type="button" data-follow>${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
     const photo = portraitImage(cardHit.portrait) || personPortrait(known);
-    const initials = mutual
-      ? `${(shown.firstName || "?").slice(0, 1)}${(shown.lastName || "").slice(0, 1)}`.toUpperCase()
-      : "S";
+    const initials = `${(shown.firstName || shown.name || "?").slice(0, 1)}${(shown.lastName || "").slice(0, 1)}`.toUpperCase();
     const row = document.createElement("article");
     row.className = "sea-person";
-    row.setAttribute("data-q", mutual ? [shown.firstName, shown.lastName, shown.name, extra].filter(Boolean).join(" ") : shown.name);
+    row.setAttribute("data-q", [shown.firstName, shown.lastName, shown.name, mutual ? extra : ""].filter(Boolean).join(" "));
     row.innerHTML = `
       ${photo ? `<img class="sea-photo" alt="" src="${escapeHtml(photo)}" />` : `<span class="sea-photo sea-photo-fallback">${escapeHtml(initials)}</span>`}
       <strong class="sea-first">${escapeHtml(shown.firstName || "")}</strong>
@@ -8324,24 +8419,24 @@ function renderPeople() {
       );
       const names = personNames(p);
       const mine = samePersonName(p.name, state.profile.name);
-      const hiddenRemote = Boolean(p.remoteOwner) && !mine && !(p.followOut && p.followIn);
-      const shown = hiddenRemote ? publicDiverLabel(p.remoteOwner) : names;
+      const mutualRemote = Boolean(p.remoteOwner) && p.followOut && p.followIn;
+      const shown = names.firstName === "Sub" && p.remoteOwner ? listedDiverName({ owner: p.remoteOwner, firstName: p.firstName, lastName: p.lastName, name: p.name }) : names;
       const photo = personPortrait(p);
       const initials = p.role === "center"
         ? (p.name || "?").slice(0, 1).toUpperCase()
-        : hiddenRemote
-          ? "S"
-          : `${(shown.firstName || p.name || "?").slice(0, 1)}${(shown.lastName || "").slice(0, 1)}`.toUpperCase();
+        : `${(shown.firstName || p.name || "?").slice(0, 1)}${(shown.lastName || "").slice(0, 1)}`.toUpperCase();
       const status = [
         mine ? "Sei tu" : "",
-        p.remoteOwner && p.followOut && p.followIn ? "Vi seguite" : "",
+        mutualRemote ? "Vi seguite" : "",
+        mutualRemote && p.level ? p.level : "",
+        mutualRemote && p.cert ? "n° " + p.cert : "",
         p.remoteOwner && p.followOut && !p.followIn ? "In attesa" : "",
         p.remoteOwner && !p.followOut && p.followIn ? "Ti segue" : "",
         !p.remoteOwner && !mine ? roleLabel(p.role) : "",
         n ? `${n} ${n === 1 ? "scheda" : "schede"}` : "",
       ].filter(Boolean).join(" · ");
-      const first = p.role === "center" ? p.name || "" : hiddenRemote ? shown.firstName : names.firstName || p.name || "";
-      const last = p.role === "center" ? "" : hiddenRemote ? shown.lastName : names.lastName || "";
+      const first = p.role === "center" ? p.name || "" : shown.firstName || names.firstName || p.name || "";
+      const last = p.role === "center" ? "" : shown.lastName || names.lastName || "";
       row.className = "contact-row";
       row.innerHTML = `
         <button type="button" class="contact-main">
@@ -8538,15 +8633,15 @@ function renderPerson() {
   form.className = "card";
   const dives = creating ? [] : divesForPerson(current);
   const names = personNames(current);
-  const hiddenRemote = !creating && Boolean(current.remoteOwner) && !mutualFollow(current);
-  const shownPerson = hiddenRemote ? publicDiverLabel(current.remoteOwner) : names;
-  const shownCert = hiddenRemote ? "" : current.cert;
+  const privateRemote = !creating && Boolean(current.remoteOwner) && !mutualFollow(current);
+  const shownCert = privateRemote ? "" : current.cert;
+  const shownLevel = privateRemote ? "" : current.level || "";
   form.innerHTML = `
     <div class="person-head">
-      ${avatarHtml(personPortrait(current), hiddenRemote ? shownPerson.name : current.name)}
-      <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(hiddenRemote ? shownPerson.name : current.name)}</h2>
+      ${avatarHtml(personPortrait(current), current.name)}
+      <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
     </div>
-    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : hiddenRemote ? "Nome, cognome, brevetto, numero e firma restano nascosti finché non vi seguite entrambi." : "Nome, cognome e brevetto si aggiornano anche sulle schede in cui compare già."}</p>
+    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : privateRemote ? "Nome e cognome sono visibili. Brevetto, numero e firma arrivano quando vi seguite entrambi." : "Nome, cognome, brevetto, numero e firma si aggiornano anche sulle schede in cui compare già."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
     <div class="chips" data-roles></div>
     <input type="hidden" name="role" value="${escapeHtml(current.role || "buddy")}" />
@@ -8554,9 +8649,10 @@ function renderPerson() {
     <input type="hidden" name="lng" value="${Number.isFinite(Number(current.lng)) ? escapeHtml(String(current.lng)) : ""}" />
     <input type="hidden" name="placeCountry" value="" />
     <div class="form-grid" style="margin-top:12px" data-personfields ${current.role === "center" ? "hidden" : ""}>
-      ${field("firstName", "Nome", hiddenRemote ? "" : names.firstName, true)}
-      ${field("lastName", "Cognome", hiddenRemote ? "" : names.lastName, true)}
-      ${field("cert", "N° brevetto", shownCert, true)}
+      ${field("firstName", "Nome", names.firstName, true)}
+      ${field("lastName", "Cognome", names.lastName, true)}
+      ${privateRemote ? "" : field("level", "Brevetto", shownLevel, true)}
+      ${privateRemote ? "" : field("cert", "N° brevetto", shownCert, true)}
     </div>
     <div data-centerbox ${current.role === "center" ? "" : "hidden"}>
       <div class="form-grid">
@@ -8589,9 +8685,9 @@ function renderPerson() {
     </div>
     <p class="hint" data-followhint ${current.role === "center" ? "hidden" : ""}>${creating ? "Un contatto scritto qui è tuo: brevetto e firma che inserisci restano pronti in immersione." : current.remoteOwner && current.followOut && current.followIn ? "Vi seguite. Nome, cognome, numero di brevetto e firma entrano nella nuova immersione." : current.remoteOwner && current.followOut ? "Lo segui. Brevetto e firma entrano in immersione solo quando segue anche te." : current.remoteOwner && current.followIn ? "Ti segue. Segui anche tu per usare brevetto e firma in immersione." : "Per chi è su SeaDive, brevetto e firma entrano in immersione solo se vi seguite entrambi."}</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
-      <p class="hint">${current.remoteOwner && !(current.followOut && current.followIn) ? "La firma entra in immersione solo quando vi seguite entrambi." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
-      ${signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
-      ${hiddenRemote ? "" : signPreviewHtml(personKnownSign(current))}
+      <p class="hint">${privateRemote ? "La firma digitale si scambia solo quando vi seguite entrambi." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
+      ${privateRemote ? "" : signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
+      ${privateRemote ? "" : signPreviewHtml(personKnownSign(current))}
     </div>
     ${current.remoteOwner && current.followOut && current.followIn ? `<p class="hint">Vi seguite. Nome, cognome, brevetto e firma si aggiornano da questo profilo.</p>` : ""}
     ${dives.length ? `<h3 class="serif">Immersioni insieme</h3><div class="people-list" data-dives></div>` : ""}
@@ -8648,7 +8744,7 @@ function renderPerson() {
       };
       diveBox.append(b);
     });
-  let personSign = hiddenRemote ? "" : personKnownSign(current);
+  let personSign = privateRemote ? "" : personKnownSign(current);
   let centerPhoto = current.role === "center" ? portraitImage(current.portrait) : "";
   const bindCenterSign = () => {
     const canvas = form.querySelector('[data-sign="centerLeadSign"]');
@@ -8750,8 +8846,8 @@ function renderPerson() {
   form.onsubmit = (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    const firstName = hiddenRemote ? String(current.firstName || "").trim() : String(fd.get("firstName") || "").trim();
-    const lastName = hiddenRemote ? String(current.lastName || "").trim() : String(fd.get("lastName") || "").trim();
+    const firstName = String(fd.get("firstName") || "").trim();
+    const lastName = String(fd.get("lastName") || "").trim();
     const denom = String(fd.get("name") || "").trim();
     const role = fd.get("role") || current.role;
     const street = String(fd.get("street") || "").trim();
@@ -8760,7 +8856,7 @@ function renderPerson() {
     const address = divingAddressLine(street, civic, city);
     const lat = Number(String(fd.get("lat") || "").replace(",", "."));
     const lng = Number(String(fd.get("lng") || "").replace(",", "."));
-    const name = hiddenRemote ? current.name || publicDiverLabel(current.remoteOwner).name : role === "center" ? denom : [firstName, lastName].filter(Boolean).join(" ");
+    const name = role === "center" ? denom : [firstName, lastName].filter(Boolean).join(" ");
     if (!name) {
       alert(role === "center" ? "Scrivi la denominazione del diving." : "Scrivi nome e cognome.");
       return;
@@ -8780,11 +8876,12 @@ function renderPerson() {
       name,
       firstName: role === "center" ? "" : firstName,
       lastName: role === "center" ? "" : lastName,
-      cert: hiddenRemote ? "" : role === "center" ? fd.get("centerCert") || "" : fd.get("cert") || "",
+      cert: privateRemote ? current.cert || "" : role === "center" ? fd.get("centerCert") || "" : fd.get("cert") || "",
+      level: privateRemote ? current.level || "" : String(fd.get("level") || current.level || ""),
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
       following: role === "center" ? false : current.following !== false,
-      sign: hiddenRemote ? "" : personSign,
+      sign: privateRemote ? current.sign || "" : personSign,
       ...(role === "center"
         ? {
             address,
@@ -8810,13 +8907,13 @@ function renderPerson() {
       });
       if (site) person.centerSiteId = site.id;
     }
-    if (hiddenRemote && person) {
+    if (privateRemote && person) {
       person.cert = "";
       person.level = "";
       person.sign = "";
     }
     if (before && person) applyPersonOntoDives(before, person);
-    if (person && !hiddenRemote) stampPersonSign(person);
+    if (person && !privateRemote) stampPersonSign(person);
     state.peopleSeeded = true;
     save(state);
     view.personId = null;
@@ -8825,8 +8922,8 @@ function renderPerson() {
     render();
   };
   form.querySelector("[data-shareperson]")?.addEventListener("click", async () => {
-    if (hiddenRemote) {
-      alert("Nome, cognome, brevetto, numero e firma si condividono solo se vi seguite entrambi.");
+    if (privateRemote) {
+      alert("Brevetto, numero e firma si condividono solo se vi seguite entrambi.");
       return;
     }
     const names = personNames({
@@ -9003,7 +9100,7 @@ function renderProfile() {
     <input type="file" accept="image/*" data-photofile hidden />
     <section class="profile-block">
       <h3>Anagrafica</h3>
-      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. Gli altri trovano nome, cognome, numero di brevetto, firma e la foto accanto al nome." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "Online vanno nome, cognome, numero di brevetto, firma e la foto accanto al nome. Il diario resta sul telefono."}</p>
+      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. In Community gli altri vedono nome e cognome. Brevetto, numero e firma si scambiano solo se vi seguite entrambi." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "In Community gli altri vedono nome e cognome. Brevetto, numero e firma si scambiano solo se vi seguite entrambi. Il diario resta sul telefono."}</p>
       <div class="form-grid">
         ${field("name", "Nome e cognome", p.name, true)}
       </div>
@@ -9026,7 +9123,7 @@ function renderProfile() {
     </section>
     <section class="profile-block">
       <h3>La tua firma</h3>
-      <p class="hint">Firma qui una volta. Nome, cognome, didattica, numero di brevetto, firma e foto si vedono in Community: gli altri ti cercano lì, senza WhatsApp. Nella nuova immersione la firma entra nello spazio del buddy.</p>
+      <p class="hint">Firma qui una volta. Nome e cognome si vedono in Community. Brevetto, numero e questa firma si scambiano solo con chi ti segue e che segui. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
     </section>
     <section class="profile-block">
@@ -10017,11 +10114,11 @@ function diveContactReady(person) {
 }
 
 function followWaitText(person) {
-  const mutual = mutualFollow(person);
-  const name = mutual ? person?.name || "questa persona" : publicDiverLabel(person?.remoteOwner).name;
-  if (person?.followOut && !person?.followIn) return `Segui ${name}. Nome, cognome, brevetto, numero e firma arrivano solo se segue anche te.`;
-  if (person?.followIn && !person?.followOut) return `${name} ti segue. Segui anche tu per scambiare nome, cognome, brevetto, numero e firma.`;
-  return `Solo se vi seguite entrambi potete scambiarvi nome, cognome, brevetto, numero e firma.`;
+  const listed = personNames(person);
+  const name = listed.name && !listed.name.startsWith("Sub ") ? listed.name : publicDiverLabel(person?.remoteOwner).name;
+  if (person?.followOut && !person?.followIn) return `Segui ${name}. Brevetto, numero e firma arrivano solo se segue anche te.`;
+  if (person?.followIn && !person?.followOut) return `${name} ti segue. Segui anche tu per scambiare brevetto, numero e firma.`;
+  return `Brevetto, numero e firma si scambiano solo se vi seguite entrambi.`;
 }
 
 function signForInsertedPerson(role, typedName) {
@@ -10459,13 +10556,13 @@ function vaultStatusLine() {
     if (returned) {
       await finishAuth(returned);
       bindVaultLife();
-      if (loadSession()) queueProfilePublish();
+      queueProfilePublish();
       return;
     }
     if (loadSession()) await silentDrivePush();
     render();
     bindVaultLife();
-    if (loadSession()) queueProfilePublish();
+    queueProfilePublish();
   } catch (err) {
     const el = document.getElementById("app");
     if (el) el.innerHTML = `<p class="boot">Errore: ${escapeHtml(err && err.message ? err.message : String(err))}</p>`;
@@ -10481,7 +10578,9 @@ function bindVaultLife() {
   tick();
   setInterval(tick, 60 * 60 * 1000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") tick();
+    if (document.visibilityState !== "visible") return;
+    tick();
+    queueProfilePublish();
   });
   window.addEventListener("online", tick);
 }

@@ -1,4 +1,4 @@
-const CACHE = "seadive-logbook-v205";
+const CACHE = "seadive-logbook-v214";
 const ASSETS = [
   "./",
   "./index.html",
@@ -14,6 +14,7 @@ const ASSETS = [
   "./config.js",
   "./manifest.json",
   "./aggiorna.html",
+  "./version.txt",
   "./splash.jpg",
   "./nav-diver.png",
   "./register.jpg",
@@ -31,12 +32,19 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    await self.clients.claim();
+    const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    await Promise.all(open.map(async (client) => {
+      try {
+        if (String(client.url || "").includes("v=214")) return;
+        const next = new URL("./?v=214", self.location.href);
+        if (client.navigate) await client.navigate(next.href);
+      } catch (_) {}
+    }));
+  })());
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -55,18 +63,15 @@ self.addEventListener("notificationclick", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-store" })
       .then((res) => {
         const copy = res.clone();
-        if (res.ok && new URL(event.request.url).origin === self.location.origin) {
-          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        }
+        if (res.ok) caches.open(CACHE).then((cache) => cache.put(event.request, copy)).catch(() => {});
         return res;
       })
-      .catch(() => {
-        if (new URL(event.request.url).origin !== self.location.origin) return Promise.reject(new Error("offline"));
-        return caches.match(event.request).then((cached) => cached || caches.match("./index.html"));
-      })
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html")))
   );
 });

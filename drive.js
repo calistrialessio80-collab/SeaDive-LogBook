@@ -60,7 +60,16 @@ function loadGsi() {
   });
 }
 
+function googleLoginAllowed() {
+  const host = String(location.hostname || "");
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+  return location.protocol === "https:";
+}
+
 function requestGoogleToken({ silent = false, hint = "" } = {}) {
+  if (!googleLoginAllowed()) {
+    return Promise.reject(new Error("Sul telefono il diario si apre da solo. Entra con Google dal computer."));
+  }
   const clientId = driveClientId();
   if (!clientId) {
     return Promise.reject(new Error("Manca SEADIVE_GOOGLE_CLIENT_ID in config.js."));
@@ -182,6 +191,7 @@ function signOutGoogle() {
 }
 
 window.SeaDiveDrive = {
+  googleLoginAllowed,
   driveClientId,
   setDriveClientId,
   connectDrive,
