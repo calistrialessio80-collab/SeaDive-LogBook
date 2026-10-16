@@ -4169,7 +4169,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 194</p>
+        <p class="hint">Versione 195</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -5236,24 +5236,72 @@ function renderWorldMap() {
   return frag;
 }
 
-function homePortLine(id) {
-  if (id === "computer") return "Dal computer al diario";
-  if (id === "log") {
-    const n = totals().n;
-    return n ? `${n} nel diario` : "Le schede immersione";
+function homeBioPreview() {
+  const api = window.SeaDiveBiology;
+  const life = api?.MARINE_LIFE || [];
+  const want = ["pesci", "flora", "coralli"];
+  const sections = (api?.LIFE_SECTIONS || []).filter((s) => want.includes(s.id));
+  const picks = want.map((id) => life.find((x) => x.group === id)).filter(Boolean);
+  const chips = sections.map((s) => `<em>${s.emoji} ${escapeHtml(s.label)}</em>`).join("");
+  const rows = picks
+    .map(
+      (x) => `<span><i>${escapeHtml(api.lifeEmoji(x))}</i><b>${escapeHtml(x.it)}</b><small>${escapeHtml(x.la)}</small></span>`
+    )
+    .join("");
+  const line = life.length
+    ? `${life.length.toLocaleString("it-IT")} specie nella guida`
+    : "Guida e riconoscimento";
+  return { chips, rows, line };
+}
+
+function homeFace(photo, initials, name) {
+  const mark = photo
+    ? `<img alt="" src="${escapeHtml(photo)}" />`
+    : `<b>${escapeHtml(initials || "?")}</b>`;
+  return `<span class="gate-face" title="${escapeHtml(name || "")}">${mark}</span>`;
+}
+
+function homeCrewModel() {
+  const faces = [];
+  const seen = new Set();
+  const push = (name, photo, initials) => {
+    const key = String(name || initials || "").trim().toLowerCase();
+    if (!key || seen.has(key) || faces.length >= 5) return;
+    seen.add(key);
+    faces.push(homeFace(photo, initials, name));
+  };
+  const me = personNames({ name: state.profile?.name || "" });
+  if (me.firstName || me.name) {
+    const initials = `${(me.firstName || me.name || "?").slice(0, 1)}${(me.lastName || "").slice(0, 1)}`.toUpperCase();
+    push(me.name || me.firstName, profilePortraitImage(), initials);
   }
-  if (id === "bio") return "Guida e riconoscimento";
-  if (id === "home") return "La pagina in cui sei";
-  if (id === "profile") {
-    const who = String(state.profile?.name || "").trim().split(" ")[0];
-    return who || "Brevetto e firma";
+  const sea = seaDirectory.list || [];
+  if (sea.length) {
+    sea.forEach((c) => {
+      const initials = `${(c.firstName || "?").slice(0, 1)}${(c.lastName || "").slice(0, 1)}`.toUpperCase();
+      push([c.firstName, c.lastName].filter(Boolean).join(" "), portraitImage(c.portrait), initials);
+    });
+  } else {
+    (state.people || []).forEach((p) => {
+      if (samePersonName(p.name, state.profile?.name)) return;
+      const names = personNames(p);
+      const initials = p.role === "center"
+        ? (p.name || "?").slice(0, 1).toUpperCase()
+        : `${(names.firstName || p.name || "?").slice(0, 1)}${(names.lastName || "").slice(0, 1)}`.toUpperCase();
+      push(names.name || p.name, personPortrait(p), initials);
+    });
   }
-  if (id === "people") {
-    const n = (state.people || []).length;
-    return n ? `${n} in Community` : "Chi usa SeaDive";
-  }
-  if (id === "map") return "Siti e diving";
-  return "";
+  const seaN = sea.length;
+  const localN = (state.people || []).length;
+  const line = seaN
+    ? `${seaN.toLocaleString("it-IT")} in Community`
+    : localN
+      ? `${localN.toLocaleString("it-IT")} ${localN === 1 ? "contatto" : "contatti"}`
+      : "Chi usa SeaDive";
+  const html = faces.length
+    ? faces.join("")
+    : `<span class="gate-face ghost"><b>🤿</b></span><span class="gate-face ghost"><b>🤿</b></span><span class="gate-face ghost"><b>🤿</b></span>`;
+  return { html, line };
 }
 
 const APP_RATING_KEY = "seadive-app-rating";
@@ -5272,62 +5320,56 @@ function saveAppRating(n) {
 function renderHome() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("", "home"));
-  const ports = document.createElement("section");
-  ports.className = "home-ports";
-  ports.innerHTML = NAV_SECTIONS.map(
-    ([id, icon, label]) => `<button class="port${id === "home" ? " here" : ""}" type="button" data-port="${id}">
-      <span class="port-scene scene-${id}">${icon}<i></i><i></i></span>
-      <span class="port-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(homePortLine(id))}</small></span>
-    </button>`
-  ).join("");
-  ports.querySelectorAll("[data-port]").forEach((b) => {
-    b.onclick = () => openNavSection(b.dataset.port);
-  });
   const t = totals();
   const last = [...state.dives].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (Number(b.number) || 0) - (Number(a.number) || 0))[0];
   const years = divesByYear();
   const maxY = Math.max(1, ...years.map((y) => y.n));
+  const bio = homeBioPreview();
+  const crew = homeCrewModel();
   const dash = document.createElement("section");
-  dash.className = "kpi-grid";
+  dash.className = "home-stats";
   dash.innerHTML = `
-    <button class="kpi" type="button" data-go="log">
-      <p>Registrate <span>~</span></p>
-      <strong>${t.n}</strong>
-      <em>immersioni</em>
-    </button>
-    <button class="kpi" type="button" data-go="stats">
-      <p>Tempo di fondo <span>◷</span></p>
-      <strong>${fmtMins(t.mins)}</strong>
-      <em>in acqua</em>
-    </button>
-    <button class="kpi" type="button" data-go="log">
-      <p>Ultima immersione <span>◷</span></p>
-      <strong>${last ? fmtItDate(last.date) : "—"}</strong>
-    </button>
-    <button class="kpi" type="button" data-go="stats">
-      <p>SAC medio <span>◎</span></p>
-      <strong>${avgSac()}</strong>
-      ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
-    </button>
-    <button class="kpi" type="button" data-go="log">
-      <p>Profondità max <span>▼</span></p>
-      <strong>${t.max > 0 ? fmtDepth(t.max) : "—"}</strong>
-      ${t.max > 0 ? "<em>metri</em>" : ""}
-    </button>
-    <button class="kpi kpi-chart" type="button" data-go="stats">
-      <p>Immersioni per anno <span>▣</span></p>
-      <div class="year-chart">
-        ${years
-          .map(
-            (y) => `<div class="yb">
-              <i style="height:${Math.max(8, (y.n / maxY) * 72)}px"></i>
-              <b>${y.n || ""}</b>
-              <small>${y.label}</small>
-            </div>`
-          )
-          .join("")}
-      </div>
-    </button>
+    <div class="home-head">
+      <p>Strumento di bordo</p>
+      <h3>Le tue statistiche</h3>
+    </div>
+    <div class="kpi-grid">
+      <button class="kpi" type="button" data-go="log">
+        <p>Registrate <span>~</span></p>
+        <strong>${t.n}</strong>
+        <em>immersioni</em>
+      </button>
+      <button class="kpi" type="button" data-go="stats">
+        <p>Tempo di fondo <span>◷</span></p>
+        <strong>${fmtMins(t.mins)}</strong>
+        <em>in acqua</em>
+      </button>
+      <button class="kpi" type="button" data-go="log">
+        <p>Profondità max <span>▼</span></p>
+        <strong>${t.max > 0 ? fmtDepth(t.max) : "—"}</strong>
+        ${t.max > 0 ? "<em>metri</em>" : ""}
+      </button>
+      <button class="kpi" type="button" data-go="stats">
+        <p>SAC medio <span>◎</span></p>
+        <strong>${avgSac()}</strong>
+        ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
+      </button>
+      <button class="kpi kpi-chart" type="button" data-go="stats">
+        <p>Immersioni per anno <span>▣</span></p>
+        <div class="year-chart">
+          ${years
+            .map(
+              (y) => `<div class="yb">
+                <i style="height:${Math.max(8, (y.n / maxY) * 72)}px"></i>
+                <b>${y.n || ""}</b>
+                <small>${y.label}</small>
+              </div>`
+            )
+            .join("")}
+        </div>
+      </button>
+    </div>
+    <p class="hint vault-home">${escapeHtml(vaultStatusLine())}</p>
   `;
   dash.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
@@ -5336,15 +5378,10 @@ function renderHome() {
     };
   });
   frag.append(dash);
-  const vault = document.createElement("p");
-  vault.className = "hint vault-home";
-  vault.textContent = vaultStatusLine();
-  frag.append(vault);
-  frag.append(ports);
 
   const listWrap = document.createElement("section");
-  listWrap.className = "section feed";
-  listWrap.innerHTML = `<div class="section-head"><h3>Ultima immersione</h3></div>`;
+  listWrap.className = "section feed home-last";
+  listWrap.innerHTML = `<div class="home-head"><p>Dal diario</p><h3>Ultima immersione</h3></div>`;
   if (!last) listWrap.append(emptyState());
   else {
     const ul = document.createElement("div");
@@ -5353,6 +5390,80 @@ function renderHome() {
     listWrap.append(ul);
   }
   frag.append(listWrap);
+
+  const gates = document.createElement("section");
+  gates.className = "home-gates";
+  gates.innerHTML = `
+    <div class="home-head">
+      <p>Collegamenti</p>
+      <h3>Guarda dentro</h3>
+    </div>
+    <button class="home-gate gate-bio" type="button" data-port="bio">
+      <span class="home-gate-scene" aria-hidden="true">
+        <span class="gate-bubbles"></span>
+        <span class="gate-chips">${bio.chips}</span>
+        <span class="gate-life">${bio.rows}</span>
+      </span>
+      <span class="home-gate-copy">
+        <small>Guida da immersione</small>
+        <strong>Biologia marina</strong>
+        <em>${escapeHtml(bio.line)}</em>
+      </span>
+    </button>
+    <button class="home-gate gate-people" type="button" data-port="people">
+      <span class="home-gate-scene" aria-hidden="true">
+        <span class="gate-bubbles"></span>
+        <span class="gate-crew" data-homecrew>${crew.html}</span>
+      </span>
+      <span class="home-gate-copy">
+        <small>Chi si immerge con te</small>
+        <strong>Community</strong>
+        <em data-homecrewline>${escapeHtml(crew.line)}</em>
+      </span>
+    </button>
+    <button class="home-gate gate-map" type="button" data-port="map">
+      <span class="home-gate-scene" aria-hidden="true">
+        <svg viewBox="0 0 360 168" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="homeSea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#9ad7f2"/>
+              <stop offset="0.42" stop-color="#1d6f98"/>
+              <stop offset="1" stop-color="#041824"/>
+            </linearGradient>
+          </defs>
+          <rect width="360" height="168" fill="url(#homeSea)"/>
+          <path d="M0 78 C48 58 78 96 128 72 C176 50 198 92 248 66 C292 46 318 84 360 62 L360 168 L0 168 Z" fill="#0d4a3c" opacity="0.9"/>
+          <path d="M0 108 C70 90 108 128 168 110 C230 92 268 126 360 104 L360 168 L0 168 Z" fill="#07281f"/>
+          <circle cx="86" cy="58" r="5" fill="#ffe7a3"/>
+          <circle cx="148" cy="46" r="4" fill="#7ef0ea"/>
+          <circle cx="214" cy="64" r="5" fill="#ffd15a"/>
+          <circle cx="276" cy="50" r="3.5" fill="#ffffff"/>
+          <circle cx="318" cy="68" r="4" fill="#7ef0ea"/>
+        </svg>
+      </span>
+      <span class="home-gate-copy">
+        <small>Siti e diving</small>
+        <strong>Mappa</strong>
+        <em>${t.sites ? `${t.sites.toLocaleString("it-IT")} ${t.sites === 1 ? "sito nel diario" : "siti nel diario"}` : "Il mare, sito per sito"}</em>
+      </span>
+    </button>
+  `;
+  gates.querySelectorAll("[data-port]").forEach((b) => {
+    b.onclick = () => openNavSection(b.dataset.port);
+  });
+  frag.append(gates);
+  if (!seaDirectory.at) {
+    refreshSeaDirectory()
+      .then(() => {
+        if (view.name !== "home" || !gates.isConnected) return;
+        const next = homeCrewModel();
+        const box = gates.querySelector("[data-homecrew]");
+        const line = gates.querySelector("[data-homecrewline]");
+        if (box) box.innerHTML = next.html;
+        if (line) line.textContent = next.line;
+      })
+      .catch(() => {});
+  }
   const rate = document.createElement("section");
   rate.className = "app-rate";
   const rating = loadAppRating();
