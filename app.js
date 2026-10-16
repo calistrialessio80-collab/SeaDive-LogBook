@@ -1181,6 +1181,7 @@ function applyPersonOntoDives(before, person) {
       d.buddyId = person.id;
       d.buddyName = person.name;
       if (ready) {
+        d.buddyLevel = person.level || "";
         d.buddyCert = person.cert || "";
         const sign = personKnownSign(person);
         if (sign && !(typeof d.buddySign === "string" && d.buddySign.startsWith("data:image"))) d.buddySign = sign;
@@ -1190,6 +1191,7 @@ function applyPersonOntoDives(before, person) {
       d.guideId = person.id;
       d.guideName = person.name;
       if (ready) {
+        d.guideLevel = person.level || "";
         d.guideCert = person.cert || "";
         const sign = personKnownSign(person);
         if (sign && !(typeof d.guideSign === "string" && d.guideSign.startsWith("data:image"))) d.guideSign = sign;
@@ -3584,15 +3586,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-214")) return;
-        sessionStorage.setItem("seadive-sw-214", "1");
-        location.replace("./?v=214&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-215")) return;
+        sessionStorage.setItem("seadive-sw-215", "1");
+        location.replace("./?v=215&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "214";
+const APP_VERSION = "215";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4340,7 +4342,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 214</p>
+        <p class="hint">Versione 215</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -7967,7 +7969,7 @@ function applyComputerOnto(target, incoming) {
   if (Array.isArray(incoming.types) && incoming.types.length) {
     next.types = [...new Set([...(next.types || []), ...incoming.types])];
   }
-  ["buddyName", "buddyCert", "guideName", "guideCert", "centerName", "centerLead"].forEach((k) => {
+  ["buddyName", "buddyLevel", "buddyCert", "guideName", "guideLevel", "guideCert", "centerName", "centerLead"].forEach((k) => {
     if (!hasText(next[k]) && hasText(incoming[k])) next[k] = incoming[k];
   });
   next.id = target.id;
@@ -8366,7 +8368,13 @@ function renderPeople() {
     }
     const known = localSeaPerson(cardHit);
     const mutual = Boolean(known?.followOut && known?.followIn);
-    const shown = mutual ? personNames(known) : listedDiverName(cardHit);
+    const listed = listedDiverName(cardHit);
+    const knownNames = known ? personNames(known) : null;
+    const shown = listed.firstName && listed.firstName !== "Sub"
+      ? listed
+      : knownNames && knownNames.firstName && knownNames.firstName !== "Sub"
+        ? knownNames
+        : listed;
     const mode = mutual ? "mutual" : !known ? "none" : known.followOut ? "out" : known.followIn ? "in" : "none";
     const sharedLine = mutual ? [known?.level, known?.cert].filter(Boolean).join(" · ") : "";
     const status = [mode === "mutual" ? "Vi seguite" : mode === "in" ? "Ti segue" : "", sharedLine].filter(Boolean).join(" · ");
@@ -9010,8 +9018,8 @@ function bindPeoplePicks(form, d) {
   const box = form.querySelector("[data-peoplepicks]");
   if (!box) return;
   const groups = [
-    ["buddy", "Buddy in community", "buddyName", "buddyCert", "buddyId"],
-    ["guide", "Istruttori in community", "guideName", "guideCert", "guideId"],
+    ["buddy", "Vi seguite — buddy", "buddyName", "buddyCert", "buddyId"],
+    ["guide", "Vi seguite — istruttori", "guideName", "guideCert", "guideId"],
     ["center", "Diving in community", "centerName", "centerLead", "centerId"],
   ];
   groups.forEach(([role, title, nameKey, extraKey, idKey]) => {
@@ -9041,7 +9049,11 @@ function bindPeoplePicks(form, d) {
           }
           d[nameKey] = p.name;
           d[idKey] = p.id;
+          const levelKey = role === "buddy" ? "buddyLevel" : role === "guide" ? "guideLevel" : "";
+          if (levelKey && diveContactReady(p)) d[levelKey] = p.level || "";
           d[extraKey] = role === "center" ? p.lead || "" : diveContactReady(p) ? p.cert || "" : "";
+          const levelInput = levelKey ? form.querySelector(`[name=${levelKey}]`) : null;
+          if (levelInput) levelInput.value = d[levelKey] || "";
           const nameInput = form.querySelector(`[name=${nameKey}]`);
           const extraInput = form.querySelector(`[name=${extraKey}]`);
           if (nameInput) nameInput.value = d[nameKey];
@@ -9614,13 +9626,15 @@ function renderEdit() {
       ${ownerOnDiveHtml()}
       ${peoplePicksHtml()}
       <p class="hint" data-pickedperson hidden></p>
-      <p class="hint">Tocca chi segui: nome, cognome, numero di brevetto e firma entrano nella scheda.</p>
+      <p class="hint">In Community vedi nome e cognome di chi usa SeaDive. Se vi seguite entrambi, tocca il nome: nome, cognome, brevetto, numero e firma entrano in questa scheda e, al salvataggio, nel diario su Drive.</p>
       <div class="form-grid">
         ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
+        ${field("buddyLevel", "Buddy — brevetto", d.buddyLevel)}
         ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
         ${dropContactButton("buddy", d)}
-        ${field("guideName", "Guida / istruttore — generalità", d.guideName)}
-        ${field("guideCert", "N° brevetto guida / istruttore", d.guideCert)}
+        ${field("guideName", "Guida / istruttore — nome e cognome", d.guideName)}
+        ${field("guideLevel", "Guida — brevetto", d.guideLevel)}
+        ${field("guideCert", "Guida — n° brevetto", d.guideCert)}
         ${dropContactButton("guide", d)}
         ${field("centerName", "Denominazione diving center", d.centerName, true)}
         ${field("centerLead", "Responsabile del centro", d.centerLead, true)}
@@ -9834,22 +9848,34 @@ function renderEdit() {
         const certInput = form.querySelector(`[name=${certKey}]`);
         const prev = stamped[role];
         const ready = named && diveContactReady(named);
+        const levelKey = role === "buddy" ? "buddyLevel" : "guideLevel";
+        const levelInput = form.querySelector(`[name=${levelKey}]`);
         if (ready) {
           d[idKey] = named.id;
           d[certKey] = named.cert || "";
+          d[levelKey] = named.level || "";
           if (certInput) certInput.value = named.cert || "";
-          stamped[role] = { id: named.id, cert: named.cert || "" };
+          if (levelInput) levelInput.value = named.level || "";
+          stamped[role] = { id: named.id, cert: named.cert || "", level: named.level || "" };
         } else if (named) {
           d[idKey] = named.id;
           if (certInput && prev && certInput.value === prev.cert) {
             d[certKey] = "";
             certInput.value = "";
           }
+          if (levelInput && prev && levelInput.value === prev.level) {
+            d[levelKey] = "";
+            levelInput.value = "";
+          }
           stamped[role] = null;
         } else if (prev && certInput && certInput.value === prev.cert) {
           d[idKey] = "";
           d[certKey] = "";
           certInput.value = "";
+          if (levelInput) {
+            d[levelKey] = "";
+            levelInput.value = "";
+          }
           stamped[role] = null;
         }
         const sign = ready

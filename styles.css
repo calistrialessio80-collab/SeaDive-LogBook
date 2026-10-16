@@ -929,8 +929,8 @@ button.people-row { cursor: pointer; }
   align-items: center;
   text-align: center;
   gap: 1px;
-  flex: 0 0 64px;
-  width: 64px;
+  flex: 0 0 108px;
+  width: 108px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -965,10 +965,9 @@ button.people-row { cursor: pointer; }
 }
 .sea-first, .sea-last {
   display: block;
-  max-width: 64px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 108px;
+  overflow: visible;
+  white-space: normal;
   font-size: 12px;
   line-height: 1.15;
 }
