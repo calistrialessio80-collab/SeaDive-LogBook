@@ -2126,6 +2126,22 @@ function listedDiverName(card) {
   return publicDiverLabel(card?.owner);
 }
 
+function placeholderDiverName(value) {
+  const names = personNames(typeof value === "string" ? { name: value } : value || {});
+  if (!names.firstName || names.firstName === "Sub") return true;
+  return /^sub\s+[0-9a-f]{4}$/i.test(names.name);
+}
+
+function publicNameFromBoard(owner) {
+  const id = String(owner || "").trim();
+  if (!id) return null;
+  const row = communityBoardCache.data?.profiles?.[id];
+  const fromDir = (seaDirectory.list || []).find((card) => card.owner === id);
+  const names = personNames(row || fromDir || {});
+  if (!names.firstName || names.firstName === "Sub") return null;
+  return names;
+}
+
 function communityCardFromRow(data) {
   const owner = String(data?.owner || "").trim();
   if (!owner) return null;
@@ -2468,6 +2484,43 @@ function applyPeopleSearch(root) {
   }
 }
 
+function repairCommunityNames() {
+  let changed = false;
+  (state.people || []).forEach((person) => {
+    if (!person?.remoteOwner || person.role === "center") return;
+    const pub = publicNameFromBoard(person.remoteOwner);
+    if (pub && placeholderDiverName(person)) {
+      const before = { ...person };
+      person.firstName = pub.firstName;
+      person.lastName = pub.lastName;
+      person.name = pub.name;
+      applyPersonOntoDives(before, person);
+      changed = true;
+    }
+    if (!(person.followOut && person.followIn)) return;
+    const ident = legacyIdentity(communityBoardCache.data?.profiles?.[person.remoteOwner]);
+    if (!ident) return;
+    if (ident.level && !person.level) {
+      person.level = ident.level;
+      changed = true;
+    }
+    if (ident.cert && !person.cert) {
+      person.cert = ident.cert;
+      changed = true;
+    }
+    if (ident.sign && !(typeof person.sign === "string" && person.sign.startsWith("data:image"))) {
+      person.sign = ident.sign;
+      stampPersonSign(person);
+      changed = true;
+    }
+  });
+  if (changed) {
+    save(state);
+    silentDrivePush();
+  }
+  return changed;
+}
+
 function localSeaPerson(card) {
   const who = `${card.firstName || ""} ${card.lastName || ""}`.trim();
   return (state.people || []).find(
@@ -2488,6 +2541,7 @@ async function refreshSeaDirectory() {
       seaDirectory.list = loaded.list.filter((card) => card.owner && card.owner !== mine);
       seaDirectory.error = "";
       seaDirectory.at = Date.now();
+      seaDirectory.namesChanged = repairCommunityNames();
     }
     return seaDirectory;
   } finally {
@@ -3127,6 +3181,35 @@ function blankLinkSide(body, side) {
   body[side + "Sign"] = "";
 }
 
+function profileSideFields(profile) {
+  const names = personNames(profile || {});
+  if (!names.firstName || names.firstName === "Sub") return null;
+  const sign = typeof profile?.sign === "string" && profile.sign.startsWith("data:image") ? profile.sign : "";
+  return {
+    name: names.name.slice(0, 80),
+    firstName: names.firstName.slice(0, 40),
+    lastName: names.lastName.slice(0, 40),
+    level: String(profile?.level || "").trim().slice(0, 40),
+    cert: String(profile?.cert || "").trim().slice(0, 40),
+    sign,
+  };
+}
+
+function fillLinkSide(body, side, fields, onlyEmpty) {
+  if (!fields) return;
+  const put = (key, value) => {
+    if (!value) return;
+    if (onlyEmpty && String(body[key] || "").trim()) return;
+    body[key] = value;
+  };
+  put(side + "Name", fields.name);
+  put(side + "First", fields.firstName);
+  put(side + "Last", fields.lastName);
+  put(side + "Level", fields.level);
+  put(side + "Cert", fields.cert);
+  if (fields.sign && (!onlyEmpty || !String(body[side + "Sign"] || "").startsWith("data:image"))) body[side + "Sign"] = fields.sign;
+}
+
 async function setMyFollow(other, on) {
   const mine = await profileOwnerKey();
   const remote = String(other?.owner || other?.remoteOwner || "").trim();
@@ -3176,12 +3259,21 @@ async function setMyFollow(other, on) {
         blankLinkSide(nextBody, "right");
       } else {
         const side = mineIsLeft ? "left" : "right";
-        if (me.name) nextBody[side + "Name"] = me.name.slice(0, 80);
-        if (me.firstName) nextBody[side + "First"] = me.firstName.slice(0, 40);
-        if (me.lastName) nextBody[side + "Last"] = me.lastName.slice(0, 40);
-        if (myLevel) nextBody[side + "Level"] = myLevel;
-        if (myCert) nextBody[side + "Cert"] = myCert;
-        if (sign) nextBody[side + "Sign"] = sign;
+        const otherSide = mineIsLeft ? "right" : "left";
+        const otherId = mineIsLeft ? right : left;
+        fillLinkSide(nextBody, side, {
+          name: me.name.slice(0, 80),
+          firstName: me.firstName.slice(0, 40),
+          lastName: me.lastName.slice(0, 40),
+          level: myLevel,
+          cert: myCert,
+          sign,
+        }, false);
+        let board = communityBoardCache.data;
+        if (!board) {
+          try { board = await loadCommunityBoard(); } catch { board = null; }
+        }
+        fillLinkSide(nextBody, otherSide, profileSideFields(board?.profiles?.[otherId]), true);
       }
       await postLinkBasket({ ...links, [pair]: nextBody });
       return nextBody;
@@ -3608,15 +3700,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-217")) return;
-        sessionStorage.setItem("seadive-sw-217", "1");
-        location.replace("./?v=217&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-218")) return;
+        sessionStorage.setItem("seadive-sw-218", "1");
+        location.replace("./?v=218&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "217";
+const APP_VERSION = "218";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4364,7 +4456,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 217</p>
+        <p class="hint">Versione 218</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -8450,7 +8542,8 @@ function renderPeople() {
       const names = personNames(p);
       const mine = samePersonName(p.name, state.profile.name);
       const mutualRemote = Boolean(p.remoteOwner) && p.followOut && p.followIn;
-      const shown = names.firstName === "Sub" && p.remoteOwner ? listedDiverName({ owner: p.remoteOwner, firstName: p.firstName, lastName: p.lastName, name: p.name }) : names;
+      const pub = p.remoteOwner ? publicNameFromBoard(p.remoteOwner) : null;
+      const shown = placeholderDiverName(names) && pub ? pub : names;
       const photo = personPortrait(p);
       const initials = p.role === "center"
         ? (p.name || "?").slice(0, 1).toUpperCase()
@@ -8564,9 +8657,12 @@ function renderPeople() {
     const queryNow = typing ? findEl.value : null;
     Promise.all([syncIncomingLinks().catch(() => false), refreshSeaDirectory().catch(() => null)])
       .then(([changed]) => {
-        if (followSaveBusy || stamp !== communitySyncStamp || view.name !== "people" || view.personId) return;
+        if (followSaveBusy || stamp !== communitySyncStamp || view.name !== "people") return;
+        const namesChanged = Boolean(seaDirectory.namesChanged);
+        seaDirectory.namesChanged = false;
+        if (view.personId && !namesChanged) return;
         const after = (seaDirectory.list || []).map((c) => c.owner).join("|");
-        if (!(changed || !had || before !== after)) return;
+        if (!(changed || namesChanged || !had || before !== after)) return;
         if (queryNow != null) view.peopleQuery = queryNow;
         render();
         if (!typing) return;
@@ -8662,14 +8758,15 @@ function renderPerson() {
   const form = document.createElement("form");
   form.className = "card";
   const dives = creating ? [] : divesForPerson(current);
-  const names = personNames(current);
+  const pub = current.remoteOwner ? publicNameFromBoard(current.remoteOwner) : null;
+  const names = placeholderDiverName(current) && pub ? pub : personNames(current);
   const privateRemote = !creating && Boolean(current.remoteOwner) && !mutualFollow(current);
   const shownCert = privateRemote ? "" : current.cert;
   const shownLevel = privateRemote ? "" : current.level || "";
   form.innerHTML = `
     <div class="person-head">
-      ${avatarHtml(personPortrait(current), current.name)}
-      <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(current.name)}</h2>
+        ${avatarHtml(personPortrait(current), names.name || current.name)}
+        <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(names.name || current.name)}</h2>
     </div>
     <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : privateRemote ? "Nome e cognome sono visibili. Brevetto, numero e firma arrivano quando vi seguite entrambi." : "Nome, cognome, brevetto, numero e firma si aggiornano anche sulle schede in cui compare già."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
@@ -9039,6 +9136,7 @@ function peoplePicksHtml() {
 function bindPeoplePicks(form, d) {
   const box = form.querySelector("[data-peoplepicks]");
   if (!box) return;
+  box.replaceChildren();
   const groups = [
     ["buddy", "Vi seguite — buddy", "buddyName", "buddyCert", "buddyId"],
     ["guide", "Vi seguite — istruttori", "guideName", "guideCert", "guideId"],
@@ -9058,18 +9156,21 @@ function bindPeoplePicks(form, d) {
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name, "it"))
       .forEach((p) => {
+        const pub = placeholderDiverName(p) ? publicNameFromBoard(p.remoteOwner) : null;
+        if (placeholderDiverName(p) && !pub) return;
+        const labelName = pub?.name || p.name;
         const b = document.createElement("button");
         b.type = "button";
-        const extra = role === "center" ? p.lead : p.cert;
-        const selected = d[idKey] === p.id || personKey(role, d[nameKey]) === personKey(role, p.name);
+        const extra = role === "center" ? p.lead : [p.level, p.cert].filter(Boolean).join(" · ");
+        const selected = d[idKey] === p.id || personKey(role, d[nameKey]) === personKey(role, labelName);
         b.className = `chip${selected ? " on" : ""}`;
-        b.textContent = extra ? `${p.name} · ${extra}` : p.name;
+        b.textContent = extra ? `${labelName} · ${extra}` : labelName;
         b.onclick = async () => {
           if (b.classList.contains("on")) {
             if (form._dropContact) await form._dropContact(role);
             return;
           }
-          d[nameKey] = p.name;
+          d[nameKey] = labelName;
           d[idKey] = p.id;
           const levelKey = role === "buddy" ? "buddyLevel" : role === "guide" ? "guideLevel" : "";
           if (levelKey && diveContactReady(p)) d[levelKey] = p.level || "";
@@ -9097,7 +9198,7 @@ function bindPeoplePicks(form, d) {
             const line = form.querySelector("[data-pickedperson]");
             if (line) {
               line.hidden = false;
-              line.textContent = profileShareLine(p, sign);
+              line.textContent = profileShareLine({ ...p, name: labelName }, sign);
             }
             save(state);
           }
@@ -9720,6 +9821,12 @@ function renderEdit() {
   `;
   bindComputerFill(form);
   bindPeoplePicks(form, d);
+  refreshSeaDirectory()
+    .then(() => {
+      if (!form.isConnected || view.name !== "edit") return;
+      bindPeoplePicks(form, d);
+    })
+    .catch(() => {});
   form.querySelectorAll("[data-dropcontact]").forEach((btn) => {
     btn.onclick = async (e) => {
       e.preventDefault();
