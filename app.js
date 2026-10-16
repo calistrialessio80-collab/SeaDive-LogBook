@@ -63,12 +63,15 @@ const emptyDive = () => ({
   pressureEnd: "",
   stage1N2: "",
   stage1O2: "",
+  stage1He: "",
   stage1L: "",
   stage2N2: "",
   stage2O2: "",
+  stage2He: "",
   stage2L: "",
   stage3N2: "",
   stage3O2: "",
+  stage3He: "",
   stage3L: "",
   bottomTemp: "",
   cns: "",
@@ -591,7 +594,7 @@ function mergeDivePair(a, b) {
     copyDiveContact(base, ra > rb ? a : b, role);
   });
   STAGE_SLOTS.forEach((slot) => {
-    [slot.n2, slot.o2, slot.l].forEach((key) => {
+    [slot.n2, slot.o2, slot.he, slot.l].forEach((key) => {
       if (!hasText(base[key])) {
         const from = hasText(a[key]) ? a[key] : hasText(b[key]) ? b[key] : "";
         if (hasText(from)) base[key] = from;
@@ -3700,15 +3703,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-218")) return;
-        sessionStorage.setItem("seadive-sw-218", "1");
-        location.replace("./?v=218&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-219")) return;
+        sessionStorage.setItem("seadive-sw-219", "1");
+        location.replace("./?v=219&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "218";
+const APP_VERSION = "219";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4456,7 +4459,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 218</p>
+        <p class="hint">Versione 219</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -9415,22 +9418,24 @@ function renderProfile() {
 }
 
 const STAGE_SLOTS = [
-  { title: "Decompressiva / Stage 1", n2: "stage1N2", o2: "stage1O2", l: "stage1L" },
-  { title: "Decompressiva / Stage 2", n2: "stage2N2", o2: "stage2O2", l: "stage2L" },
-  { title: "Decompressione / Stage 3", n2: "stage3N2", o2: "stage3O2", l: "stage3L" },
+  { title: "Decompressiva / Stage 1", n2: "stage1N2", o2: "stage1O2", he: "stage1He", l: "stage1L" },
+  { title: "Decompressiva / Stage 2", n2: "stage2N2", o2: "stage2O2", he: "stage2He", l: "stage2L" },
+  { title: "Decompressione / Stage 3", n2: "stage3N2", o2: "stage3O2", he: "stage3He", l: "stage3L" },
 ];
 
 function stageFieldKeys() {
-  return STAGE_SLOTS.flatMap((slot) => [slot.n2, slot.o2, slot.l]);
+  return STAGE_SLOTS.flatMap((slot) => [slot.n2, slot.o2, slot.he, slot.l]);
 }
 
 function stageSummary(d, slot) {
   const n2 = String(d?.[slot.n2] ?? "").trim();
   const o2 = String(d?.[slot.o2] ?? "").trim();
+  const he = String(d?.[slot.he] ?? "").trim();
   const liters = String(d?.[slot.l] ?? "").trim();
   const parts = [];
   if (n2) parts.push(`Azoto ${n2}%`);
   if (o2) parts.push(`Ossigeno ${o2}%`);
+  if (he) parts.push(`Elio ${he}%`);
   if (liters) parts.push(`${liters} L`);
   return parts.join(" · ");
 }
@@ -9442,6 +9447,7 @@ function stageFormHtml(d) {
       <div class="stage-grid">
         ${field(slot.n2, "Azoto %", d[slot.n2] ?? "", false, "number")}
         ${field(slot.o2, "Ossigeno %", d[slot.o2] ?? "", false, "number")}
+        ${field(slot.he, "Elio %", d[slot.he] ?? "", false, "number")}
         ${field(slot.l, "Litri", d[slot.l] ?? "", false, "number")}
       </div>
     </div>
@@ -9721,7 +9727,7 @@ function renderEdit() {
     </div>
     <p class="hint">Inizio precompilato a 200 bar e bombola 15 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
     <h3 class="serif">Decompressive</h3>
-    <p class="hint">Per ogni stage indica la miscela in azoto e ossigeno, e i litri della bombola.</p>
+    <p class="hint">Per ogni stage indica la miscela in azoto, ossigeno ed elio, e i litri della bombola.</p>
     ${stageFormHtml(d)}
     <div class="form-grid">
       ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}

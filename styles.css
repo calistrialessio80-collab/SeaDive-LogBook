@@ -1227,7 +1227,7 @@ button.people-row { cursor: pointer; }
 }
 .stage-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
 }
 .dive-edit .field { gap: 3px; font-size: 10px; max-width: 100%; }
