@@ -2092,13 +2092,11 @@ async function loadLinkBasket(maxAge = 20000) {
 }
 
 async function loadMergedLinks(fresh) {
-  const board = await loadCommunityBoard(fresh ? 0 : 20000);
-  let basket = {};
-  try {
-    basket = await loadLinkBasket(fresh ? 0 : 20000);
-  } catch {
-    basket = linkBasketCache.data || {};
-  }
+  const age = fresh ? 0 : 20000;
+  const [board, basket] = await Promise.all([
+    loadCommunityBoard(age),
+    loadLinkBasket(age).catch(() => linkBasketCache.data || {}),
+  ]);
   return { ...(board.links || {}), ...(basket || {}) };
 }
 
@@ -2521,24 +2519,21 @@ function repairCommunityNames() {
       applyPersonOntoDives(before, person);
       changed = true;
     }
-    if (!(person.followOut && person.followIn)) return;
+    if (!person.followOut) return;
     const ident = legacyIdentity(communityBoardCache.data?.profiles?.[person.remoteOwner]);
     if (!ident) return;
-    if (ident.level && !person.level) {
+    if (ident.level && person.level !== ident.level) {
       person.level = ident.level;
       changed = true;
     }
-    if (ident.cert && !person.cert) {
+    if (ident.cert && person.cert !== ident.cert) {
       person.cert = ident.cert;
       changed = true;
     }
-    if (ident.sign && !(typeof person.sign === "string" && person.sign.startsWith("data:image"))) {
+    if (ident.sign && person.sign !== ident.sign) {
       person.sign = ident.sign;
       stampPersonSign(person);
       changed = true;
-    }
-    if (!person.level || !person.cert || !(typeof person.sign === "string" && person.sign.startsWith("data:image"))) {
-      scheduleMutualRefresh();
     }
   });
   if (changed) {
@@ -2597,23 +2592,15 @@ function rememberMutualProfile(person, cardHit, mutual) {
     payload.lastName = handle.lastName;
     payload.name = handle.name;
   }
-  if (mutual) {
-    const board = boardDiverRecord(owner);
-    const level = cardHit.level || board?.level || "";
-    const cert = String(cardHit.cert || board?.cert || "").trim();
-    const sign = (typeof cardHit.sign === "string" && cardHit.sign.startsWith("data:image") ? cardHit.sign : "") || board?.sign || "";
-    if (level) payload.level = level;
-    if (cert) payload.cert = cert;
-    if (sign) payload.sign = sign;
-  }
+  const board = boardDiverRecord(owner);
+  const level = cardHit.level || board?.level || "";
+  const cert = String(cardHit.cert || board?.cert || "").trim();
+  const sign = (typeof cardHit.sign === "string" && cardHit.sign.startsWith("data:image") ? cardHit.sign : "") || board?.sign || "";
+  if (level) payload.level = level;
+  if (cert) payload.cert = cert;
+  if (sign) payload.sign = sign;
   const saved = upsertPerson(payload);
-  if (saved && !mutual) {
-    saved.cert = "";
-    saved.level = "";
-    saved.sign = "";
-    saved.following = false;
-  }
-  if (saved && mutual) stampPersonSign(saved);
+  if (saved && sign) stampPersonSign(saved);
   return saved;
 }
 
@@ -2640,14 +2627,10 @@ async function connectSeaPerson(cardHit, chat) {
       return;
     }
     const mutual = !res.error && (Boolean(res.followIn) || alreadyIn);
-    if (mutual) {
-      try { await loadCommunityBoard(0); } catch { /* usa la scheda già in memoria */ }
-    }
-    const shared = mutual ? sharedProfileIdentity(res.link, cardHit.owner) : null;
+    const shared = sharedProfileIdentity(res.link, cardHit.owner);
     if (!res.error) {
       rememberMutualProfile(person, { ...cardHit, ...(shared || {}) }, mutual);
       save(state);
-      silentDrivePush();
     }
     const listedName = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") || who;
     const label = mutual && shared && (shared.firstName || shared.lastName)
@@ -2655,13 +2638,10 @@ async function connectSeaPerson(cardHit, chat) {
       : listedName && !listedName.startsWith("Sub ")
         ? listedName
         : publicDiverLabel(cardHit.owner).name;
-    if (mutual && (!shared?.level || !shared?.cert || !shared?.sign)) scheduleMutualRefresh();
     view.peopleHint = res.error
       ? `Segui ${label}. Il collegamento riprova tra poco: il profilo resta in Community.`
-      : mutual
-        ? `Vi seguite. Nome, cognome, brevetto, numero e firma di ${label} sono nel contatto.`
-        : `Segui ${label}. Brevetto, numero e firma arrivano solo se segue anche te.`;
-    await silentDrivePush();
+      : `Segui ${label}. Nome, cognome, brevetto e firma sono nel contatto, non in questa lista.`;
+    silentDrivePush();
     render();
   } catch {
     await silentDrivePush().catch(() => {});
@@ -2768,17 +2748,15 @@ async function publishMyProfile() {
   if (keptPortrait) body.portrait = keptPortrait;
   const level = String(state.profile?.certLevel || prev.level || "").trim();
   const cert = String(state.profile?.certNumber || prev.cert || "").trim();
-  const keptSign = profileSignImage() || (typeof prev.sign === "string" && prev.sign.startsWith("data:image") ? prev.sign : "");
+  const rawSign = profileSignImage() || (typeof prev.sign === "string" && prev.sign.startsWith("data:image") ? prev.sign : "");
+  let keptSign = rawSign ? await shrinkSign(rawSign) : "";
+  if (!keptSign && rawSign && rawSign.length <= 14000) keptSign = rawSign;
   if (level) body.level = level.slice(0, 40);
   if (cert) body.cert = cert.slice(0, 40);
   if (keptSign) body.sign = keptSign;
   fitCloudProfile(body);
   try {
     await cloudSet(`p-${owner}`, body);
-    const mutual = (state.people || []).filter((p) => p.remoteOwner && p.followOut && p.followIn);
-    for (const person of mutual) {
-      await setMyFollow(person, true);
-    }
     return { ok: true, name: names.name || owner };
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
@@ -3347,38 +3325,18 @@ async function syncIncomingLinks() {
     const personEarly = (state.people || []).find((p) => p.remoteOwner === remote);
     const handle = publicDiverLabel(remote);
     if (personIsGone(personEarly || { role: "buddy", name: handle.name }, state.deletedPeople)) return;
-    if (personEarly?.followOut && !flags.followOut) {
-      if (flags.followIn && !personEarly.followIn) {
-        personEarly.followIn = true;
-        personEarly.following = Boolean(personEarly.followOut && personEarly.followIn);
-        changed = true;
-      }
-      setMyFollow(personEarly, true).catch(() => {});
-    }
     const followOutNow = Boolean(personEarly?.followOut || flags.followOut);
-    const mutualNow = Boolean(followOutNow && flags.followIn);
     if (
-      !mutualNow &&
+      !followOutNow &&
       personEarly &&
       Date.now() - Number(personEarly.followRev) < 4000 &&
       Boolean(personEarly.followOut) !== Boolean(flags.followOut)
     ) return;
     const card = cardByOwner.get(remote) || null;
     const followOut = savedFollowOut(personEarly, flags);
-    const mutual = Boolean(followOut && flags.followIn);
-    const ident = mutual ? sharedProfileIdentity(row, remote) : null;
+    const ident = followOut ? sharedProfileIdentity(row, remote) : null;
     const listed = card ? listedDiverName(card) : null;
-    if (mutual && followOut) {
-      const mineSide = row.left === mine ? "left" : "right";
-      const missingName = !String(row[mineSide + "First"] || row[mineSide + "Name"] || "").trim();
-      const missingCert = Boolean(String(state.profile?.certNumber || "").trim()) && !String(row[mineSide + "Cert"] || "").trim();
-      const missingLevel = Boolean(String(state.profile?.certLevel || "").trim()) && !String(row[mineSide + "Level"] || "").trim();
-      const missingSign = Boolean(profileSignImage()) && !String(row[mineSide + "Sign"] || "").startsWith("data:image");
-      if (missingName || missingCert || missingLevel || missingSign) {
-        setMyFollow({ owner: remote, remoteOwner: remote }, true).catch(() => {});
-      }
-    }
-    const shared = mutual && ident && (ident.firstName || ident.lastName) ? personNames(ident) : null;
+    const shared = ident && (ident.firstName || ident.lastName) ? personNames(ident) : null;
     const person = personEarly;
     const before = person ? `${person.followOut}|${person.followIn}|${person.following}|${person.level}|${person.cert}|${person.sign ? 1 : 0}|${person.name}` : "";
     const payload = {
@@ -3392,31 +3350,27 @@ async function syncIncomingLinks() {
       followIn: flags.followIn,
     };
     if (card?.portrait) payload.portrait = card.portrait;
-    if (mutual && ident) {
+    if (followOut && ident) {
       if (ident.cert) payload.cert = ident.cert;
       if (ident.level) payload.level = ident.level;
       if (ident.sign) payload.sign = ident.sign;
-      payload.followRev = Date.now();
     }
     const saved = upsertPerson(payload);
-    if (saved && !mutual) {
+    if (saved && !followOut) {
       saved.cert = "";
       saved.level = "";
       saved.sign = "";
       saved.following = Boolean(saved.followOut && saved.followIn);
     }
-    if (saved && mutual && ident) {
+    if (saved && followOut && ident) {
       if (ident.level) saved.level = ident.level;
       if (ident.cert) saved.cert = ident.cert;
       if (ident.sign) saved.sign = ident.sign;
     }
-    if (mutual && saved && (!saved.level || !saved.cert || !(typeof saved.sign === "string" && saved.sign.startsWith("data:image")))) {
-      scheduleMutualRefresh();
-    }
     const after = saved ? `${saved.followOut}|${saved.followIn}|${saved.following}|${saved.level}|${saved.cert}|${saved.sign ? 1 : 0}|${saved.name}` : "";
     if (!person || before !== after) {
       if (saved) saved.followRev = Date.now();
-      if (mutual && saved) stampPersonSign(saved);
+      if (followOut && saved) stampPersonSign(saved);
       changed = true;
     }
   });
@@ -3425,22 +3379,6 @@ async function syncIncomingLinks() {
     silentDrivePush();
   }
   return changed;
-}
-
-function scheduleMutualRefresh() {
-  if (scheduleMutualRefresh.left == null) scheduleMutualRefresh.left = 4;
-  if (scheduleMutualRefresh.timer || scheduleMutualRefresh.left <= 0) return;
-  scheduleMutualRefresh.left -= 1;
-  scheduleMutualRefresh.timer = setTimeout(async () => {
-    scheduleMutualRefresh.timer = 0;
-    try {
-      await loadCommunityBoard(0);
-      const changed = await syncIncomingLinks();
-      if (changed && (view.name === "people" || view.name === "edit")) render();
-    } catch {
-      /* riprova al prossimo giro */
-    }
-  }, 2500);
 }
 
 function renderChat() {
@@ -3767,15 +3705,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-222")) return;
-        sessionStorage.setItem("seadive-sw-222", "1");
-        location.replace("./?v=222&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-223")) return;
+        sessionStorage.setItem("seadive-sw-223", "1");
+        location.replace("./?v=223&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "222";
+const APP_VERSION = "223";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4523,7 +4461,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 222</p>
+        <p class="hint">Versione 223</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -8481,7 +8419,7 @@ function renderPeople() {
     });
   card.innerHTML = `
     <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Chi apre l'app compare qui, anche senza account Google. Puoi seguire o no. Brevetto, numero e firma si scambiano solo se vi seguite entrambi.</p>
+    <p class="hint">Qui si vedono nome e cognome. Brevetto e firma stanno nel contatto, dopo che lo segui.</p>
     <div class="chat-list" data-chatlist>
       <button class="chat-entry" type="button" data-openchat>Chat di chi si segue</button>
     </div>
@@ -8525,7 +8463,6 @@ function renderPeople() {
   };
   const otherPeople = seaDirectory.list || [];
   const seaPeople = [selfCard, ...otherPeople].filter(Boolean);
-  let shareDirty = false;
   const seaWait = document.createElement("p");
   seaWait.className = "hint";
   seaWait.setAttribute("data-sea-wait", "");
@@ -8534,17 +8471,14 @@ function renderPeople() {
   sea.append(seaWait);
   sea.append(seaRow);
   seaPeople.forEach((cardHit) => {
-    const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
-    const extra = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
     if (cardHit.self) {
       const whoSelf = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ");
-      const extraSelf = [cardHit.level, cardHit.cert].filter(Boolean).join(" · ");
       const selfPhoto = portraitImage(cardHit.portrait);
       const selfInitials = `${(cardHit.firstName || "?").slice(0, 1)}${(cardHit.lastName || "").slice(0, 1)}`.toUpperCase();
       const selfRow = document.createElement("article");
       selfRow.className = "sea-person";
       selfRow.setAttribute("data-self", "");
-      selfRow.setAttribute("data-q", [whoSelf, extraSelf].filter(Boolean).join(" "));
+      selfRow.setAttribute("data-q", [whoSelf].filter(Boolean).join(" "));
       selfRow.innerHTML = `
         <button type="button" class="sea-open">
           ${selfPhoto ? `<img class="sea-photo" alt="" src="${escapeHtml(selfPhoto)}" />` : `<span class="sea-photo sea-photo-fallback">${escapeHtml(selfInitials)}</span>`}
@@ -8570,20 +8504,7 @@ function renderPeople() {
         ? knownNames
         : listed;
     const mode = mutual ? "mutual" : !known ? "none" : known.followOut ? "out" : known.followIn ? "in" : "none";
-    const boardIdent = mutual ? boardDiverRecord(cardHit.owner) : null;
-    if (mutual && known && boardIdent) {
-      if (boardIdent.level && !known.level) { known.level = boardIdent.level; shareDirty = true; }
-      if (boardIdent.cert && !known.cert) { known.cert = boardIdent.cert; shareDirty = true; }
-      if (boardIdent.sign && !(typeof known.sign === "string" && known.sign.startsWith("data:image"))) {
-        known.sign = boardIdent.sign;
-        shareDirty = true;
-      }
-    }
-    const sharedLevel = known?.level || boardIdent?.level || "";
-    const sharedCert = known?.cert || boardIdent?.cert || "";
-    const sharedSign = (typeof known?.sign === "string" && known.sign.startsWith("data:image") ? known.sign : "") || boardIdent?.sign || "";
-    const sharedLine = mutual ? [sharedLevel, sharedCert].filter(Boolean).join(" · ") : "";
-    const status = [mode === "mutual" ? "Vi seguite" : mode === "in" ? "Ti segue" : "", sharedLine].filter(Boolean).join(" · ");
+    const status = mode === "mutual" ? "Vi seguite" : mode === "out" ? "Lo segui" : mode === "in" ? "Ti segue" : "";
     const followBtn = mode === "mutual" || mode === "out"
       ? `<button class="btn ghost" type="button" data-unfollow>Non seguire più</button>`
       : `<button class="btn primary" type="button" data-follow>${mode === "in" ? "Segui anche tu" : "Segui"}</button>`;
@@ -8591,13 +8512,12 @@ function renderPeople() {
     const initials = `${(shown.firstName || shown.name || "?").slice(0, 1)}${(shown.lastName || "").slice(0, 1)}`.toUpperCase();
     const row = document.createElement("article");
     row.className = "sea-person";
-    row.setAttribute("data-q", [shown.firstName, shown.lastName, shown.name, mutual ? extra : ""].filter(Boolean).join(" "));
+    row.setAttribute("data-q", [shown.firstName, shown.lastName, shown.name].filter(Boolean).join(" "));
     row.innerHTML = `
       ${photo ? `<img class="sea-photo" alt="" src="${escapeHtml(photo)}" />` : `<span class="sea-photo sea-photo-fallback">${escapeHtml(initials)}</span>`}
       <strong class="sea-first">${escapeHtml(shown.firstName || "")}</strong>
       <strong class="sea-last">${escapeHtml(shown.lastName || "")}</strong>
       ${status ? `<small class="sea-status">${escapeHtml(status)}</small>` : ""}
-      ${mutual && sharedSign ? `<img class="sea-sign" alt="Firma" src="${escapeHtml(sharedSign)}" />` : ""}
       <div class="people-actions">
         ${followBtn}
       </div>
@@ -8620,10 +8540,6 @@ function renderPeople() {
     });
     seaRow.append(row);
   });
-  if (shareDirty) {
-    save(state);
-    silentDrivePush();
-  }
   const localWait = document.createElement("p");
   localWait.className = "hint";
   localWait.setAttribute("data-list-wait", "");
@@ -8648,9 +8564,7 @@ function renderPeople() {
       const status = [
         mine ? "Sei tu" : "",
         mutualRemote ? "Vi seguite" : "",
-        mutualRemote && p.level ? p.level : "",
-        mutualRemote && p.cert ? "n° " + p.cert : "",
-        p.remoteOwner && p.followOut && !p.followIn ? "In attesa" : "",
+        p.remoteOwner && p.followOut && !p.followIn ? "Lo segui" : "",
         p.remoteOwner && !p.followOut && p.followIn ? "Ti segue" : "",
         !p.remoteOwner && !mine ? roleLabel(p.role) : "",
         n ? `${n} ${n === 1 ? "scheda" : "schede"}` : "",
@@ -8664,7 +8578,6 @@ function renderPeople() {
           <span class="contact-copy">
             <strong>${escapeHtml([first, last].filter(Boolean).join(" "))}</strong>
             <small>${escapeHtml(status)}</small>
-            ${mutualRemote && typeof p.sign === "string" && p.sign.startsWith("data:image") ? `<img class="contact-sign" alt="Firma" src="${escapeHtml(p.sign)}" />` : ""}
           </span>
         </button>
         <div class="contact-links">
@@ -8734,8 +8647,8 @@ function renderPeople() {
       view.personId = res.person?.id || null;
       view.personDraft = null;
       view.peopleHint = res.person
-        ? res.person.remoteOwner && !mutualFollow(res.person)
-          ? `Contatto di ${res.person.name} salvato. Brevetto e firma entrano in immersione quando vi seguite entrambi.`
+        ? res.person.remoteOwner && !sharesProfile(res.person)
+          ? `Contatto di ${res.person.name} salvato. Brevetto e firma si vedono dopo che lo segui.`
           : `Contatto di ${res.person.name} salvato. Nome, cognome, brevetto e firma entrano nella nuova immersione.`
         : "";
       render();
@@ -8858,23 +8771,18 @@ function renderPerson() {
   const dives = creating ? [] : divesForPerson(current);
   const pub = current.remoteOwner ? publicNameFromBoard(current.remoteOwner) : null;
   const names = placeholderDiverName(current) && pub ? pub : personNames(current);
-  if (!creating && mutualFollow(current)) {
+  if (!creating && current.remoteOwner && sharesProfile(current)) {
     const board = boardDiverRecord(current.remoteOwner);
     let filled = false;
-    if (board?.level && !current.level) { current.level = board.level; filled = true; }
-    if (board?.cert && !current.cert) { current.cert = board.cert; filled = true; }
-    if (board?.sign && !(typeof current.sign === "string" && current.sign.startsWith("data:image"))) {
-      current.sign = board.sign;
-      filled = true;
-    }
+    if (board?.level && current.level !== board.level) { current.level = board.level; filled = true; }
+    if (board?.cert && current.cert !== board.cert) { current.cert = board.cert; filled = true; }
+    if (board?.sign && current.sign !== board.sign) { current.sign = board.sign; filled = true; }
     if (filled) {
       save(state);
       silentDrivePush();
-    } else if (!current.level || !current.cert || !(typeof current.sign === "string" && current.sign.startsWith("data:image"))) {
-      scheduleMutualRefresh();
     }
   }
-  const privateRemote = !creating && Boolean(current.remoteOwner) && !mutualFollow(current);
+  const privateRemote = !creating && Boolean(current.remoteOwner) && !sharesProfile(current);
   const shownCert = privateRemote ? "" : current.cert;
   const shownLevel = privateRemote ? "" : current.level || "";
   form.innerHTML = `
@@ -8882,7 +8790,7 @@ function renderPerson() {
         ${avatarHtml(personPortrait(current), names.name || current.name)}
         <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(names.name || current.name)}</h2>
     </div>
-    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : privateRemote ? "Nome e cognome sono visibili. Brevetto, numero e firma arrivano quando vi seguite entrambi." : "Nome, cognome, brevetto, numero e firma si aggiornano anche sulle schede in cui compare già."}</p>
+    <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : privateRemote ? "Nome e cognome sono già qui. Brevetto e firma compaiono quando lo segui." : "Nome, cognome, brevetto e firma restano in questo contatto e nel diario su Drive."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
     <div class="chips" data-roles></div>
     <input type="hidden" name="role" value="${escapeHtml(current.role || "buddy")}" />
@@ -8926,7 +8834,7 @@ function renderPerson() {
     </div>
     <p class="hint" data-followhint ${current.role === "center" ? "hidden" : ""}>${creating ? "Un contatto scritto qui è tuo: brevetto e firma che inserisci restano pronti in immersione." : current.remoteOwner && current.followOut && current.followIn ? "Vi seguite. Nome, cognome, numero di brevetto e firma entrano nella nuova immersione." : current.remoteOwner && current.followOut ? "Lo segui. Brevetto e firma entrano in immersione solo quando segue anche te." : current.remoteOwner && current.followIn ? "Ti segue. Segui anche tu per usare brevetto e firma in immersione." : "Per chi è su SeaDive, brevetto e firma entrano in immersione solo se vi seguite entrambi."}</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
-      <p class="hint">${privateRemote ? "La firma digitale si scambia solo quando vi seguite entrambi." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
+      <p class="hint">${privateRemote ? "La firma digitale si vede qui dopo che lo segui." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
       ${privateRemote ? "" : signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
       ${privateRemote ? "" : signPreviewHtml(personKnownSign(current))}
     </div>
@@ -9311,27 +9219,30 @@ function diveBuddyRoster() {
     if (!p || p.role === "center") return;
     const board = p.remoteOwner ? boardDiverRecord(p.remoteOwner) : null;
     const named = placeholderDiverName(p) && board ? board : p;
+    const open = sharesProfile(p);
     add({
       ...p,
       name: named.name,
       firstName: named.firstName,
       lastName: named.lastName,
-      level: p.level || board?.level || "",
-      cert: p.cert || board?.cert || "",
-      sign: diveInsertSign(p) || board?.sign || "",
+      level: open ? p.level || board?.level || "" : "",
+      cert: open ? p.cert || board?.cert || "" : "",
+      sign: open ? diveInsertSign(p) || board?.sign || "" : "",
     });
   });
   (seaDirectory.list || []).forEach((card) => {
     const board = boardDiverRecord(card.owner);
     const names = personNames(card);
+    const known = (state.people || []).find((p) => p.remoteOwner === card.owner);
+    const open = Boolean(known && sharesProfile(known));
     add({
       remoteOwner: card.owner,
       name: names.name || board?.name || "",
       firstName: names.firstName || board?.firstName || "",
       lastName: names.lastName || board?.lastName || "",
-      level: board?.level || "",
-      cert: board?.cert || "",
-      sign: board?.sign || "",
+      level: open ? known.level || board?.level || "" : "",
+      cert: open ? known.cert || board?.cert || "" : "",
+      sign: open ? diveInsertSign(known) || board?.sign || "" : "",
     });
   });
   return out.sort((a, b) => a.name.localeCompare(b.name, "it"));
@@ -10533,26 +10444,29 @@ function signPreviewHtml(sign) {
     : "";
 }
 
-function mutualFollow(person) {
+function sharesProfile(person) {
   if (!person || person.role === "center") return false;
   if (samePersonName(person.name, state.profile?.name)) return true;
   if (!String(person.remoteOwner || "").trim()) return true;
+  return Boolean(person.followOut);
+}
+
+function mutualFollow(person) {
+  if (!sharesProfile(person)) return false;
+  if (!String(person.remoteOwner || "").trim()) return true;
+  if (samePersonName(person.name, state.profile?.name)) return true;
   return Boolean(person.followOut && person.followIn);
 }
 
 function diveContactReady(person) {
-  if (!person || person.role === "center") return false;
-  if (samePersonName(person.name, state.profile?.name)) return true;
-  if (!String(person.remoteOwner || "").trim()) return true;
-  return mutualFollow(person);
+  return sharesProfile(person);
 }
 
 function followWaitText(person) {
   const listed = personNames(person);
   const name = listed.name && !listed.name.startsWith("Sub ") ? listed.name : publicDiverLabel(person?.remoteOwner).name;
-  if (person?.followOut && !person?.followIn) return `Segui ${name}. Brevetto, numero e firma arrivano solo se segue anche te.`;
-  if (person?.followIn && !person?.followOut) return `${name} ti segue. Segui anche tu per scambiare brevetto, numero e firma.`;
-  return `Brevetto, numero e firma si scambiano solo se vi seguite entrambi.`;
+  if (person?.followIn && !person?.followOut) return `${name} ti segue. Segui anche tu: brevetto e firma entrano nel contatto.`;
+  return `Segui ${name} per avere brevetto e firma nel contatto.`;
 }
 
 function signForInsertedPerson(role, typedName) {
