@@ -2149,7 +2149,9 @@ function listedDiverName(card) {
 }
 
 function placeholderDiverName(value) {
-  const names = personNames(typeof value === "string" ? { name: value } : value || {});
+  const person = typeof value === "string" ? { name: value } : value || {};
+  if (person.role === "center") return !String(person.name || "").trim();
+  const names = personNames(person);
   if (!names.firstName || names.firstName === "Sub") return true;
   return /^sub\s+[0-9a-f]{4}$/i.test(names.name);
 }
@@ -3705,15 +3707,15 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-223")) return;
-        sessionStorage.setItem("seadive-sw-223", "1");
-        location.replace("./?v=223&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-224")) return;
+        sessionStorage.setItem("seadive-sw-224", "1");
+        location.replace("./?v=224&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "223";
+const APP_VERSION = "224";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4461,7 +4463,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 223</p>
+        <p class="hint">Versione 224</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -8815,7 +8817,7 @@ function renderPerson() {
       <div class="actions">
         <button class="btn ghost" type="button" data-findaddr>Trova sulla mappa</button>
       </div>
-      <p class="hint" data-addrhint>Via, numero civico e città. Trova sulla mappa mette la spunta precisa di Google e lo stesso punto nella sezione Mappa.</p>
+      <p class="hint" data-addrhint>La denominazione basta per salvarlo e usarlo nelle immersioni. Via, numero e città servono solo per il punto in Mappa.</p>
       <div class="dive-mini" data-minimap ${Number.isFinite(Number(current.lat)) && Number.isFinite(Number(current.lng)) ? "" : "hidden"}></div>
       <p class="hint">Foto del diving. Scattala adesso oppure sceglila tra quelle già sul telefono.</p>
       <button class="dive-shot" type="button" data-centerphoto>${portraitImage(current.portrait) ? `<img alt="" src="${escapeHtml(current.portrait)}" />` : "Nessuna foto"}</button>
@@ -9010,14 +9012,6 @@ function renderPerson() {
       alert(role === "center" ? "Scrivi la denominazione del diving." : "Scrivi nome e cognome.");
       return;
     }
-    if (role === "center" && (!street || !civic || !city)) {
-      alert("Scrivi via, numero civico e città del diving.");
-      return;
-    }
-    if (role === "center" && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
-      alert("Trova il diving sulla mappa a partire dall'indirizzo.");
-      return;
-    }
     const before = creating ? null : { ...current };
     const person = upsertPerson({
       id: current.id,
@@ -9044,7 +9038,7 @@ function renderPerson() {
           }
         : {}),
     });
-    if (role === "center" && person) {
+    if (role === "center" && person && Number.isFinite(lat) && Number.isFinite(lng)) {
       const site = window.SeaDiveSites?.upsertCustomSite?.({
         id: person.centerSiteId || "",
         name,
