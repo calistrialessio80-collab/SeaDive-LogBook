@@ -3707,15 +3707,16 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       await reg.update();
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-224")) return;
-        sessionStorage.setItem("seadive-sw-224", "1");
-        location.replace("./?v=224&t=" + Date.now());
+        if (sessionStorage.getItem("seadive-sw-225")) return;
+        sessionStorage.setItem("seadive-sw-225", "1");
+        location.replace("./?v=225&t=" + Date.now());
       });
     } catch (_) {}
   })();
 }
 
-const APP_VERSION = "224";
+const APP_VERSION = "225";
+const COFFEE_URL = "https://buymeacoffee.com/seadive";
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4463,7 +4464,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 224</p>
+        <p class="hint">Versione 225</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -6026,7 +6027,22 @@ function renderHome() {
     };
   });
   frag.append(rate);
+  frag.append(coffeeCard("home"));
   return frag;
+}
+
+function coffeeCard(where) {
+  const el = document.createElement("section");
+  el.className = where === "home" ? "coffee-card" : "card coffee-card profile-coffee";
+  el.innerHTML = `
+    <h3 class="serif">Sostieni SeaDive</h3>
+    <p>Se il diario ti è utile, puoi offrire un caffè.</p>
+    <a class="btn coffee-btn" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>
+      Offri un caffè
+    </a>
+  `;
+  return el;
 }
 
 function emptyState() {
@@ -9540,6 +9556,7 @@ function renderProfile() {
     render();
   };
   frag.append(form);
+  frag.append(coffeeCard("profile"));
   return frag;
 }
 
