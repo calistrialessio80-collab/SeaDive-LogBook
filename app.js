@@ -3719,9 +3719,11 @@ function armChatNotices() {
   if (armChatNotices.started || !loadSession()) return;
   armChatNotices.started = true;
   watchChatNotices().catch(() => {});
+  // Ogni 60 s e solo con l'app in primo piano: la chat aperta ha già il suo aggiornamento ogni 15 s.
   setInterval(() => {
+    if (document.hidden || view.name === "chat") return;
     watchChatNotices().catch(() => {});
-  }, 15000);
+  }, 60000);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") watchChatNotices().catch(() => {});
   });
@@ -4206,7 +4208,9 @@ function renderChat() {
     owner = mine;
     pull();
     stopChatPoll();
-    chatTimer = setInterval(pull, 15000);
+    chatTimer = setInterval(() => {
+      if (!document.hidden) pull();
+    }, 15000);
   });
   frag.append(card);
   return frag;
@@ -7368,12 +7372,53 @@ function bioPhotoHint() {
   return "Isolo il soggetto, senza lo sfondo, e lo confronto online.";
 }
 
+// I modelli del riconoscimento pesano circa 400 MB (CLIP 154 MB + SigLIP 218 MB + motore): si scaricano
+// solo dopo un sì esplicito, con un avviso in più se il telefono è su rete mobile o in risparmio dati.
+const AI_OK_KEY = "seadive-ai-ok";
+let aiConsentAsk = null;
+
+function meteredConnection() {
+  const c = navigator.connection;
+  if (!c) return false;
+  return Boolean(c.saveData) || c.type === "cellular" || ["slow-2g", "2g", "3g"].includes(c.effectiveType);
+}
+
+async function ensureAiConsent() {
+  try {
+    if (localStorage.getItem(AI_OK_KEY)) return;
+  } catch {
+    /* senza storage si chiede ogni volta */
+  }
+  if (!aiConsentAsk) {
+    const mobile = meteredConnection();
+    aiConsentAsk = askConfirm({
+      title: "Scaricare il riconoscimento?",
+      message: (mobile ? "Sembri su rete mobile o in risparmio dati. " : "") +
+        "Per riconoscere la specie dalla foto il telefono scarica una volta sola circa 400 MB. Meglio con il Wi-Fi. Puoi sempre cercare la specie per nome.",
+      ok: "Scarica",
+      cancel: "Non ora",
+    }).finally(() => { aiConsentAsk = null; });
+  }
+  const ok = await aiConsentAsk;
+  if (!ok) {
+    const err = new Error("Riconoscimento non scaricato.");
+    err.code = "ai-declined";
+    throw err;
+  }
+  try {
+    localStorage.setItem(AI_OK_KEY, new Date().toISOString());
+  } catch {
+    /* si chiedera di nuovo la prossima volta */
+  }
+}
+
 let lifeClipPromise = null;
 let lifeClipStatus = () => {};
 
 function loadLifeClip() {
   if (!lifeClipPromise) {
-    lifeClipPromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
+    lifeClipPromise = ensureAiConsent()
+      .then(() => import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
       .then(({ pipeline }) => pipeline("zero-shot-image-classification", "Xenova/clip-vit-base-patch32", {
         dtype: "q8",
         progress_callback: (data) => {
@@ -7384,7 +7429,7 @@ function loadLifeClip() {
             lifeClipStatus("Scarico il riconoscimento del soggetto. La prima volta può volerci un po'.");
           }
         },
-      }))
+      })))
       .catch((err) => {
         lifeClipPromise = null;
         throw err;
@@ -7398,7 +7443,8 @@ const fishEmbedCache = new Map();
 
 function loadLifeEmbed() {
   if (!lifeEmbedPromise) {
-    lifeEmbedPromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
+    lifeEmbedPromise = ensureAiConsent()
+      .then(() => import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
       .then(({ pipeline }) => pipeline("image-feature-extraction", "Xenova/siglip-base-patch16-224", {
         dtype: "q4",
         progress_callback: (data) => {
@@ -7409,7 +7455,7 @@ function loadLifeEmbed() {
             lifeClipStatus("Scarico il confronto del soggetto. La prima volta può volerci un po'.");
           }
         },
-      }))
+      })))
       .catch((err) => {
         lifeEmbedPromise = null;
         throw err;
@@ -8324,11 +8370,13 @@ function renderBiology() {
           return;
         }
         paint();
-      } catch {
+      } catch (err) {
         if (token !== bioPhotoToken || !bioPhotoSearch) return;
         bioPhotoSearch.pending = false;
         bioPhotoSearch.rows = [];
-        bioPhotoSearch.hint = "Non riesco a riconoscere il soggetto adesso. Controlla la rete e riprova.";
+        bioPhotoSearch.hint = err?.code === "ai-declined"
+          ? "Riconoscimento non scaricato. Cerca la specie per nome, oppure riprova quando sei sul Wi-Fi."
+          : "Non riesco a riconoscere il soggetto adesso. Controlla la rete e riprova.";
         paint();
       }
     } catch {
