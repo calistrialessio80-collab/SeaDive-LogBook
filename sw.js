@@ -15,6 +15,7 @@ const ASSETS = [
   "./config.js",
   "./manifest.json",
   "./aggiorna.html",
+  "./aggiorna.js",
   "./version.txt",
   "./splash.jpg",
   "./nav-diver.png",

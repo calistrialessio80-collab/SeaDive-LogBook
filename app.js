@@ -5289,6 +5289,14 @@ function loadGoogleMaps() {
   });
 }
 
+// Impronte SRI: verificate identiche su jsDelivr e unpkg. Se il file sul CDN cambia, il browser lo rifiuta.
+const SRI = {
+  leafletJs: "sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH",
+  leafletCss: "sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H",
+  maplibreJs: "sha384-/L1njH4bbgNt9Uk3HwJ272N9fxJzRBQCxhtwGkZiqgl+Nxpq2ETUNZhNMNV1RgyW",
+  maplibreCss: "sha384-Nq6PQ+9vJPvw7U/VfDELyrWoGQMsy0gi6QShhaSrGzkpF5KkM40csg2leky+YMTd",
+};
+
 function loadLeaflet() {
   if (window.L) return Promise.resolve();
   const cssHref = [
@@ -5304,6 +5312,8 @@ function loadLeaflet() {
     const css = document.createElement("link");
     css.rel = "stylesheet";
     css.href = href;
+    css.integrity = SRI.leafletCss;
+    css.crossOrigin = "anonymous";
     css.dataset.leaflet = "1";
     document.head.appendChild(css);
   };
@@ -5315,6 +5325,8 @@ function loadLeaflet() {
       if (i >= jsHref.length) return reject(new Error("Impossibile caricare la mappa."));
       const s = document.createElement("script");
       s.src = jsHref[i++];
+      s.integrity = SRI.leafletJs;
+      s.crossOrigin = "anonymous";
       s.onload = () => (window.L ? resolve() : tryJs());
       s.onerror = tryJs;
       document.body.appendChild(s);
@@ -5564,6 +5576,8 @@ function loadMapLibre() {
     const css = document.createElement("link");
     css.rel = "stylesheet";
     css.href = cssHref;
+    css.integrity = SRI.maplibreCss;
+    css.crossOrigin = "anonymous";
     css.dataset.maplibre = "1";
     document.head.appendChild(css);
   }
@@ -5574,6 +5588,7 @@ function loadMapLibre() {
       if (i >= jsHref.length) return reject(new Error("Mappa del mondo non disponibile."));
       const s = document.createElement("script");
       s.src = jsHref[i++];
+      s.integrity = SRI.maplibreJs;
       s.crossOrigin = "anonymous";
       s.onload = () => (window.maplibregl?.Map ? resolve() : tryJs());
       s.onerror = tryJs;
