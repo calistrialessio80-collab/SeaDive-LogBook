@@ -680,6 +680,10 @@ function mergeProfiles(a, b) {
   const left = a || {};
   const right = b || {};
   const out = { ...emptyProfile(), ...right, ...left };
+  // Stessa chiave di scambio su tutti i dispositivi: vince la più vecchia, così le buste già inviate restano leggibili.
+  const keyL = left.commKey?.priv?.d ? left.commKey : null;
+  const keyR = right.commKey?.priv?.d ? right.commKey : null;
+  if (keyL || keyR) out.commKey = keyL && keyR ? (String(keyR.at || "") < String(keyL.at || "") ? keyR : keyL) : keyL || keyR;
   Object.keys(emptyProfile()).forEach((k) => {
     if (k === "certs") return;
     if (out[k] === "" || out[k] == null) out[k] = left[k] || right[k] || "";
@@ -2043,7 +2047,15 @@ async function loadCommunityBoard(maxAge = 20000) {
   return flight;
 }
 
-async function postCommunityBoard(next) {
+function scrubMap(map, scrub) {
+  const out = {};
+  Object.entries(map || {}).forEach(([k, v]) => { out[k] = scrub(v); });
+  return out;
+}
+
+async function postCommunityBoard(raw) {
+  // Ogni scrittura ripulisce tutta la bacheca: via brevetti, livelli e firme in chiaro, anche di versioni vecchie.
+  const next = { ...raw, profiles: scrubMap(raw.profiles, scrubProfileRow), links: scrubMap(raw.links, scrubLink) };
   const body = JSON.stringify({ v: 1, profiles: next.profiles, links: next.links, messages: next.messages });
   if (body.length > 1400000) throw new Error("network");
   const res = await fetch(COMMUNITY_CLOUD, {
@@ -2126,7 +2138,8 @@ async function loadMergedLinks(fresh) {
   return { ...(board.links || {}), ...(basket || {}) };
 }
 
-async function postLinkBasket(map) {
+async function postLinkBasket(raw) {
+  const map = scrubMap(raw, scrubLink);
   const body = JSON.stringify({ v: 1, links: map });
   const res = await fetch(COMMUNITY_LINKS_CLOUD, {
     method: "POST",
@@ -2221,14 +2234,15 @@ function legacyIdentity(row) {
     lastName: row.lastName,
     name: row.name || "",
   });
-  const sign = isSafeImage(row.sign) ? row.sign : "";
-  if (!names.firstName && !names.lastName && !row.cert && !sign) return null;
+  if (!names.firstName && !names.lastName) return null;
+  // Dal profilo pubblico si prendono solo i nomi: brevetto, livello e firma che versioni vecchie
+  // vi lasciavano in chiaro non vanno usati. Arrivano solo dalla busta cifrata tra chi si segue.
   return {
     firstName: names.firstName,
     lastName: names.lastName,
-    level: String(row.level || "").trim(),
-    cert: String(row.cert || "").trim(),
-    sign,
+    level: "",
+    cert: "",
+    sign: "",
   };
 }
 
@@ -2254,14 +2268,171 @@ function linkIdentityFor(row, remoteId) {
   const lastName = String(row[side + "Last"] || "").trim();
   const legacyName = String(row[side + "Name"] || "").trim();
   const names = firstName || lastName ? { firstName, lastName, name: [firstName, lastName].filter(Boolean).join(" ") } : personNames({ name: legacyName });
-  const sign = row[side + "Sign"];
+  // Brevetto, livello e firma arrivano solo dalla busta cifrata (vedi openLinkBoxes).
+  const secret = linkSecretCache.get(linkBoxCacheKey(row, side)) || {};
   return {
     firstName: names.firstName || "",
     lastName: names.lastName || "",
-    level: String(row[side + "Level"] || "").trim(),
-    cert: String(row[side + "Cert"] || "").trim(),
+    level: String(secret.level || "").trim().slice(0, 40),
+    cert: String(secret.cert || "").trim().slice(0, 40),
+    sign: safeImageSrc(secret.sign),
+  };
+}
+
+/* ---------- Scambio cifrato tra chi si segue ----------
+   Pantry è pubblico: brevetto, livello e firma viaggiano solo dentro una "busta" cifrata.
+   Ognuno ha una coppia di chiavi ECDH P-256: la privata resta nel diario (e nel backup Drive),
+   la pubblica va nel profilo Community. Le due persone ricavano la stessa chiave AES-GCM
+   e solo loro due possono aprire la busta. */
+
+const LINK_SECRET_FIELDS = ["Level", "Cert", "Sign"];
+const linkSecretCache = new Map();
+const linkKeyCache = new Map();
+
+function b64FromBytes(bytes) {
+  let bin = "";
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i += 0x8000) bin += String.fromCharCode(...arr.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function bytesFromB64(text) {
+  const bin = atob(String(text || ""));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function validPubKey(pub) {
+  return Boolean(pub && typeof pub === "object" && typeof pub.x === "string" && typeof pub.y === "string" && pub.x.length >= 40 && pub.y.length >= 40);
+}
+
+function pubKeyJwk(pub) {
+  return { kty: "EC", crv: "P-256", x: pub.x, y: pub.y, ext: true };
+}
+
+function linkBoxCacheKey(row, side) {
+  const box = row?.[side + "Box"];
+  return box && typeof box === "object" ? `${row.pair || ""}|${side}|${box.iv || ""}` : "";
+}
+
+async function myCommKeys(create = true) {
+  const current = state.profile?.commKey;
+  if (current?.priv?.d && validPubKey(current.pub)) return current;
+  if (!create || !crypto?.subtle) return null;
+  const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+  const priv = await crypto.subtle.exportKey("jwk", pair.privateKey);
+  const pub = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  state.profile.commKey = {
+    at: new Date().toISOString(),
+    pub: { x: pub.x, y: pub.y },
+    priv: { kty: "EC", crv: "P-256", x: priv.x, y: priv.y, d: priv.d },
+  };
+  persistLocal(state);
+  scheduleDriveBackup();
+  return state.profile.commKey;
+}
+
+async function linkAesKey(theirPub) {
+  const mine = await myCommKeys(false);
+  if (!mine || !validPubKey(theirPub)) return null;
+  const cacheKey = `${mine.pub.x}|${theirPub.x}|${theirPub.y}`;
+  if (linkKeyCache.has(cacheKey)) return linkKeyCache.get(cacheKey);
+  const job = (async () => {
+    const privateKey = await crypto.subtle.importKey("jwk", { ...mine.priv, ext: true }, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]);
+    const publicKey = await crypto.subtle.importKey("jwk", pubKeyJwk(theirPub), { name: "ECDH", namedCurve: "P-256" }, false, []);
+    return crypto.subtle.deriveKey({ name: "ECDH", public: publicKey }, privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  })();
+  linkKeyCache.set(cacheKey, job);
+  job.catch(() => linkKeyCache.delete(cacheKey));
+  return job;
+}
+
+async function sealLinkBox(theirPub, fields, pair) {
+  const key = await linkAesKey(theirPub);
+  const mine = await myCommKeys(false);
+  if (!key || !mine) return null;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plain = new TextEncoder().encode(JSON.stringify(fields));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(pair) }, key, plain);
+  return { v: 1, iv: b64FromBytes(iv), ct: b64FromBytes(ct), from: mine.pub.x.slice(0, 16), to: theirPub.x.slice(0, 16) };
+}
+
+async function openLinkBox(theirPub, box, pair) {
+  if (!box || typeof box !== "object" || typeof box.iv !== "string" || typeof box.ct !== "string") return null;
+  const key = await linkAesKey(theirPub);
+  if (!key) return null;
+  try {
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bytesFromB64(box.iv), additionalData: new TextEncoder().encode(pair) },
+      key,
+      bytesFromB64(box.ct)
+    );
+    const data = JSON.parse(new TextDecoder().decode(plain));
+    return data && typeof data === "object" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function remotePubKey(remoteId) {
+  const pub = communityBoardCache.data?.profiles?.[remoteId]?.pub;
+  return validPubKey(pub) ? pub : null;
+}
+
+// Apre le buste dei link reciproci e le mette in cache per linkIdentityFor.
+async function openLinkBoxes(rows, mine) {
+  const mineKeys = await myCommKeys(false);
+  if (!mineKeys) return;
+  await Promise.all(
+    (rows || []).map(async (row) => {
+      if (!row || (row.left !== mine && row.right !== mine)) return;
+      const remoteSide = row.left === mine ? "right" : "left";
+      const remote = row[remoteSide];
+      const cacheKey = linkBoxCacheKey(row, remoteSide);
+      if (!cacheKey || linkSecretCache.has(cacheKey)) return;
+      const box = row[remoteSide + "Box"];
+      if (box.to && box.to !== mineKeys.pub.x.slice(0, 16)) return;
+      const theirPub = remotePubKey(remote);
+      if (!theirPub) return;
+      const data = await openLinkBox(theirPub, box, row.pair || chatPair(row.left, row.right));
+      if (data) linkSecretCache.set(cacheKey, data);
+    })
+  );
+}
+
+function myLinkSecret() {
+  const sign = profileSignImage();
+  return {
+    level: String(state.profile?.certLevel || "").trim().slice(0, 40),
+    cert: String(state.profile?.certNumber || "").trim().slice(0, 40),
     sign: isSafeImage(sign) ? sign : "",
   };
+}
+
+// Toglie da un link i dati che non devono stare in chiaro; senza seguito reciproco toglie anche le buste.
+function scrubLink(row) {
+  if (!row || typeof row !== "object") return row;
+  const out = { ...row };
+  ["left", "right"].forEach((side) => LINK_SECRET_FIELDS.forEach((f) => delete out[side + f]));
+  if (!(out.leftFollows && out.rightFollows)) {
+    ["left", "right"].forEach((side) => {
+      delete out[side + "Box"];
+      out[side + "Name"] = "";
+      out[side + "First"] = "";
+      out[side + "Last"] = "";
+    });
+  }
+  return out;
+}
+
+function scrubProfileRow(row) {
+  if (!row || typeof row !== "object") return row;
+  const out = { ...row };
+  delete out.cert;
+  delete out.level;
+  delete out.sign;
+  return out;
 }
 
 async function profileOwnerKey() {
@@ -2655,6 +2826,7 @@ async function connectSeaPerson(cardHit, chat) {
       return;
     }
     const mutual = !res.error && (Boolean(res.followIn) || alreadyIn);
+    if (res.link) await openLinkBoxes([res.link], await profileOwnerKey()).catch(() => {});
     const shared = sharedProfileIdentity(res.link, cardHit.owner);
     if (!res.error) {
       rememberMutualProfile(person, { ...cardHit, ...(shared || {}) }, mutual);
@@ -2774,14 +2946,11 @@ async function publishMyProfile() {
   const portrait = await shrinkPortrait(profilePortraitImage(), 96, 3500);
   const keptPortrait = portrait || (isSafeImage(prev.portrait) ? prev.portrait : "");
   if (keptPortrait) body.portrait = keptPortrait;
-  const level = String(state.profile?.certLevel || prev.level || "").trim();
-  const cert = String(state.profile?.certNumber || prev.cert || "").trim();
-  const rawSign = profileSignImage() || (isSafeImage(prev.sign) ? prev.sign : "");
-  let keptSign = rawSign ? await shrinkSign(rawSign) : "";
-  if (!keptSign && rawSign && rawSign.length <= 14000) keptSign = rawSign;
-  if (level) body.level = level.slice(0, 40);
-  if (cert) body.cert = cert.slice(0, 40);
-  if (keptSign) body.sign = keptSign;
+  // Brevetto, livello e firma non vanno mai nel profilo pubblico: solo la chiave pubblica
+  // per lo scambio cifrato con chi si segue a vicenda.
+  const keys = cloudHydrated ? await myCommKeys(true).catch(() => null) : await myCommKeys(false);
+  if (keys) body.pub = { x: keys.pub.x, y: keys.pub.y };
+  else if (validPubKey(prev.pub)) body.pub = { x: prev.pub.x, y: prev.pub.y };
   fitCloudProfile(body);
   try {
     await cloudSet(`p-${owner}`, body);
@@ -3222,9 +3391,20 @@ function blankLinkSide(body, side) {
   body[side + "Name"] = "";
   body[side + "First"] = "";
   body[side + "Last"] = "";
-  body[side + "Level"] = "";
-  body[side + "Cert"] = "";
-  body[side + "Sign"] = "";
+  LINK_SECRET_FIELDS.forEach((f) => delete body[side + f]);
+  delete body[side + "Box"];
+}
+
+// Il mio lato del link: nomi in chiaro (sono già pubblici), brevetto, livello e firma solo cifrati.
+async function fillMyLinkSide(body, side, theirPub) {
+  const me = personNames({ name: state.profile?.name || "" });
+  fillLinkSide(body, side, { name: me.name.slice(0, 80), firstName: me.firstName.slice(0, 40), lastName: me.lastName.slice(0, 40) }, false);
+  LINK_SECRET_FIELDS.forEach((f) => delete body[side + f]);
+  const secret = myLinkSecret();
+  if (secret.sign) secret.sign = (await shrinkSign(secret.sign)) || "";
+  const box = theirPub ? await sealLinkBox(theirPub, secret, body.pair).catch(() => null) : null;
+  if (box) body[side + "Box"] = box;
+  else delete body[side + "Box"];
 }
 
 function profileSideFields(profile) {
@@ -3251,9 +3431,6 @@ function fillLinkSide(body, side, fields, onlyEmpty) {
   put(side + "Name", fields.name);
   put(side + "First", fields.firstName);
   put(side + "Last", fields.lastName);
-  put(side + "Level", fields.level);
-  put(side + "Cert", fields.cert);
-  if (fields.sign && (!onlyEmpty || !isSafeImage(body[side + "Sign"]))) body[side + "Sign"] = fields.sign;
 }
 
 async function setMyFollow(other, on) {
@@ -3261,10 +3438,7 @@ async function setMyFollow(other, on) {
   const remote = String(other?.owner || other?.remoteOwner || "").trim();
   if (!mine || !remote || mine === remote) return { error: "self" };
   const pair = chatPair(mine, remote);
-  const me = personNames({ name: state.profile?.name || "" });
-  const sign = on ? await shrinkSign(profileSignImage()) : "";
-  const myLevel = String(state.profile?.certLevel || "").trim().slice(0, 40);
-  const myCert = String(state.profile?.certNumber || "").trim().slice(0, 40);
+  if (on) await myCommKeys(true).catch(() => null);
   try {
     const body = await enqueueCloud(async () => {
       const links = await loadMergedLinks(true);
@@ -3283,15 +3457,11 @@ async function setMyFollow(other, on) {
         rightFirst: String(current?.rightFirst || ""),
         leftLast: String(current?.leftLast || ""),
         rightLast: String(current?.rightLast || ""),
-        leftLevel: String(current?.leftLevel || ""),
-        rightLevel: String(current?.rightLevel || ""),
-        leftCert: String(current?.leftCert || ""),
-        rightCert: String(current?.rightCert || ""),
-        leftSign: String(current?.leftSign || ""),
-        rightSign: String(current?.rightSign || ""),
         leftFollows: Boolean(current?.leftFollows),
         rightFollows: Boolean(current?.rightFollows),
       };
+      if (current?.leftBox) nextBody.leftBox = current.leftBox;
+      if (current?.rightBox) nextBody.rightBox = current.rightBox;
       const theyFollow = Boolean(local?.followIn) || (mineIsLeft ? Boolean(current?.rightFollows) : Boolean(current?.leftFollows));
       if (theyFollow) {
         if (mineIsLeft) nextBody.rightFollows = true;
@@ -3307,21 +3477,13 @@ async function setMyFollow(other, on) {
         const side = mineIsLeft ? "left" : "right";
         const otherSide = mineIsLeft ? "right" : "left";
         const otherId = mineIsLeft ? right : left;
-        fillLinkSide(nextBody, side, {
-          name: me.name.slice(0, 80),
-          firstName: me.firstName.slice(0, 40),
-          lastName: me.lastName.slice(0, 40),
-          level: myLevel,
-          cert: myCert,
-          sign,
-        }, false);
-        let board = communityBoardCache.data;
-        if (!board) {
-          try { board = await loadCommunityBoard(0); } catch { board = null; }
+        if (!communityBoardCache.data) {
+          try { await loadCommunityBoard(0); } catch { /* senza bacheca niente chiave dell'altro: la busta arriva al prossimo giro */ }
         }
-        const otherFields = profileSideFields(board?.profiles?.[otherId]);
-        if (otherFields?.sign) otherFields.sign = await shrinkSign(otherFields.sign);
-        fillLinkSide(nextBody, otherSide, otherFields, true);
+        await fillMyLinkSide(nextBody, side, remotePubKey(otherId));
+        // Dell'altra persona si copiano solo i nomi, già pubblici nel suo profilo.
+        const otherFields = profileSideFields(communityBoardCache.data?.profiles?.[otherId]);
+        if (otherFields) fillLinkSide(nextBody, otherSide, { name: otherFields.name, firstName: otherFields.firstName, lastName: otherFields.lastName }, true);
       }
       await postLinkBasket({ ...links, [pair]: nextBody });
       return nextBody;
@@ -3331,6 +3493,46 @@ async function setMyFollow(other, on) {
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
   }
+}
+
+// Rifà la mia busta solo se manca, se l'altra persona ha cambiato chiave o se ho cambiato brevetto,
+// livello o firma. Una sola scrittura per giro, per non tempestare Pantry.
+let linkBoxRefreshAt = 0;
+async function refreshMyLinkBoxes(links, mine) {
+  if (Date.now() - linkBoxRefreshAt < 60000) return;
+  const keys = await myCommKeys(false);
+  if (!keys) return;
+  const secret = myLinkSecret();
+  const stale = [];
+  for (const row of links || []) {
+    if (!row || !(row.leftFollows && row.rightFollows)) continue;
+    if (row.left !== mine && row.right !== mine) continue;
+    const side = row.left === mine ? "left" : "right";
+    const theirPub = remotePubKey(side === "left" ? row.right : row.left);
+    if (!theirPub) continue;
+    const box = row[side + "Box"];
+    if (!box || box.to !== theirPub.x.slice(0, 16) || box.from !== keys.pub.x.slice(0, 16)) {
+      stale.push(row.pair);
+      continue;
+    }
+    const sent = await openLinkBox(theirPub, box, row.pair);
+    if (!sent || sent.level !== secret.level || sent.cert !== secret.cert || Boolean(sent.sign) !== Boolean(secret.sign)) stale.push(row.pair);
+  }
+  if (!stale.length) return;
+  linkBoxRefreshAt = Date.now();
+  await enqueueCloud(async () => {
+    const fresh = await loadMergedLinks(true);
+    for (const pair of stale) {
+      const row = fresh[pair];
+      if (!row || !(row.leftFollows && row.rightFollows)) continue;
+      const side = row.left === mine ? "left" : row.right === mine ? "right" : "";
+      if (!side) continue;
+      const next = { ...row };
+      await fillMyLinkSide(next, side, remotePubKey(side === "left" ? row.right : row.left));
+      fresh[pair] = next;
+    }
+    await postLinkBasket(fresh);
+  });
 }
 
 async function syncIncomingLinks() {
@@ -3345,6 +3547,8 @@ async function syncIncomingLinks() {
   const profiles = await loadOnlineProfiles();
   const cards = profiles.error ? [] : profiles.list;
   const cardByOwner = new Map(cards.filter((c) => c.owner).map((c) => [c.owner, c]));
+  await openLinkBoxes(links, mine).catch(() => {});
+  refreshMyLinkBoxes(links, mine).catch(() => {});
   links.forEach((row) => {
     if (row.left !== mine && row.right !== mine) return;
     const remote = row.left === mine ? row.right : row.left;
