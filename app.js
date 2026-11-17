@@ -887,18 +887,51 @@ async function vaultPut(data) {
       tx.objectStore("kv").put(data, "state");
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
     db.close();
+    return true;
   } catch {
-    /* IndexedDB non disponibile: resta localStorage */
+    /* IndexedDB non disponibile o pieno: resta localStorage */
+    return false;
   }
+}
+
+/* ---------- Esito del salvataggio sul telefono ----------
+   La copia completa sta in IndexedDB; localStorage ne tiene una completa o, se è pieno, una ridotta
+   (senza foto grandi e log del computer). Se anche IndexedDB fallisce, l'utente deve saperlo:
+   prima tutto falliva in silenzio (es. navigazione privata, memoria piena). */
+let localSaveProblem = "";
+let persistSeq = 0;
+
+function localSaveBanner() {
+  const box = document.createElement("div");
+  box.className = "backup-banner local-save-banner";
+  box.setAttribute("role", "alert");
+  const text = document.createElement("p");
+  text.textContent = localSaveProblem === "slim"
+    ? "Memoria del telefono quasi piena: foto e dati del computer non sono stati salvati su questo telefono. Libera spazio o salva su Google Drive."
+    : "Non riesco a salvare il diario su questo telefono (memoria piena o navigazione privata). Le ultime modifiche potrebbero andare perse: salvale su Google Drive.";
+  box.append(text);
+  return box;
+}
+
+function refreshLocalSaveBanner() {
+  const app = document.getElementById("app");
+  if (!app) return;
+  const current = app.querySelector(":scope > .local-save-banner");
+  if (localSaveProblem && !current) app.prepend(localSaveBanner());
+  else if (!localSaveProblem && current) current.remove();
+  else if (localSaveProblem && current) current.replaceWith(localSaveBanner());
 }
 
 function persistLocal(data) {
   const json = JSON.stringify(data);
+  let local = "full";
   try {
     localStorage.setItem(KEY, json);
   } catch {
+    local = "slim";
     try {
       const slim = {
         profile: data.profile,
@@ -918,10 +951,18 @@ function persistLocal(data) {
       };
       localStorage.setItem(KEY, JSON.stringify(slim));
     } catch {
-      /* la copia completa resta in IndexedDB e su Drive */
+      local = "none";
     }
   }
-  vaultPut(data);
+  const seq = ++persistSeq;
+  vaultPut(data).then((vaultOk) => {
+    if (seq !== persistSeq) return; // conta solo l'ultimo salvataggio
+    const next = vaultOk || local === "full" ? "" : local;
+    if (next !== localSaveProblem) {
+      localSaveProblem = next;
+      refreshLocalSaveBanner();
+    }
+  });
 }
 
 let cloudHydrated = false;
@@ -5031,6 +5072,7 @@ function renderScreen() {
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
   refreshBackupBanner();
+  refreshLocalSaveBanner();
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
   if (view.name === "log") {
