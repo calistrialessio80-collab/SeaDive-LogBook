@@ -1,3 +1,14 @@
+// Accetta solo immagini base64 di tipo noto: blocca valori come `data:image/png" onerror="..."`.
+const SAFE_IMAGE_RE = /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+function isSafeImage(value) {
+  return typeof value === "string" && SAFE_IMAGE_RE.test(value);
+}
+
+function safeImageSrc(value) {
+  return isSafeImage(value) ? value : "";
+}
+
 function uid() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   const bytes = new Uint8Array(16);
@@ -298,14 +309,31 @@ function cleanPerson(p) {
     followIn: Boolean(p.followIn),
     followRev: Number(p.followRev) || 0,
     remoteOwner: String(p.remoteOwner || "").trim(),
-    sign: typeof p.sign === "string" && p.sign.startsWith("data:image") ? p.sign : "",
-    portrait: typeof p.portrait === "string" && p.portrait.startsWith("data:image/") ? p.portrait : "",
+    sign: isSafeImage(p.sign) ? p.sign : "",
+    portrait: isSafeImage(p.portrait) ? p.portrait : "",
   };
+}
+
+const DIVE_IMAGE_KEYS = ["photo", "buddySign", "guideSign", "centerSign"];
+
+// Svuota le immagini non valide che arrivano da backup, Drive o vecchie versioni.
+function cleanDiveImages(dive) {
+  if (!dive || typeof dive !== "object") return dive;
+  let copy = null;
+  DIVE_IMAGE_KEYS.forEach((k) => {
+    if (dive[k] && !isSafeImage(dive[k])) {
+      copy = copy || { ...dive };
+      copy[k] = "";
+    }
+  });
+  return copy || dive;
 }
 
 function normalizeState(data) {
   const profile = { ...emptyProfile(), ...(data?.profile || {}) };
   if (!Array.isArray(profile.certs)) profile.certs = [];
+  profile.sign = safeImageSrc(profile.sign);
+  profile.portrait = safeImageSrc(profile.portrait);
   const deletedDiveIds = Array.isArray(data?.deletedDiveIds)
     ? data.deletedDiveIds.map(String).filter(Boolean)
     : [];
@@ -322,7 +350,7 @@ function normalizeState(data) {
   });
   return {
     profile,
-    dives: Array.isArray(data?.dives) ? data.dives : [],
+    dives: Array.isArray(data?.dives) ? data.dives.map(cleanDiveImages) : [],
     deletedDiveIds,
     deletedPeople,
     peopleClock: Number(data?.peopleClock) || 0,
@@ -490,7 +518,7 @@ function diveContactPresent(dive, role) {
   return Boolean(
     String(dive[spec.name] || "").trim() ||
       String(dive[spec.extra] || "").trim() ||
-      (typeof sign === "string" && sign.startsWith("data:image"))
+      (isSafeImage(sign))
   );
 }
 
@@ -1081,8 +1109,8 @@ function upsertPerson(partial, opts) {
     if (partial.following === true) found.following = true;
     if (partial.following === false) found.following = false;
   }
-  if (typeof partial.sign === "string") found.sign = partial.sign.startsWith("data:image") ? partial.sign : "";
-  if (typeof partial.portrait === "string") found.portrait = partial.portrait.startsWith("data:image/") ? partial.portrait : "";
+  if (typeof partial.sign === "string") found.sign = safeImageSrc(partial.sign);
+  if (typeof partial.portrait === "string") found.portrait = safeImageSrc(partial.portrait);
   if (twin) {
     if (!found.cert && twin.cert) found.cert = twin.cert;
     if (!found.level && twin.level) found.level = twin.level;
@@ -1108,11 +1136,11 @@ function linkPeopleOnDive(dive) {
   dive.buddyId = buddy?.id || "";
   dive.guideId = guide?.id || "";
   dive.centerId = center?.id || "";
-  if (buddy && diveContactReady(buddy) && !(typeof dive.buddySign === "string" && dive.buddySign.startsWith("data:image"))) {
+  if (buddy && diveContactReady(buddy) && !isSafeImage(dive.buddySign)) {
     const sign = personKnownSign(buddy);
     if (sign) dive.buddySign = sign;
   }
-  if (guide && diveContactReady(guide) && !(typeof dive.guideSign === "string" && dive.guideSign.startsWith("data:image"))) {
+  if (guide && diveContactReady(guide) && !isSafeImage(dive.guideSign)) {
     const sign = personKnownSign(guide);
     if (sign) dive.guideSign = sign;
   }
@@ -1208,7 +1236,7 @@ function stampPersonSign(person) {
   const idKey = person.role === "guide" ? "guideId" : "buddyId";
   (state.dives || []).forEach((d) => {
     if (d[idKey] !== person.id && !samePersonName(d[nameKey], person.name)) return;
-    if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
+    if (isSafeImage(d[signKey])) return;
     d[signKey] = sign;
   });
 }
@@ -1225,7 +1253,7 @@ function applyPersonOntoDives(before, person) {
         d.buddyLevel = person.level || "";
         d.buddyCert = person.cert || "";
         const sign = personKnownSign(person);
-        if (sign && !(typeof d.buddySign === "string" && d.buddySign.startsWith("data:image"))) d.buddySign = sign;
+        if (sign && !isSafeImage(d.buddySign)) d.buddySign = sign;
       }
     }
     if (person.role === "guide" && (d.guideId === before.id || personKey("guide", d.guideName) === oldKey)) {
@@ -1235,7 +1263,7 @@ function applyPersonOntoDives(before, person) {
         d.guideLevel = person.level || "";
         d.guideCert = person.cert || "";
         const sign = personKnownSign(person);
-        if (sign && !(typeof d.guideSign === "string" && d.guideSign.startsWith("data:image"))) d.guideSign = sign;
+        if (sign && !isSafeImage(d.guideSign)) d.guideSign = sign;
       }
     }
     if (person.role === "center" && (d.centerId === before.id || personKey("center", d.centerName) === oldKey)) {
@@ -1260,7 +1288,7 @@ function sharedDiveCopy(d) {
   const copy = { ...d };
   ["id", "number", "photo", "buddyId", "guideId", "centerId", "signSkipped"].forEach((k) => delete copy[k]);
   ["buddySign", "guideSign", "centerSign"].forEach((k) => {
-    if (typeof copy[k] !== "string" || !copy[k].startsWith("data:image")) delete copy[k];
+    if (!isSafeImage(copy[k])) delete copy[k];
   });
   if (copy.sigMeta && typeof copy.sigMeta === "object") {
     copy.sigMeta = {
@@ -1280,7 +1308,7 @@ function sharedDiveCopy(d) {
 function keepSharedSigns(dive) {
   const next = { ...dive };
   ["buddySign", "guideSign", "centerSign"].forEach((k) => {
-    next[k] = typeof next[k] === "string" && next[k].startsWith("data:image") ? next[k] : "";
+    next[k] = isSafeImage(next[k]) ? next[k] : "";
   });
   const meta = next.sigMeta && typeof next.sigMeta === "object" ? next.sigMeta : {};
   next.sigMeta = {
@@ -1707,7 +1735,7 @@ async function shareProfileContact(profile, sign) {
   if (!names.firstName || !names.lastName) return { error: "name" };
   const cert = String(profile?.certNumber || "").trim();
   if (!cert) return { error: "cert" };
-  const image = typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+  const image = isSafeImage(sign) ? sign : "";
   if (!image) return { error: "sign" };
   const shrunk = await shrinkSign(image);
   const body = {
@@ -1789,9 +1817,7 @@ function splitContactName(full) {
 
 function contactImageSign(value) {
   const sign = String(value || "").trim();
-  if (/^data:image\/(png|jpe?g)\b/i.test(sign)) return sign;
-  if (sign.startsWith("data:image/")) return sign;
-  return "";
+  return safeImageSrc(sign);
 }
 
 function isLogbookExport(data) {
@@ -2195,7 +2221,7 @@ function legacyIdentity(row) {
     lastName: row.lastName,
     name: row.name || "",
   });
-  const sign = typeof row.sign === "string" && row.sign.startsWith("data:image") ? row.sign : "";
+  const sign = isSafeImage(row.sign) ? row.sign : "";
   if (!names.firstName && !names.lastName && !row.cert && !sign) return null;
   return {
     firstName: names.firstName,
@@ -2209,8 +2235,8 @@ function legacyIdentity(row) {
 function sharedProfileIdentity(row, remoteId) {
   const fromLink = linkIdentityFor(row, remoteId) || { firstName: "", lastName: "", level: "", cert: "", sign: "" };
   const legacy = legacyIdentity(communityBoardCache.data?.profiles?.[remoteId]) || {};
-  const linkSign = typeof fromLink.sign === "string" && fromLink.sign.startsWith("data:image") ? fromLink.sign : "";
-  const legacySign = typeof legacy.sign === "string" && legacy.sign.startsWith("data:image") ? legacy.sign : "";
+  const linkSign = isSafeImage(fromLink.sign) ? fromLink.sign : "";
+  const legacySign = isSafeImage(legacy.sign) ? legacy.sign : "";
   return {
     firstName: fromLink.firstName || legacy.firstName || "",
     lastName: fromLink.lastName || legacy.lastName || "",
@@ -2234,7 +2260,7 @@ function linkIdentityFor(row, remoteId) {
     lastName: names.lastName || "",
     level: String(row[side + "Level"] || "").trim(),
     cert: String(row[side + "Cert"] || "").trim(),
-    sign: typeof sign === "string" && sign.startsWith("data:image") ? sign : "",
+    sign: isSafeImage(sign) ? sign : "",
   };
 }
 
@@ -2253,7 +2279,7 @@ async function profileOwnerKey() {
 
 function trimSign(dataUrl) {
   return new Promise((resolve) => {
-    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve(dataUrl || "");
+    if (!isSafeImage(dataUrl)) return resolve("");
     const img = new Image();
     img.onload = () => {
       const w = img.naturalWidth || img.width;
@@ -2314,7 +2340,7 @@ function trimSign(dataUrl) {
 
 function shrinkSign(dataUrl) {
   return new Promise((resolve) => {
-    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image")) return resolve("");
+    if (!isSafeImage(dataUrl)) return resolve("");
     const img = new Image();
     img.onload = () => {
       const maxW = 420;
@@ -2333,7 +2359,7 @@ function shrinkSign(dataUrl) {
         quality -= 0.08;
         out = canvas.toDataURL("image/jpeg", quality);
       }
-      resolve(out.startsWith("data:image") && out.length <= 12000 ? out : "");
+      resolve(isSafeImage(out) && out.length <= 12000 ? out : "");
     };
     img.onerror = () => resolve("");
     img.src = dataUrl;
@@ -2342,7 +2368,7 @@ function shrinkSign(dataUrl) {
 
 function portraitImage(value) {
   const src = String(value || "").trim();
-  return src.startsWith("data:image/") ? src : "";
+  return safeImageSrc(src);
 }
 
 function profilePortraitImage() {
@@ -2385,7 +2411,7 @@ function shrinkPortrait(dataUrl, maxSide = 240, limit = 14000) {
         quality -= 0.08;
         out = canvas.toDataURL("image/jpeg", quality);
       }
-      resolve(out.startsWith("data:image/") && out.length <= limit + 800 ? out : "");
+      resolve(isSafeImage(out) && out.length <= limit + 800 ? out : "");
     };
     img.onerror = () => resolve("");
     img.src = dataUrl;
@@ -2408,7 +2434,7 @@ function shrinkPhoto(dataUrl, maxSide = 720, limit = 90000) {
         quality -= 0.08;
         out = canvas.toDataURL("image/jpeg", quality);
       }
-      resolve(out.startsWith("data:image/") ? out : "");
+      resolve(safeImageSrc(out));
     };
     img.onerror = () => resolve("");
     img.src = dataUrl;
@@ -2597,7 +2623,7 @@ function rememberMutualProfile(person, cardHit, mutual) {
   const board = boardDiverRecord(owner);
   const level = cardHit.level || board?.level || "";
   const cert = String(cardHit.cert || board?.cert || "").trim();
-  const sign = (typeof cardHit.sign === "string" && cardHit.sign.startsWith("data:image") ? cardHit.sign : "") || board?.sign || "";
+  const sign = (isSafeImage(cardHit.sign) ? cardHit.sign : "") || safeImageSrc(board?.sign);
   if (level) payload.level = level;
   if (cert) payload.cert = cert;
   if (sign) payload.sign = sign;
@@ -2746,11 +2772,11 @@ async function publishMyProfile() {
     if (key) body.key = key;
   } else if (prev.key) body.key = String(prev.key);
   const portrait = await shrinkPortrait(profilePortraitImage(), 96, 3500);
-  const keptPortrait = portrait || (typeof prev.portrait === "string" && prev.portrait.startsWith("data:image/") ? prev.portrait : "");
+  const keptPortrait = portrait || (isSafeImage(prev.portrait) ? prev.portrait : "");
   if (keptPortrait) body.portrait = keptPortrait;
   const level = String(state.profile?.certLevel || prev.level || "").trim();
   const cert = String(state.profile?.certNumber || prev.cert || "").trim();
-  const rawSign = profileSignImage() || (typeof prev.sign === "string" && prev.sign.startsWith("data:image") ? prev.sign : "");
+  const rawSign = profileSignImage() || (isSafeImage(prev.sign) ? prev.sign : "");
   let keptSign = rawSign ? await shrinkSign(rawSign) : "";
   if (!keptSign && rawSign && rawSign.length <= 14000) keptSign = rawSign;
   if (level) body.level = level.slice(0, 40);
@@ -3204,7 +3230,7 @@ function blankLinkSide(body, side) {
 function profileSideFields(profile) {
   const names = personNames(profile || {});
   if (!names.firstName || names.firstName === "Sub") return null;
-  const sign = typeof profile?.sign === "string" && profile.sign.startsWith("data:image") ? profile.sign : "";
+  const sign = safeImageSrc(profile?.sign);
   return {
     name: names.name.slice(0, 80),
     firstName: names.firstName.slice(0, 40),
@@ -3227,7 +3253,7 @@ function fillLinkSide(body, side, fields, onlyEmpty) {
   put(side + "Last", fields.lastName);
   put(side + "Level", fields.level);
   put(side + "Cert", fields.cert);
-  if (fields.sign && (!onlyEmpty || !String(body[side + "Sign"] || "").startsWith("data:image"))) body[side + "Sign"] = fields.sign;
+  if (fields.sign && (!onlyEmpty || !isSafeImage(body[side + "Sign"]))) body[side + "Sign"] = fields.sign;
 }
 
 async function setMyFollow(other, on) {
@@ -4169,7 +4195,8 @@ function escapeHtml(v) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function geoCoords(lat, lng) {
@@ -6087,7 +6114,7 @@ function diveCard(d) {
         <canvas class="spark"></canvas>
         <strong>${fmtDepth(d.maxDepth)} m</strong>
       </div>
-      <div class="log-map">${map || (d.photo ? `<img alt="" src="${d.photo}" />` : `<div class="map-fallback">Mappa</div>`)}</div>
+      <div class="log-map">${map || (isSafeImage(d.photo) ? `<img alt="" src="${escapeHtml(d.photo)}" />` : `<div class="map-fallback">Mappa</div>`)}</div>
       <div class="log-thermo">
         <span>Temperatura / profondità</span>
         <canvas class="thermo"></canvas>
@@ -9166,7 +9193,7 @@ function peoplePicksHtml() {
 }
 
 function diveInsertSign(person) {
-  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
+  if (isSafeImage(person?.sign)) return person.sign;
   if (samePersonName(person?.name, state.profile?.name)) return profileSignImage();
   return "";
 }
@@ -9543,7 +9570,7 @@ function renderProfile() {
       ...state.profile,
       ...Object.fromEntries(fd.entries()),
       certs,
-      sign: typeof ownerSign === "string" && ownerSign.startsWith("data:image") ? ownerSign : "",
+      sign: isSafeImage(ownerSign) ? ownerSign : "",
       portrait,
     };
     save(state);
@@ -9659,7 +9686,7 @@ function renderDetail() {
       <div class="num">${escapeHtml(d.number)}</div>
     </div>
     ${computerFillHtml()}
-    ${d.photo ? `<img class="cover" alt="" src="${d.photo}" />` : ""}
+    ${isSafeImage(d.photo) ? `<img class="cover" alt="" src="${escapeHtml(d.photo)}" />` : ""}
     ${satMapHtml(d, "sat-place")}
     <div class="kv">
       <div><b>Coordinate</b>${escapeHtml(geoText(d) || "—")}</div>
@@ -9897,7 +9924,7 @@ function renderEdit() {
     <label class="field full" style="margin-top:12px">Foto dell'immersione
       <input name="photoFile" type="file" accept="image/*" />
     </label>
-    ${d.photo ? `<img class="cover" alt="" src="${d.photo}" data-preview />` : `<img class="cover" alt="" hidden data-preview />`}
+    ${isSafeImage(d.photo) ? `<img class="cover" alt="" src="${escapeHtml(d.photo)}" data-preview />` : `<img class="cover" alt="" hidden data-preview />`}
     <label class="field full" style="margin-top:12px">Note e sensazioni
       <textarea name="notes">${escapeHtml(d.notes)}</textarea>
     </label>
@@ -10426,11 +10453,11 @@ function samePersonName(a, b) {
 
 function profileSignImage() {
   const sign = state.profile?.sign;
-  return typeof sign === "string" && sign.startsWith("data:image") ? sign : "";
+  return isSafeImage(sign) ? sign : "";
 }
 
 function personKnownSign(person) {
-  if (typeof person?.sign === "string" && person.sign.startsWith("data:image")) return person.sign;
+  if (isSafeImage(person?.sign)) return person.sign;
   if (person && person.role !== "center" && samePersonName(person.name, state.profile?.name)) return profileSignImage();
   return "";
 }
@@ -10439,7 +10466,7 @@ function showAppliedSign(padRoot, sign) {
   const img = padRoot?.querySelector("[data-appliedsign]");
   if (!img) return;
   const ghost = padRoot.querySelector(".sign-ghost");
-  if (typeof sign === "string" && sign.startsWith("data:image")) {
+  if (isSafeImage(sign)) {
     img.src = sign;
     img.hidden = false;
     if (ghost) ghost.hidden = true;
@@ -10450,7 +10477,7 @@ function showAppliedSign(padRoot, sign) {
 }
 
 function signPreviewHtml(sign) {
-  return typeof sign === "string" && sign.startsWith("data:image")
+  return isSafeImage(sign)
     ? `<img class="sign-preview" alt="Firma salvata" src="${escapeHtml(sign)}" />`
     : "";
 }
@@ -10504,7 +10531,7 @@ function fillMissingSigns(d) {
     ["guide", "guideName", "guideSign"],
   ].forEach(([role, nameKey, signKey]) => {
     if (d.signSkipped?.[role]) return;
-    if (typeof d[signKey] === "string" && d[signKey].startsWith("data:image")) return;
+    if (isSafeImage(d[signKey])) return;
     const sign = signForInsertedPerson(role, d[nameKey]);
     if (!sign) return;
     d[signKey] = sign;
@@ -10585,7 +10612,7 @@ function signEvidence(who, title, name, cert, image, meta, locked = false) {
         </div>
         ${actions}
       </div>
-      ${signed ? `<img alt="firma" src="${image}" />` : `<p class="sign-empty">Non firmata</p>`}
+      ${signed && isSafeImage(image) ? `<img alt="firma" src="${escapeHtml(image)}" />` : `<p class="sign-empty">Non firmata</p>`}
       ${
         meta?.hash
           ? `<p class="sign-legal-line">${escapeHtml(meta.kind || "Firma elettronica")} · ${escapeHtml(meta.law || "")}<br>Impronta ${escapeHtml(meta.hash.slice(0, 20))}… · ${escapeHtml(meta.tz || "")}</p>`
