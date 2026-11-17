@@ -2884,3 +2884,16 @@ body.page-home .app-rate p {
 .err-toast small { font-size: 12px; opacity: 0.75; overflow-wrap: anywhere; }
 .err-toast-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .boot .btn { margin-top: 12px; }
+
+/* Nuova versione disponibile: l'utente sceglie quando aggiornare */
+.update-banner {
+  position: fixed; z-index: 9998; left: 12px; right: 12px;
+  top: calc(10px + var(--safe-top));
+  max-width: 520px; margin: 0 auto; padding: 12px 14px;
+  background: #eef5ff; color: #12325c;
+  border: 1px solid #b8d4ff; border-left: 5px solid var(--teal); border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(28, 36, 48, 0.16);
+  display: grid; gap: 8px;
+}
+.update-banner p { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; }
+.update-banner-actions { display: flex; gap: 8px; justify-content: flex-end; }

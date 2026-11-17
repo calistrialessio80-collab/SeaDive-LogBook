@@ -4206,14 +4206,57 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
           .map((reg) => reg.unregister())
       );
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
-      await reg.update();
+      // La pagina si ricarica solo se l'utente ha toccato "Aggiorna": mai a metà di una scheda.
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (sessionStorage.getItem("seadive-sw-225")) return;
-        sessionStorage.setItem("seadive-sw-225", "1");
-        location.replace("./?v=225&t=" + Date.now());
+        if (!swUpdateRequested) return;
+        swUpdateRequested = false;
+        location.reload();
       });
+      const watchWorker = (worker) => {
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) showUpdateBanner(reg);
+        });
+      };
+      if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+      watchWorker(reg.installing);
+      reg.addEventListener("updatefound", () => watchWorker(reg.installing));
+      await reg.update();
     } catch (_) {}
   })();
+}
+
+let swUpdateRequested = false;
+
+function showUpdateBanner(reg) {
+  if (!reg?.waiting || document.querySelector(".update-banner")) return;
+  const box = document.createElement("div");
+  box.className = "update-banner";
+  box.setAttribute("role", "status");
+  const text = document.createElement("p");
+  text.textContent = "È pronta una nuova versione di SeaDive. Salva quello che stai scrivendo, poi aggiorna.";
+  const later = document.createElement("button");
+  later.type = "button";
+  later.className = "btn ghost";
+  later.textContent = "Dopo";
+  later.onclick = () => box.remove();
+  const now = document.createElement("button");
+  now.type = "button";
+  now.className = "btn primary";
+  now.textContent = "Aggiorna";
+  now.onclick = () => {
+    swUpdateRequested = true;
+    now.disabled = true;
+    now.textContent = "Aggiorno…";
+    reg.waiting?.postMessage({ type: "seadive-skip-waiting" });
+    // Se il nuovo service worker non risponde, una ricarica normale basta: alla riapertura parte comunque.
+    setTimeout(() => location.reload(), 4000);
+  };
+  const actions = document.createElement("div");
+  actions.className = "update-banner-actions";
+  actions.append(later, now);
+  box.append(text, actions);
+  document.body.append(box);
 }
 
 const APP_VERSION = "225";
