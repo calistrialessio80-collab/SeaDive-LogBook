@@ -973,11 +973,44 @@ function stampChanges(data) {
   }
 }
 
+/* ---------- Archivio persistente ----------
+   Senza questa richiesta il browser può cancellare localStorage e IndexedDB quando serve spazio
+   (Safari su iPhone anche dopo 7 giorni senza visite). Si chiede una volta, al primo salvataggio
+   dell'utente: è un suo gesto, così Firefox può mostrare la sua domanda senza sorprese all'avvio. */
+let persistAsked = false;
+
+async function requestPersistentStorage() {
+  if (persistAsked || !loadSession() || !navigator.storage?.persist) return null;
+  persistAsked = true;
+  try {
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
+function isIosBrowser() {
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+function runningAsInstalledApp() {
+  return Boolean(navigator.standalone) || Boolean(window.matchMedia?.("(display-mode: standalone)").matches);
+}
+
+// Su iPhone, finché SeaDive non è sulla schermata Home, Safari può cancellare i dati dopo 7 giorni senza visite.
+function homeScreenHint() {
+  if (!isIosBrowser() || runningAsInstalledApp()) return "";
+  return "Su iPhone aggiungi SeaDive alla schermata Home (Condividi → Aggiungi alla schermata Home). Così Safari non cancella il diario dal telefono se non apri l’app per qualche giorno.";
+}
+
 function save(next) {
   stampChanges(next);
   persistLocal(next);
   scheduleDriveBackup();
   queueProfilePublish();
+  if (!persistAsked && !renderDepth) requestPersistentStorage();
 }
 
 // Backup su Drive raggruppati: uno 5 secondi dopo l'ultima modifica e al massimo uno al minuto.
@@ -10002,7 +10035,8 @@ function renderProfile() {
     <section class="profile-block vault-box">
       <h3>Copia di sicurezza</h3>
       <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
-      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. Esci non cancella le immersioni. La copia su Drive si aggiorna da sola a ogni immersione e ogni 15 giorni, senza finestre né richieste.</p>
+      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. La copia su Drive si aggiorna da sola dopo ogni modifica; se Google chiede di nuovo l’accesso compare un avviso. Esci salva su Drive e poi toglie il diario da questo telefono.</p>
+      ${homeScreenHint() ? `<p class="hint home-screen-hint">${escapeHtml(homeScreenHint())}</p>` : ""}
       <div class="vault-actions">
         <button class="btn primary" type="button" data-syncdrive>Sincronizza con Google</button>
         <button class="btn ghost" type="button" data-sharebak>Copia sul telefono</button>
