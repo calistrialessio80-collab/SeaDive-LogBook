@@ -4449,7 +4449,7 @@ function showUpdateBanner(reg) {
   document.body.append(box);
 }
 
-const APP_VERSION = "225";
+const APP_VERSION = "226";
 const COFFEE_URL = "https://buymeacoffee.com/seadive";
 
 function pullFreshApp() {
@@ -5216,7 +5216,7 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione 225</p>
+        <p class="hint">Versione ${APP_VERSION}</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">

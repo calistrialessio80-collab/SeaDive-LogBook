@@ -2,12 +2,12 @@
   "name": "SeaDive LogBook",
   "short_name": "SeaDive",
   "description": "Diario immersioni digitale dal tuo logbook cartaceo",
-  "start_url": "./?v=225",
+  "start_url": "./?v=226",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#031820",
-  "theme_color": "#031820",
+  "theme_color": "#f3f5f8",
   "lang": "it",
   "icons": [
     {
@@ -20,7 +20,13 @@
       "src": "./icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "./apple-touch-icon.png",
