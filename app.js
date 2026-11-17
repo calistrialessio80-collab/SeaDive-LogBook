@@ -334,9 +334,8 @@ function normalizeState(data) {
   if (!Array.isArray(profile.certs)) profile.certs = [];
   profile.sign = safeImageSrc(profile.sign);
   profile.portrait = safeImageSrc(profile.portrait);
-  const deletedDiveIds = Array.isArray(data?.deletedDiveIds)
-    ? data.deletedDiveIds.map(String).filter(Boolean)
-    : [];
+  const tombs = readDiveTombs(data);
+  const deletedDiveIds = tombs.ids;
   const deletedPeople = cleanPersonMarks(data?.deletedPeople);
   const people = [];
   const seen = new Set();
@@ -352,6 +351,7 @@ function normalizeState(data) {
     profile,
     dives: Array.isArray(data?.dives) ? data.dives.map(cleanDiveImages) : [],
     deletedDiveIds,
+    deletedDiveAt: tombs.at,
     deletedPeople,
     peopleClock: Number(data?.peopleClock) || 0,
     people,
@@ -410,9 +410,16 @@ function diveTombstoneKeys(d) {
   return keys;
 }
 
+const tombSetCache = new WeakMap();
+
 function diveIsDeleted(d, tombs) {
   if (!d) return false;
-  const set = new Set(tombs || []);
+  // L'elenco può arrivare a migliaia di voci: il Set si costruisce una volta per elenco, non per ogni immersione.
+  let set = tombs ? tombSetCache.get(tombs) : null;
+  if (!set) {
+    set = new Set(tombs || []);
+    if (tombs) tombSetCache.set(tombs, set);
+  }
   if (d.id && set.has(String(d.id))) return true;
   if (d.shareId && set.has("s:" + d.shareId)) return true;
   if (d.manual) return false;
@@ -420,15 +427,59 @@ function diveIsDeleted(d, tombs) {
   return Boolean(key) && set.has("k:" + key);
 }
 
+/* ---------- Immersioni cancellate ("tombstone") ----------
+   Ogni cancellazione si ricorda con la sua data (deletedDiveAt) e si dimentica dopo 3 anni:
+   prima l'elenco si tagliava a 800 voci (circa 266 immersioni, 3 voci ciascuna) e con
+   "Elimina tutte" su un diario grande alcune immersioni potevano tornare da Drive.
+   deletedDiveIds resta come elenco semplice per le versioni vecchie dell'app. */
+const TOMB_MAX_AGE_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+const TOMB_HARD_CAP = 20000;
+
+function readDiveTombs(data) {
+  const ids = Array.isArray(data?.deletedDiveIds) ? data.deletedDiveIds.map(String).filter(Boolean) : [];
+  const src = data?.deletedDiveAt && typeof data.deletedDiveAt === "object" ? data.deletedDiveAt : {};
+  const now = Date.now();
+  const at = {};
+  Object.entries(src).forEach(([k, t]) => {
+    const n = Number(t);
+    if (k && Number.isFinite(n) && n > 0) at[k] = Math.min(n, now);
+  });
+  // Voci vecchie senza data: contano da adesso, così non spariscono subito.
+  ids.forEach((k) => { if (!at[k]) at[k] = now; });
+  return pruneDiveTombs(Object.keys(at), at);
+}
+
+function pruneDiveTombs(keys, at) {
+  const cutoff = Date.now() - TOMB_MAX_AGE_MS;
+  let kept = [...new Set(keys)].filter((k) => Number(at[k]) >= cutoff);
+  if (kept.length > TOMB_HARD_CAP) kept = kept.sort((a, b) => at[b] - at[a]).slice(0, TOMB_HARD_CAP);
+  const out = {};
+  kept.forEach((k) => { out[k] = at[k]; });
+  return { ids: kept, at: out };
+}
+
+function mergeDiveTombs(a, b) {
+  const at = { ...(a?.deletedDiveAt || {}) };
+  Object.entries(b?.deletedDiveAt || {}).forEach(([k, t]) => { at[k] = Math.max(Number(at[k]) || 0, Number(t) || 0); });
+  return pruneDiveTombs(Object.keys(at), at);
+}
+
 function rememberDeletedDive(d) {
-  const next = new Set(state.deletedDiveIds || []);
-  diveTombstoneKeys(d).forEach((k) => next.add(k));
-  state.deletedDiveIds = [...next].slice(-800);
+  const at = { ...(state.deletedDiveAt || {}) };
+  const now = Date.now();
+  (state.deletedDiveIds || []).forEach((k) => { if (!at[k]) at[k] = now; });
+  diveTombstoneKeys(d).forEach((k) => { at[k] = now; });
+  const kept = pruneDiveTombs(Object.keys(at), at);
+  state.deletedDiveIds = kept.ids;
+  state.deletedDiveAt = kept.at;
 }
 
 function forgetDeletedDive(d) {
   const drop = new Set(diveTombstoneKeys(d));
   state.deletedDiveIds = (state.deletedDiveIds || []).filter((k) => !drop.has(k));
+  const at = { ...(state.deletedDiveAt || {}) };
+  drop.forEach((k) => delete at[k]);
+  state.deletedDiveAt = at;
 }
 
 function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel = "Annulla" } = {}) {
@@ -736,7 +787,8 @@ function mergeProfiles(a, b) {
 function mergeVaults(local, cloud) {
   const L = normalizeState(local);
   const C = normalizeState(cloud);
-  const deletedDiveIds = [...new Set([...(L.deletedDiveIds || []), ...(C.deletedDiveIds || [])])].slice(-800);
+  const mergedTombs = mergeDiveTombs(L, C);
+  const deletedDiveIds = mergedTombs.ids;
   const deletedPeople = mergePersonMarks(L.deletedPeople, C.deletedPeople);
   const peopleClock = Math.max(
     Number(L.peopleClock) || 0,
@@ -753,6 +805,7 @@ function mergeVaults(local, cloud) {
     profile: mergeProfiles(L.profile, C.profile),
     dives,
     deletedDiveIds,
+    deletedDiveAt: mergedTombs.at,
     deletedPeople,
     peopleClock,
     people: mergePeople(L.people, C.people, deletedPeople),
@@ -850,6 +903,7 @@ function persistLocal(data) {
       const slim = {
         profile: data.profile,
         deletedDiveIds: data.deletedDiveIds || [],
+        deletedDiveAt: data.deletedDiveAt || {},
         deletedPeople: data.deletedPeople || [],
         peopleClock: Number(data.peopleClock) || 0,
         people: data.people || [],
@@ -1230,6 +1284,7 @@ function backupPayload() {
     profile: state.profile,
     dives: state.dives,
     deletedDiveIds: state.deletedDiveIds || [],
+    deletedDiveAt: state.deletedDiveAt || {},
     deletedPeople: state.deletedPeople || [],
     peopleClock: Number(state.peopleClock) || 0,
     people: state.people || [],
