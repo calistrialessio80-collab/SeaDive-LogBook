@@ -630,8 +630,20 @@ function copyDiveContact(target, source, role) {
   target.sigMeta[spec.meta] = source?.sigMeta?.[spec.meta] || null;
 }
 
+// Quale copia è la più recente: 1 = a, -1 = b, 0 = non si sa (dati vecchi senza date).
+function newerDive(a, b) {
+  const ta = Date.parse(a?.updatedAt || "") || 0;
+  const tb = Date.parse(b?.updatedAt || "") || 0;
+  if (ta === tb) return 0;
+  return ta > tb ? 1 : -1;
+}
+
 function mergeDivePair(a, b) {
-  const primary = diveScore(a) >= diveScore(b) ? a : b;
+  // Vince la copia modificata più di recente: così una foto tolta o un campo svuotato non tornano.
+  // Solo per dati vecchi senza date resta il criterio della copia "più ricca".
+  const order = newerDive(a, b);
+  const primary = order ? (order > 0 ? a : b) : diveScore(a) >= diveScore(b) ? a : b;
+  const other = primary === a ? b : a;
   const base = { ...primary };
   if (primary.signSkipped) base.signSkipped = { ...primary.signSkipped };
   if (primary.contactGen) base.contactGen = { ...primary.contactGen };
@@ -639,9 +651,18 @@ function mergeDivePair(a, b) {
   ["buddy", "guide", "center"].forEach((role) => {
     const ra = contactRank(a, role);
     const rb = contactRank(b, role);
-    if (ra === rb) return;
-    copyDiveContact(base, ra > rb ? a : b, role);
+    if (ra !== rb) {
+      copyDiveContact(base, ra > rb ? a : b, role);
+      return;
+    }
+    // Stesso contatto su tutte e due: una firma presente su una copia sola non si perde mai.
+    const spec = DIVE_CONTACT[role];
+    if (!isSafeImage(base[spec.sign]) && isSafeImage(other[spec.sign])) {
+      base[spec.sign] = other[spec.sign];
+      base.sigMeta = { ...(base.sigMeta || {}), [spec.meta]: other.sigMeta?.[spec.meta] || base.sigMeta?.[spec.meta] || null };
+    }
   });
+  if (order) return base;
   STAGE_SLOTS.forEach((slot) => {
     [slot.n2, slot.o2, slot.he, slot.l].forEach((key) => {
       if (!hasText(base[key])) {
@@ -679,11 +700,25 @@ function mergeDiveLists(a, b, tombs) {
 function mergeProfiles(a, b) {
   const left = a || {};
   const right = b || {};
-  const out = { ...emptyProfile(), ...right, ...left };
+  // Con le date di modifica vince il profilo più recente, anche per i campi svuotati e i brevetti tolti.
+  // Senza date (dati vecchi) resta il comportamento di prima: questo telefono, completato dall'altra copia.
+  const order = newerDive(left, right);
+  const newer = order > 0 ? left : right;
+  const older = order > 0 ? right : left;
+  const out = order ? { ...emptyProfile(), ...older, ...newer } : { ...emptyProfile(), ...right, ...left };
   // Stessa chiave di scambio su tutti i dispositivi: vince la più vecchia, così le buste già inviate restano leggibili.
   const keyL = left.commKey?.priv?.d ? left.commKey : null;
   const keyR = right.commKey?.priv?.d ? right.commKey : null;
   if (keyL || keyR) out.commKey = keyL && keyR ? (String(keyR.at || "") < String(keyL.at || "") ? keyR : keyL) : keyL || keyR;
+  if (order) {
+    Object.keys(emptyProfile()).forEach((k) => {
+      if (k !== "certs" && k in newer) out[k] = newer[k];
+    });
+    out.certs = Array.isArray(newer.certs) ? newer.certs : [];
+    // La firma non si perde: se la copia più recente non ce l'ha, resta quella dell'altra.
+    if (!isSafeImage(out.sign) && isSafeImage(older.sign)) out.sign = older.sign;
+    return out;
+  }
   Object.keys(emptyProfile()).forEach((k) => {
     if (k === "certs") return;
     if (out[k] === "" || out[k] == null) out[k] = left[k] || right[k] || "";
@@ -842,7 +877,104 @@ let syncLock = false;
 let pushAgain = false;
 const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
 
+/* ---------- Date di modifica ----------
+   save() confronta ogni immersione (e il profilo) con l'ultima versione salvata e, se è cambiata,
+   aggiorna updatedAt. Così il merge con Drive o con un altro telefono sa quale copia è la più recente,
+   senza dipendere da ogni singolo modulo di modifica. */
+const diveStamps = new Map();
+let profileStamp = "";
+let stampsReady = false;
+let renderDepth = 0;
+
+function fastHash(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36) + ":" + text.length;
+}
+
+function imageMark(v) {
+  return typeof v === "string" && v ? `${v.length}:${v.slice(-48)}` : "";
+}
+
+// I valori vuoti non contano: l'app aggiunge da sola campi calcolati vuoti (es. tssLabel) e non sono modifiche.
+// Svuotare un campo che aveva un valore invece cambia l'impronta, perché il valore sparisce.
+function skipEmpty(_key, value) {
+  if (value === "" || value === null || value === false) return undefined;
+  if (Array.isArray(value) && !value.length) return undefined;
+  return value;
+}
+
+function bulkMark(v) {
+  if (Array.isArray(v)) return v.length ? `${v.length}:${JSON.stringify(v[v.length - 1])}` : "";
+  if (v && typeof v === "object") return Object.keys(v).map((k) => `${k}:${Array.isArray(v[k]) ? v[k].length : typeof v[k] === "object" ? "o" : String(v[k]).slice(0, 24)}`).join(",");
+  return "";
+}
+
+function diveFingerprint(d) {
+  // I log grandi del computer entrano solo come "dimensione + ultimo punto", per restare veloci.
+  const { updatedAt, photo, buddySign, guideSign, centerSign, computerLog, profilePoints, ...rest } = d || {};
+  return fastHash(JSON.stringify(rest, skipEmpty)) + "|" + [photo, buddySign, guideSign, centerSign].map(imageMark).join("|") + "|" + bulkMark(computerLog) + "|" + bulkMark(profilePoints);
+}
+
+function diveFingerprintsNow() {
+  const map = new Map();
+  (state?.dives || []).forEach((d) => d?.id && map.set(d.id, diveFingerprint(d)));
+  return map;
+}
+
+// Quello che l'app cambia da sola mentre disegna (profondità media calcolata, circuito predefinito…)
+// diventa il nuovo punto di partenza senza timbro: guardare un'immersione non la rende "più recente".
+// Se c'erano modifiche dell'utente non ancora salvate, si lascia tutto com'è e il prossimo save le timbra.
+function absorbRenderChanges(before) {
+  if (!before) return;
+  (state?.dives || []).forEach((d) => {
+    if (!d?.id) return;
+    const pre = before.get(d.id);
+    if (pre === undefined || diveStamps.get(d.id) !== pre) return;
+    const post = diveFingerprint(d);
+    if (post !== pre) diveStamps.set(d.id, post);
+  });
+}
+
+function profileFingerprint(p) {
+  const { updatedAt, commKey, sign, portrait, ...rest } = p || {};
+  return fastHash(JSON.stringify(rest, skipEmpty)) + "|" + imageMark(sign) + "|" + imageMark(portrait);
+}
+
+// Fotografa lo stato senza timbrare: da chiamare quando lo stato arriva da fuori (avvio, Drive, vault).
+function snapshotStamps(data) {
+  diveStamps.clear();
+  (data?.dives || []).forEach((d) => d?.id && diveStamps.set(d.id, diveFingerprint(d)));
+  profileStamp = profileFingerprint(data?.profile);
+  stampsReady = true;
+}
+
+function stampChanges(data) {
+  if (!stampsReady || !data || renderDepth) return;
+  const now = new Date().toISOString();
+  (data.dives || []).forEach((d) => {
+    if (!d?.id) return;
+    const fp = diveFingerprint(d);
+    const prev = diveStamps.get(d.id);
+    if (prev !== fp) {
+      d.updatedAt = now;
+      diveStamps.set(d.id, diveFingerprint(d));
+    }
+  });
+  if (data.profile) {
+    const fp = profileFingerprint(data.profile);
+    if (fp !== profileStamp) {
+      data.profile.updatedAt = now;
+      profileStamp = fp;
+    }
+  }
+}
+
 function save(next) {
+  stampChanges(next);
   persistLocal(next);
   scheduleDriveBackup();
   queueProfilePublish();
@@ -999,6 +1131,7 @@ async function hydrateFromIdb() {
     return;
   }
   state = mergeVaults(state, stored);
+  snapshotStamps(state);
   persistLocal(state);
   rememberCatalogFromDives();
 }
@@ -1013,6 +1146,7 @@ async function syncWithDrive({ interactive = false } = {}) {
     if (cloud && typeof cloud === "object") {
       applyBackupExtras(cloud);
       state = mergeVaults(state, parseBackup(cloud));
+      snapshotStamps(state);
       persistLocal(state);
       rememberCatalogFromDives();
     }
@@ -4100,6 +4234,7 @@ function pullFreshApp() {
 pullFreshApp();
 
 let state = load();
+snapshotStamps(state);
 rememberCatalogFromDives();
 let view = { name: "home", diveId: null, draft: null, query: "", pending: [], computerHint: "" };
 
@@ -4717,7 +4852,19 @@ async function finishAuth(user) {
   render();
 }
 
+// render() avvolge renderScreen(): i cambiamenti automatici fatti mentre si disegna non timbrano le immersioni.
 function render() {
+  const before = stampsReady && !renderDepth ? diveFingerprintsNow() : null;
+  renderDepth += 1;
+  try {
+    renderScreen();
+  } finally {
+    renderDepth -= 1;
+    absorbRenderChanges(before);
+  }
+}
+
+function renderScreen() {
   stopChatPoll();
   destroyDiveSiteMap();
   destroyGoogleWorldMap();
