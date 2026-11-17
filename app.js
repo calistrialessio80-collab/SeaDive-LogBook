@@ -848,10 +848,29 @@ function save(next) {
   queueProfilePublish();
 }
 
+// Backup su Drive raggruppati: uno 5 secondi dopo l'ultima modifica e al massimo uno al minuto.
+// Il backup in sospeso resta segnato (pendingBackup), così riparte alla prossima apertura.
+const BACKUP_DEBOUNCE_MS = 5000;
+const BACKUP_MIN_GAP_MS = 60 * 1000;
+let lastDrivePushAt = 0;
+
 function scheduleDriveBackup() {
   if (!loadSession()) return;
+  const meta = loadMeta();
+  if (!meta.pendingBackup) {
+    meta.pendingBackup = true;
+    saveMeta(meta);
+  }
   clearTimeout(backupTimer);
-  backupTimer = setTimeout(() => silentDrivePush(), 400);
+  const wait = Math.max(BACKUP_DEBOUNCE_MS, lastDrivePushAt + BACKUP_MIN_GAP_MS - Date.now());
+  backupTimer = setTimeout(flushDriveBackup, wait);
+}
+
+function flushDriveBackup() {
+  clearTimeout(backupTimer);
+  backupTimer = 0;
+  lastDrivePushAt = Date.now();
+  return silentDrivePush();
 }
 
 function dueFifteenDaySync() {
@@ -2083,6 +2102,8 @@ async function cloudSet(key, value) {
       } catch (err) {
         lastErr = err;
         communityBoardCache = { at: 0, data: null, flight: null };
+        // Pausa crescente tra i tentativi: senza, i 3 tentativi partivano in raffica.
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
       }
     }
     throw lastErr;
@@ -2921,7 +2942,8 @@ async function publishMyProfile() {
   const names = personNames({ name: state.profile?.name || "" });
   let prev = {};
   try {
-    const board = await loadCommunityBoard(0);
+    // Basta la copia recente: cloudSet rilegge comunque la bacheca aggiornata prima di scrivere.
+    const board = await loadCommunityBoard();
     const row = board.profiles?.[owner];
     if (row && typeof row === "object") prev = row;
   } catch {
@@ -2954,6 +2976,7 @@ async function publishMyProfile() {
   fitCloudProfile(body);
   try {
     await cloudSet(`p-${owner}`, body);
+    setPublishedMark(await publicProfileFingerprint());
     return { ok: true, name: names.name || owner };
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
@@ -2963,29 +2986,78 @@ async function publishMyProfile() {
 let profileOnlineStatus = "";
 let profilePublishDue = true;
 
-function queueProfilePublish() {
+// Il profilo pubblico (nomi, foto, chiave pubblica) si ripubblica solo se cambia,
+// o una volta al giorno per restare "recente". Prima ogni save() riscriveva tutta la bacheca.
+const PROFILE_PUBLISHED_KEY = "seadive-profile-published";
+const PROFILE_REPUBLISH_MS = 24 * 60 * 60 * 1000;
+const PUBLISH_RETRY_MIN_MS = 30 * 1000;
+const PUBLISH_RETRY_MAX_MS = 15 * 60 * 1000;
+
+async function publicProfileFingerprint() {
+  const owner = await profileOwnerKey();
+  const keys = state.profile?.commKey;
+  const source = JSON.stringify([owner, String(state.profile?.name || "").trim(), profilePortraitImage() || "", keys?.pub?.x || ""]);
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  return b64FromBytes(buf).slice(0, 24);
+}
+
+function loadPublishedMark() {
+  try {
+    return JSON.parse(localStorage.getItem(PROFILE_PUBLISHED_KEY) || "null") || {};
+  } catch {
+    return {};
+  }
+}
+
+function setPublishedMark(fp) {
+  try {
+    localStorage.setItem(PROFILE_PUBLISHED_KEY, JSON.stringify({ fp, at: Date.now() }));
+  } catch {
+    /* senza localStorage si ripubblica al prossimo giro: nessun danno */
+  }
+}
+
+async function profilePublishNeeded() {
+  const mark = loadPublishedMark();
+  if (!mark.fp || Date.now() - Number(mark.at || 0) > PROFILE_REPUBLISH_MS) return true;
+  return mark.fp !== (await publicProfileFingerprint());
+}
+
+function queueProfilePublish(delay = 700) {
   profilePublishDue = true;
   if (queueProfilePublish.timer || queueProfilePublish.busy) return;
-  queueProfilePublish.timer = setTimeout(() => {
+  queueProfilePublish.timer = setTimeout(async () => {
     queueProfilePublish.timer = 0;
     if (!profilePublishDue) return;
     profilePublishDue = false;
     queueProfilePublish.busy = true;
-    publishMyProfile()
-      .then((res) => {
-        const next = res?.ok ? "online" : res?.error || "";
-        const became = next !== profileOnlineStatus;
-        profileOnlineStatus = next;
-        if (became && (view.name === "profile" || (view.name === "people" && !view.personId))) render();
-      })
-      .catch(() => {
-        profilePublishDue = true;
-      })
-      .finally(() => {
-        queueProfilePublish.busy = false;
-        if (profilePublishDue) queueProfilePublish();
-      });
-  }, 700);
+    let retry = 0;
+    try {
+      if (!loadSession()) return;
+      if (!(await profilePublishNeeded())) {
+        if (profileOnlineStatus !== "online" && loadPublishedMark().fp) profileOnlineStatus = "online";
+        return;
+      }
+      const res = await publishMyProfile();
+      const next = res?.ok ? "online" : res?.error || "";
+      const became = next !== profileOnlineStatus;
+      profileOnlineStatus = next;
+      if (became && (view.name === "profile" || (view.name === "people" && !view.personId))) render();
+      if (res?.error === "network") retry = 1;
+      else queueProfilePublish.failures = 0;
+    } catch {
+      retry = 1;
+    } finally {
+      queueProfilePublish.busy = false;
+      if (retry) {
+        // Rete o Pantry in errore: si riprova più tardi, con attese sempre più lunghe.
+        const n = (queueProfilePublish.failures = (queueProfilePublish.failures || 0) + 1);
+        queueProfilePublish(Math.min(PUBLISH_RETRY_MAX_MS, PUBLISH_RETRY_MIN_MS * 2 ** (n - 1)));
+      } else if (profilePublishDue) {
+        queueProfilePublish();
+      }
+    }
+  }, delay);
 }
 
 let chatTimer = 0;
@@ -11168,7 +11240,11 @@ function bindVaultLife() {
   tick();
   setInterval(tick, 60 * 60 * 1000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") {
+      // L'app va in secondo piano: il backup in attesa parte subito, prima che il telefono la sospenda.
+      if (backupTimer) flushDriveBackup();
+      return;
+    }
     tick();
     queueProfilePublish();
   });
