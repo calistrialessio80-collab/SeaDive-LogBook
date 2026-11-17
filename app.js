@@ -904,12 +904,66 @@ async function silentDrivePush() {
   return res;
 }
 
+// Uscita sicura: ultimo backup su Drive, poi revoca del token e diario tolto da questo dispositivo,
+// così chi entra dopo con un altro account non vede (né carica sul suo Drive) le immersioni precedenti.
+// Se il backup non riesce non si esce, per non perdere dati.
+function localAccountKeys() {
+  return [
+    KEY, META_KEY, BRAND_KEY, SESSION_KEY, "seadive-custom-sites", "seadive-community-owner",
+    "seadive-chat-seen-at", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted",
+  ];
+}
+
+async function signOutAndForget() {
+  if (driveBackupDue()) {
+    // Il tocco su "Esci" permette di chiedere a Google un token nuovo, se quello vecchio è scaduto.
+    await window.SeaDiveDrive?.ensureToken?.({ interactive: true, hint: loadSession()?.email || "" }).catch(() => null);
+    let res = await flushDriveBackup();
+    for (let i = 0; i < 3 && res?.reason === "busy"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      res = await flushDriveBackup();
+    }
+    if (!res?.ok || loadMeta().pendingBackup) return { error: "backup" };
+  }
+  clearTimeout(backupTimer);
+  backupTimer = 0;
+  await window.SeaDiveDrive?.signOutGoogle?.();
+  localAccountKeys().forEach((k) => {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* già assente */
+    }
+  });
+  try {
+    sessionStorage.clear();
+  } catch {
+    /* niente da togliere */
+  }
+  await new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase("seadive-vault");
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+  linkSecretCache.clear();
+  linkKeyCache.clear();
+  communityBoardCache = { at: 0, data: null, flight: null };
+  cloudHydrated = false;
+  profileOnlineStatus = "";
+  state = load();
+  return { ok: true };
+}
+
+// true = backup caricato, false = non caricato (resta in sospeso).
 async function maybeBackupDrive() {
-  if (!cloudHydrated || backupBusy) return;
-  if (!window.SeaDiveDrive) return;
+  if (!cloudHydrated || backupBusy) return false;
+  if (!window.SeaDiveDrive) return false;
   const hint = loadSession()?.email || "";
   const token = await window.SeaDiveDrive.ensureToken({ interactive: false, hint });
-  if (!token) return;
+  if (!token) return false;
   backupBusy = true;
   try {
     await window.SeaDiveDrive.uploadDriveBackup(backupPayload());
@@ -919,10 +973,12 @@ async function maybeBackupDrive() {
     meta.diveCount = state.dives.length;
     meta.pendingBackup = false;
     saveMeta(meta);
+    return true;
   } catch {
     const meta = loadMeta();
     meta.pendingBackup = true;
     saveMeta(meta);
+    return false;
   } finally {
     backupBusy = false;
   }
@@ -953,7 +1009,8 @@ async function syncWithDrive({ interactive = false } = {}) {
       rememberCatalogFromDives();
     }
     cloudHydrated = true;
-    if (driveBackupDue()) await maybeBackupDrive();
+    // Se il caricamento fallisce lo si dice: prima veniva segnato come riuscito e il sospeso spariva.
+    if (driveBackupDue() && !(await maybeBackupDrive())) return { ok: false, reason: "upload" };
     return { ok: true, dives: state.dives.length };
   } catch (err) {
     return { ok: false, reason: err.message || String(err) };
@@ -9853,10 +9910,20 @@ function renderProfile() {
     publishMyProfile().catch(() => {});
     render();
   };
-  form.querySelector("[data-out]").onclick = () => {
-    window.SeaDiveDrive?.signOutGoogle?.();
-    localStorage.removeItem(SESSION_KEY);
-    render();
+  form.querySelector("[data-out]").onclick = async (event) => {
+    const btn = event.currentTarget;
+    const note = form.querySelector(".profile-account");
+    btn.disabled = true;
+    btn.textContent = "Salvo su Drive…";
+    const res = await signOutAndForget();
+    if (res.error) {
+      btn.disabled = false;
+      btn.textContent = "Esci";
+      if (note) note.textContent = "Non sono riuscito a salvare il diario su Drive, quindi non esco: i dati restano qui. Controlla la connessione e riprova.";
+      return;
+    }
+    // Ricarica pulita: niente resta in memoria dell'account appena uscito.
+    location.replace("./");
   };
   frag.append(form);
   frag.append(coffeeCard("profile"));

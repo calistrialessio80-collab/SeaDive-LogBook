@@ -29,23 +29,48 @@ function setDriveWanted(on) {
   else localStorage.removeItem(WANTED_KEY);
 }
 
-function driveToken() {
+// Il token Google sta in sessionStorage: sparisce quando l'app viene chiusa invece di restare sul disco.
+// Le versioni precedenti lo tenevano in localStorage: lo si toglie da lì.
+let memoryToken = null;
+try {
+  localStorage.removeItem(TOKEN_KEY);
+} catch {
+  /* storage non disponibile */
+}
+
+function readStoredToken() {
   try {
-    const t = JSON.parse(localStorage.getItem(TOKEN_KEY) || "null");
-    if (!t?.access_token) return null;
-    if (t.exp && Date.now() > t.exp) return null;
-    return t.access_token;
+    return JSON.parse(sessionStorage.getItem(TOKEN_KEY) || "null");
   } catch {
     return null;
   }
 }
 
+function driveToken() {
+  const t = memoryToken || readStoredToken();
+  if (!t?.access_token) return null;
+  if (t.exp && Date.now() > t.exp) return null;
+  return t.access_token;
+}
+
 function saveDriveToken(token, expiresIn) {
-  localStorage.setItem(
-    TOKEN_KEY,
-    JSON.stringify({ access_token: token, exp: Date.now() + Math.max(60, (expiresIn || 3600) - 60) * 1000 })
-  );
+  memoryToken = { access_token: token, exp: Date.now() + Math.max(60, (expiresIn || 3600) - 60) * 1000 };
+  try {
+    sessionStorage.setItem(TOKEN_KEY, JSON.stringify(memoryToken));
+  } catch {
+    /* resta solo in memoria */
+  }
   setDriveWanted(true);
+}
+
+function forgetDriveToken() {
+  memoryToken = null;
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* niente da togliere */
+  }
 }
 
 function loadGsi() {
@@ -141,7 +166,7 @@ async function findDriveFile(headers) {
     { headers }
   );
   if (res.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
+    forgetDriveToken();
     throw new Error("Sessione Google scaduta. Rientra con Google.");
   }
   if (!res.ok) throw new Error("Drive non ha risposto.");
@@ -186,8 +211,18 @@ async function signInGoogle() {
   return userFromGoogleToken(token);
 }
 
-function signOutGoogle() {
-  localStorage.removeItem(TOKEN_KEY);
+// Uscita: il token viene revocato presso Google (non solo dimenticato) e l'app smette di cercare Drive.
+async function signOutGoogle() {
+  const token = driveToken();
+  forgetDriveToken();
+  setDriveWanted(false);
+  if (!token) return;
+  try {
+    await loadGsi();
+    await new Promise((resolve) => google.accounts.oauth2.revoke(token, () => resolve()));
+  } catch {
+    /* senza rete il token scade comunque entro un'ora */
+  }
 }
 
 window.SeaDiveDrive = {
