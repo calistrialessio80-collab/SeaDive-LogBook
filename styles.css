@@ -2869,3 +2869,18 @@ body.page-home .app-rate p {
 }
 .backup-banner p { margin: 0; flex: 1 1 220px; font-size: 14px; line-height: 1.4; font-weight: 600; }
 .backup-banner .btn { flex: none; }
+
+/* Errore non gestito dopo l'avvio: avviso in basso, l'app resta com'è */
+.err-toast {
+  position: fixed; z-index: 9999; left: 12px; right: 12px;
+  bottom: calc(var(--nav-h) + 12px + var(--safe-bottom));
+  max-width: 520px; margin: 0 auto; padding: 12px 14px;
+  background: #fff1ef; color: #6d1a10;
+  border: 1px solid #f5b5ab; border-left: 5px solid var(--coral); border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(28, 36, 48, 0.18);
+  display: grid; gap: 6px;
+}
+.err-toast p { margin: 0; font-weight: 700; font-size: 14px; }
+.err-toast small { font-size: 12px; opacity: 0.75; overflow-wrap: anywhere; }
+.err-toast-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.boot .btn { margin-top: 12px; }

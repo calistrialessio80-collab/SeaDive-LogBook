@@ -4858,6 +4858,8 @@ function render() {
   renderDepth += 1;
   try {
     renderScreen();
+    // Da qui in poi un errore non sostituisce più l'app: errors.js mostra solo un avviso.
+    window.__seadiveBooted = true;
   } finally {
     renderDepth -= 1;
     absorbRenderChanges(before);
