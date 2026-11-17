@@ -894,9 +894,17 @@ async function silentDrivePush() {
     do {
       pushAgain = false;
       res = await syncWithDrive({ interactive: false });
+      // pendingBackup = modifiche non ancora su Drive (lo mette scheduleDriveBackup, lo toglie solo un successo).
+      // backupFailed = l'ultimo tentativo non è riuscito: insieme accendono l'avviso.
       const meta = loadMeta();
-      meta.pendingBackup = !res?.ok;
+      if (res?.ok) {
+        meta.pendingBackup = false;
+        meta.backupFailed = false;
+      } else if (res?.reason !== "busy") {
+        meta.backupFailed = true;
+      }
       saveMeta(meta);
+      refreshBackupBanner();
     } while (pushAgain);
   } finally {
     syncLock = false;
@@ -4742,6 +4750,7 @@ function render() {
   if (view.name === "chat") app.append(renderChat());
   if (view.name === "detail") app.append(renderDetail());
   if (view.name === "edit") app.append(renderEdit());
+  refreshBackupBanner();
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
   if (view.name === "log") {
@@ -11259,16 +11268,73 @@ function drawProfile(canvas, points, editable, onChange, deco) {
   };
 }
 
+function backupNeedsUser() {
+  const meta = loadMeta();
+  return Boolean(loadSession() && meta.pendingBackup && meta.backupFailed);
+}
+
+function fmtBackupWhen(iso) {
+  const when = new Date(iso || "");
+  return Number.isFinite(when.getTime()) ? when.toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "";
+}
+
+// Avviso in cima all'app quando le ultime modifiche non sono arrivate su Drive.
+// Il tocco sul pulsante è un gesto dell'utente: Google può chiedere di nuovo l'accesso, cosa che in automatico spesso viene bloccata.
+function backupBanner() {
+  const box = document.createElement("div");
+  box.className = "backup-banner";
+  box.setAttribute("role", "status");
+  const last = fmtBackupWhen(loadMeta().lastBackup);
+  const text = document.createElement("p");
+  text.textContent = last
+    ? `Le ultime modifiche non sono ancora su Google Drive. Ultima copia: ${last}.`
+    : "Il diario non è ancora stato copiato su Google Drive.";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn primary";
+  btn.textContent = "Salva su Drive";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = "Salvo…";
+    await window.SeaDiveDrive?.ensureToken?.({ interactive: true, hint: loadSession()?.email || "" }).catch(() => null);
+    const res = await flushDriveBackup();
+    if (res?.ok) {
+      render();
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = "Riprova";
+    text.textContent = "Non è andata: controlla la connessione e che l'account Google sia quello giusto, poi riprova.";
+  };
+  box.append(text, btn);
+  return box;
+}
+
+function refreshBackupBanner() {
+  const app = document.getElementById("app");
+  if (!app) return;
+  const current = app.querySelector(":scope > .backup-banner");
+  const need = backupNeedsUser();
+  if (need && !current) app.prepend(backupBanner());
+  else if (!need && current) current.remove();
+}
+
 function vaultStatusLine() {
   const n = realDiveCount(state.dives);
   const meta = loadMeta();
   const online = window.SeaDiveDrive?.driveConnected?.();
+  if (backupNeedsUser()) {
+    const last = fmtBackupWhen(meta.lastBackup);
+    return last
+      ? `Attenzione: le ultime modifiche non sono su Google Drive. Ultima copia riuscita: ${last}.`
+      : "Attenzione: il diario non è ancora stato copiato su Google Drive.";
+  }
   if (meta.lastBackup) {
     const when = new Date(meta.lastBackup);
     const ok = Number.isFinite(when.getTime()) ? when.toLocaleString("it-IT") : meta.lastBackup;
     return online
       ? `Diario al sicuro: ${n} immersioni copiate su Google (${ok}).`
-      : `Ultima copia su Google ${ok} · ${n} immersioni. All’apertura l’app rinnova da sola l’accesso.`;
+      : `Ultima copia su Google ${ok} · ${n} immersioni. Se Google chiede di nuovo l’accesso, qui compare un avviso.`;
   }
   if (window.SeaDiveDrive?.driveWanted?.() || online) {
     return n

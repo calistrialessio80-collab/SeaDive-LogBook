@@ -2858,3 +2858,14 @@ body.page-home .app-rate p {
 }
 .profile-coffee p { margin: 0 0 12px; color: #1c2430; opacity: 0.72; }
 .profile-coffee .coffee-btn { background: linear-gradient(90deg, #0c6670, #14a39a); color: #fff; }
+
+/* Avviso: ultime modifiche non ancora su Google Drive */
+.backup-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 12px 14px;
+  background: #fff4e5; color: #6b3d00;
+  border: 1px solid #f3c27a; border-left: 5px solid #e08a00; border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.backup-banner p { margin: 0; flex: 1 1 220px; font-size: 14px; line-height: 1.4; font-weight: 600; }
+.backup-banner .btn { flex: none; }
