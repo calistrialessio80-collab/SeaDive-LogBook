@@ -3174,6 +3174,11 @@ async function connectSeaPerson(cardHit, chat) {
       render();
       return;
     }
+    if (res.error === "off") {
+      view.peopleHint = "Sei fuori dalla Community: per seguire qualcuno rientra dal Profilo.";
+      render();
+      return;
+    }
     const mutual = !res.error && (Boolean(res.followIn) || alreadyIn);
     if (res.link) await openLinkBoxes([res.link], await profileOwnerKey()).catch(() => {});
     const shared = sharedProfileIdentity(res.link, cardHit.owner);
@@ -3264,7 +3269,57 @@ async function readCommunityCard(name) {
   return { card: found.hits[0] };
 }
 
+/* ---------- Uscire dalla Community ----------
+   Il diario sta sul telefono e sul Drive di ognuno; la Community invece sta su Pantry.
+   Da qui ognuno può togliere da solo profilo, messaggi e collegamenti, senza scrivere a nessuno,
+   e l'app smette di ripubblicare il profilo finché non si rientra. */
+async function leaveCommunity() {
+  const owner = await profileOwnerKey();
+  if (!owner) return { error: "short" };
+  const involves = (row) => row && (row.left === owner || row.right === owner);
+  try {
+    await enqueueCloud(async () => {
+      const board = await loadCommunityBoard(0);
+      const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
+      delete next.profiles[owner];
+      next.messages = (next.messages || []).filter((m) => m.from !== owner && m.owner !== owner);
+      Object.keys(next.links || {}).forEach((k) => { if (involves(next.links[k])) delete next.links[k]; });
+      await postCommunityBoard(next);
+      const links = await loadMergedLinks(true);
+      const kept = {};
+      Object.entries(links).forEach(([k, row]) => { if (!involves(row)) kept[k] = row; });
+      await postLinkBasket(kept);
+    });
+  } catch {
+    return { error: "network" };
+  }
+  state.profile.communityOff = true;
+  (state.people || []).forEach((p) => {
+    if (p.remoteOwner) {
+      p.followOut = false;
+      p.followIn = false;
+      p.following = false;
+    }
+  });
+  try {
+    localStorage.removeItem(PROFILE_PUBLISHED_KEY);
+  } catch {
+    /* niente da togliere */
+  }
+  profileOnlineStatus = "off";
+  save(state);
+  return { ok: true };
+}
+
+function rejoinCommunity() {
+  state.profile.communityOff = false;
+  profileOnlineStatus = "";
+  save(state);
+  queueProfilePublish();
+}
+
 async function publishMyProfile() {
+  if (state.profile?.communityOff) return { error: "off" };
   const owner = await profileOwnerKey();
   if (!owner) return { error: "short" };
   const names = personNames({ name: state.profile?.name || "" });
@@ -3346,6 +3401,7 @@ function setPublishedMark(fp) {
 }
 
 async function profilePublishNeeded() {
+  if (state.profile?.communityOff) return false;
   const mark = loadPublishedMark();
   if (!mark.fp || Date.now() - Number(mark.at || 0) > PROFILE_REPUBLISH_MS) return true;
   return mark.fp !== (await publicProfileFingerprint());
@@ -3836,6 +3892,7 @@ function fillLinkSide(body, side, fields, onlyEmpty) {
 }
 
 async function setMyFollow(other, on) {
+  if (on && state.profile?.communityOff) return { error: "off" };
   const mine = await profileOwnerKey();
   const remote = String(other?.owner || other?.remoteOwner || "").trim();
   if (!mine || !remote || mine === remote) return { error: "self" };
@@ -10134,7 +10191,10 @@ function renderProfile() {
     <input type="file" accept="image/*" data-photofile hidden />
     <section class="profile-block">
       <h3>Anagrafica</h3>
-      <p class="hint">${profileOnlineStatus === "online" ? "Profilo online. In Community gli altri vedono nome e cognome. Brevetto, numero e firma si scambiano solo se vi seguite entrambi." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "In Community gli altri vedono nome e cognome. Brevetto, numero e firma si scambiano solo se vi seguite entrambi. Il diario resta sul telefono."}</p>
+      <p class="hint" data-communityline>${p.communityOff ? "Non sei in Community: nessuno vede il tuo profilo e non ricevi messaggi. Il diario resta sul telefono e su Drive." : profileOnlineStatus === "online" ? "Profilo online. In Community gli altri vedono nome, cognome e foto. Brevetto, numero e firma si scambiano cifrati solo se vi seguite entrambi." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "In Community gli altri vedono nome, cognome e foto. Brevetto, numero e firma si scambiano cifrati solo se vi seguite entrambi. Il diario resta sul telefono."}</p>
+      ${p.communityOff
+        ? `<button class="btn ghost" type="button" data-community-join>Rientra in Community</button>`
+        : `<button class="btn ghost" type="button" data-community-leave>Togli il mio profilo dalla Community</button>`}
       <div class="form-grid">
         ${field("name", "Nome e cognome", p.name, true)}
       </div>
@@ -10305,6 +10365,31 @@ function renderProfile() {
     publishMyProfile().catch(() => {});
     render();
   };
+  form.querySelector("[data-community-leave]")?.addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    const ok = await askConfirm({
+      title: "Uscire dalla Community?",
+      message: "Tolgo da Community il tuo profilo (nome, foto), i tuoi messaggi in chat e i collegamenti con chi segui. Il diario, i contatti salvati e le firme già nelle immersioni restano. Puoi rientrare quando vuoi.",
+      ok: "Togli profilo",
+      cancel: "Annulla",
+    });
+    if (!ok) return;
+    btn.disabled = true;
+    btn.textContent = "Tolgo il profilo…";
+    const res = await leaveCommunity();
+    if (res.error) {
+      btn.disabled = false;
+      btn.textContent = "Togli il mio profilo dalla Community";
+      const line = form.querySelector("[data-communityline]");
+      if (line) line.textContent = "Non sono riuscito a togliere il profilo: controlla la connessione e riprova.";
+      return;
+    }
+    render();
+  });
+  form.querySelector("[data-community-join]")?.addEventListener("click", () => {
+    rejoinCommunity();
+    render();
+  });
   form.querySelector("[data-out]").onclick = async (event) => {
     const btn = event.currentTarget;
     const note = form.querySelector(".profile-account");
