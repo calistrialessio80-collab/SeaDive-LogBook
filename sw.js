@@ -2,6 +2,7 @@ const CACHE = "seadive-logbook-v225";
 const ASSETS = [
   "./",
   "./index.html",
+  "./frame-guard.js",
   "./errors.js",
   "./styles.css",
   "./app.js",

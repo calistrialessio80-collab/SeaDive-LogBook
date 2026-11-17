@@ -11586,6 +11586,8 @@ function vaultStatusLine() {
 }
 
 (async function boot() {
+  // Dentro un riquadro di un altro sito l'app non parte (vedi frame-guard.js).
+  if (window.__seadiveFramed) return;
   try {
     await hydrateFromIdb();
     const returned = await window.SeaDiveDrive.consumeOAuthRedirect();
