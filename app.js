@@ -5886,7 +5886,7 @@ function renderWorldMap() {
       <span><i class="flag-ico mine"></i> Il tuo sito o diving</span>
     </div>
     <p class="map-legend-note" data-mapstatus>Carico i punti…</p>
-    <p class="map-legend-note">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a></p>
+    <p class="map-legend-note">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a> · Luoghi e indirizzi © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (ODbL) · Immagini © Esri</p>
   `;
   stage.append(legend);
   const dock = document.createElement("details");
@@ -9769,14 +9769,16 @@ function renderPerson() {
   form.querySelector("[data-findaddr]")?.addEventListener("click", () => {
     locateCenter();
   });
-  let addrTimer = 0;
+  // L'indirizzo si cerca quando si esce dal campo (o con il pulsante), non a ogni tasto:
+  // Nominatim vieta la ricerca durante la digitazione e ogni ricerca Google consuma la quota della chiave.
+  let addrLast = "";
   ["street", "civic", "city"].forEach((name) => {
-    form.querySelector(`[name=${name}]`)?.addEventListener("input", () => {
-      window.clearTimeout(addrTimer);
-      addrTimer = window.setTimeout(() => {
-        if (form.querySelector("[data-centerbox]")?.hidden) return;
-        locateCenter();
-      }, 800);
+    form.querySelector(`[name=${name}]`)?.addEventListener("change", () => {
+      if (form.querySelector("[data-centerbox]")?.hidden) return;
+      const line = ["street", "civic", "city"].map((n) => form.querySelector(`[name=${n}]`)?.value.trim() || "").join("|");
+      if (line === addrLast || !form.querySelector("[name=city]")?.value.trim()) return;
+      addrLast = line;
+      locateCenter();
     });
   });
   const photoBtn = form.querySelector("[data-centerphoto]");
