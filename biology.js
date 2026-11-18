@@ -2785,7 +2785,8 @@ function filterMarineLife(query, group, where) {
   const q = lifeNorm(query).trim();
   return MARINE_LIFE.filter((x) => {
     if (group && group !== "all" && x.group !== group) return false;
-    if (where === "med" && x.where !== "Mediterraneo") return false;
+    // Le invasive sono tutte specie aliene arrivate nel Mediterraneo: compaiono anche lì.
+    if (where === "med" && x.where !== "Mediterraneo" && x.where !== "Invasiva") return false;
     if (where === "world" && x.where !== "Mondo") return false;
     if (where === "alien" && x.where !== "Invasiva") return false;
     if (!q) return true;
@@ -2856,6 +2857,12 @@ function scoreMarineLifeByPhoto(signals) {
 
 function matchMarineLifeByPhoto(signals) {
   return scoreMarineLifeByPhoto(signals).slice(0, 18).map((row) => row.x);
+}
+
+// Etichetta della zona: le invasive sono nel Mediterraneo, con il segno che sono aliene.
+function lifeWhereLabel(x) {
+  if (x?.where === "Invasiva") return "Mediterraneo · invasiva";
+  return String(x?.where || "");
 }
 
 function lifeEmoji(x) {
@@ -3304,6 +3311,7 @@ window.SeaDiveBiology = {
   lifeWeb,
   lifeWorms,
   lifeEmoji,
+  lifeWhereLabel,
   lifeThumb,
   lifePhoto,
   lifePage,

@@ -8141,7 +8141,7 @@ function bioCardHtml(api, x) {
           <img class="bio-shot" alt="" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         </div>
         <div class="bio-body">
-          <p class="bio-kicker">${escapeHtml(section?.label || x.group)} · ${escapeHtml(x.where)}</p>
+          <p class="bio-kicker">${escapeHtml(section?.label || x.group)} · ${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
           <h3>${escapeHtml(x.it)}</h3>
           <p class="bio-la">${escapeHtml(x.la)}</p>
           <p class="bio-look">${escapeHtml(x.look)}</p>
@@ -8494,7 +8494,7 @@ function renderBioGuide() {
         <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
         <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         <div class="bio-hero-caption">
-          <p>${escapeHtml(section?.emoji || "")} ${escapeHtml(section?.label || "")} · ${escapeHtml(x.where)}</p>
+          <p>${escapeHtml(section?.emoji || "")} ${escapeHtml(section?.label || "")} · ${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
           <h2 class="serif" data-bioname>${escapeHtml(x.it)}</h2>
           <p class="bio-la">${escapeHtml(x.la)}</p>
         </div>
@@ -8512,7 +8512,7 @@ function renderBioGuide() {
         <div><b>Taglia</b>${escapeHtml(x.size)}</div>
         <div><b>Profondità</b>${escapeHtml(x.depth)}</div>
         <div><b>Tipo</b>${escapeHtml(x.tag)}</div>
-        <div><b>Mari</b>${escapeHtml(x.where)}</div>
+        <div><b>Mari</b>${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</div>
       </div>
       <div class="bio-block"><h3>Dove vive</h3><p>${escapeHtml(x.habitat)}</p></div>
       <div class="bio-block"><h3>Come riconoscerlo</h3><p>${escapeHtml(x.look)}</p></div>
