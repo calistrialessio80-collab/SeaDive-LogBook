@@ -2864,9 +2864,77 @@ function lifeEmoji(x) {
 
 const lifePageCache = {};
 
+/* ---------- Crediti delle foto ----------
+   Le foto di iNaturalist e Wikimedia Commons sono in Creative Commons e chiedono di citare autore e licenza.
+   Una foto si mostra solo se ha una licenza libera e un credito da mostrare; le foto "tutti i diritti riservati"
+   e quelle caricate solo sulla Wikipedia locale (spesso "fair use", non riutilizzabili) vengono scartate. */
+
+function plainText(html) {
+  return String(html || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inatCredit(photo) {
+  if (!photo || !photo.license_code) return null; // senza licenza = tutti i diritti riservati
+  const text = plainText(photo.attribution).replace(/,\s*uploaded by .*$/i, "") || `iNaturalist, ${String(photo.license_code).toUpperCase()}`;
+  return {
+    text: text.slice(0, 160),
+    url: photo.id ? `https://www.inaturalist.org/photos/${encodeURIComponent(photo.id)}` : "https://www.inaturalist.org/",
+    source: "iNaturalist",
+  };
+}
+
+// Nome del file su Commons dall'indirizzo della miniatura; vuoto se il file sta solo sulla Wikipedia locale.
+function commonsFileName(src) {
+  const m = String(src || "").match(/upload\.wikimedia\.org\/wikipedia\/commons\/(?:thumb\/)?[0-9a-f]\/[0-9a-f]{2}\/([^/?#]+)/i);
+  if (!m) return "";
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
+const commonsCreditCache = new Map();
+
+async function commonsCredit(src) {
+  const file = commonsFileName(src);
+  if (!file) return null;
+  if (commonsCreditCache.has(file)) return commonsCreditCache.get(file);
+  let credit = null;
+  try {
+    const res = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&prop=imageinfo&iiprop=extmetadata&titles=${encodeURIComponent("File:" + file)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const meta = Object.values(data.query?.pages || {})[0]?.imageinfo?.[0]?.extmetadata || {};
+      const license = plainText(meta.LicenseShortName?.value);
+      const artist = plainText(meta.Artist?.value) || plainText(meta.Credit?.value);
+      if (license) {
+        credit = {
+          text: `${artist ? artist + ", " : ""}${license}`.slice(0, 160),
+          url: `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(file)}`,
+          source: "Wikimedia Commons",
+        };
+      }
+    }
+  } catch {
+    credit = null;
+  }
+  commonsCreditCache.set(file, credit);
+  return credit;
+}
+
 async function lifeInat(la) {
   const want = String(la || "").trim().toLowerCase();
-  if (want.length < 3) return "";
+  if (want.length < 3) return null;
   for (const extra of ["&rank=species", ""]) {
     try {
       const res = await fetch(`https://api.inaturalist.org/v1/taxa?q=${encodeURIComponent(la)}${extra}&per_page=8`);
@@ -2875,18 +2943,19 @@ async function lifeInat(la) {
       const exact = (data.results || []).find((row) => String(row.name || "").trim().toLowerCase() === want);
       const photo = exact?.default_photo;
       const src = photo?.medium_url || photo?.url || "";
-      if (src) return src;
+      const credit = inatCredit(photo);
+      if (src && credit) return { src, credit };
     } catch {
-      return "";
+      return null;
     }
   }
-  return "";
+  return null;
 }
 
 async function lifePage(la, it) {
   const key = String(la || it || "");
   if (Object.prototype.hasOwnProperty.call(lifePageCache, key)) return lifePageCache[key];
-  const empty = { extract: "", thumb: "", url: "", desc: "" };
+  const empty = { extract: "", thumb: "", credit: null, url: "", desc: "" };
   const titles = [la, it].filter(Boolean);
   for (const wiki of ["it", "en"]) {
     for (const title of titles) {
@@ -2902,13 +2971,24 @@ async function lifePage(la, it) {
         if (!extract && !thumb) continue;
         const page = {
           extract,
-          thumb,
+          thumb: "",
+          credit: null,
           url: data.content_urls?.desktop?.page || "",
           desc: data.description || "",
+          lang: wiki,
         };
+        // Prima la foto di iNaturalist (animale in natura), poi quella di Wikipedia se è su Commons con licenza.
         const animal = await lifeInat(la);
-        if (animal) page.thumb = animal;
-        else if (!page.thumb) page.thumb = "";
+        if (animal) {
+          page.thumb = animal.src;
+          page.credit = animal.credit;
+        } else if (thumb) {
+          const credit = await commonsCredit(thumb);
+          if (credit) {
+            page.thumb = thumb;
+            page.credit = credit;
+          }
+        }
         lifePageCache[key] = page;
         return page;
       } catch {
@@ -2916,9 +2996,19 @@ async function lifePage(la, it) {
       }
     }
   }
-  empty.thumb = await lifeInat(la);
+  const animal = await lifeInat(la);
+  if (animal) {
+    empty.thumb = animal.src;
+    empty.credit = animal.credit;
+  }
   lifePageCache[key] = empty;
   return empty;
+}
+
+// Foto con il suo credito: { src, credit: { text, url, source } } oppure null.
+async function lifePhoto(la, it) {
+  const page = await lifePage(la, it);
+  return page.thumb && page.credit ? { src: page.thumb, credit: page.credit } : null;
 }
 
 async function lifeThumb(la, it) {
@@ -3215,6 +3305,7 @@ window.SeaDiveBiology = {
   lifeWorms,
   lifeEmoji,
   lifeThumb,
+  lifePhoto,
   lifePage,
   searchWorldLife,
   worldVernaculars,

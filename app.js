@@ -8056,12 +8056,21 @@ function bindBioThumbs(root) {
       if (!entries.some((e) => e.isIntersecting)) return;
       obs.disconnect();
       if (gen !== bioThumbGen) return;
-      const src = await api.lifeThumb(img.dataset.la, img.dataset.it);
-      if (gen !== bioThumbGen || !src) return;
-      img.src = src;
+      // Solo foto con licenza libera, sempre con il credito dell'autore.
+      const photo = api.lifePhoto ? await api.lifePhoto(img.dataset.la, img.dataset.it) : null;
+      if (gen !== bioThumbGen || !photo) return;
+      img.src = photo.src;
       img.onload = () => {
         img.classList.add("on");
-        img.closest(".bio-pic")?.classList.add("has-photo");
+        const pic = img.closest(".bio-pic");
+        pic?.classList.add("has-photo");
+        if (pic && !pic.querySelector(".bio-credit")) {
+          const credit = document.createElement("span");
+          credit.className = "bio-credit";
+          credit.textContent = `© ${photo.credit.text}`;
+          credit.title = `Foto: ${photo.credit.text} (${photo.credit.source})`;
+          pic.append(credit);
+        }
       };
     }, { rootMargin: "120px" });
     io.observe(img);
@@ -8490,6 +8499,7 @@ function renderBioGuide() {
           <p class="bio-la">${escapeHtml(x.la)}</p>
         </div>
       </div>
+      <p class="bio-credit-line" data-biocredit hidden></p>
       ${x.worms ? `<div class="kv">
         <div><b>Rango</b>${escapeHtml(x.rank || "Specie")}</div>
         <div><b>Stato</b>${escapeHtml(x.statusLabel || "")}</div>
@@ -8551,12 +8561,24 @@ function bindBioGuide(root, species) {
   const api = window.SeaDiveBiology;
   const gen = ++bioThumbGen;
   const img = root.querySelector("[data-bioimg]");
-  const direct = view.bioSpeciesPhoto || "";
-  if (direct) showSpeciesPhoto(img, direct, "");
+  // La foto di riferimento del riconoscimento non si mostra più: poteva venire dalla Wikipedia locale
+  // (immagini non libere). Si usa sempre la foto con licenza e credito, come nella lista.
   api.lifePage(species.la, species.it).then((page) => {
     if (gen !== bioThumbGen || !root.isConnected) return;
-    const src = String(page?.thumb || "");
-    if (src) showSpeciesPhoto(img, src, direct);
+    const src = page?.credit ? String(page?.thumb || "") : "";
+    if (src) {
+      showSpeciesPhoto(img, src, "");
+      const line = root.querySelector("[data-biocredit]");
+      if (line) {
+        const a = document.createElement("a");
+        a.href = page.credit.url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = page.credit.source;
+        line.replaceChildren(`Foto: ${page.credit.text} · `, a);
+        line.hidden = false;
+      }
+    }
     const box = root.querySelector("[data-biowiki]");
     if (!box) return;
     if (page?.extract) {
