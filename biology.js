@@ -157,7 +157,7 @@ const MARINE_LIFE = [
     "Cinque bande verticali larghe, nere e molto contrastate.",
     "Meno gregario degli altri saraghi, spesso solitario.",
     "Uno dei saraghi più fotografati. Non inseguirlo lungo la parete."),
-  sp("pesci", "Occhiata", "Oblada melanura", "Mediterraneo", "Sparide",
+  sp("pesci", "Occhiata", "Oblada melanurus", "Mediterraneo", "Sparide",
     "Fino a 30 cm", "1–30 m", "Acque libere sopra scogli e praterie",
     "Argentea, ovale, con una macchia nera bordata di bianco sul peduncolo della coda.",
     "Mangia plancton e piccoli invertebrati, in banchi.",
@@ -607,7 +607,7 @@ const MARINE_LIFE = [
     "Scuro, con una maschera gialla e scaglie grandi. Bocca robusta.",
     "Mangia ricci e coralli. Sul nido può caricare i sub.",
     "Se si mette di traverso e abbassa la testa, allontanati: sta difendendo le uova."),
-  sp("pesci", "Pesce scatola", "Ostracion cubicus", "Mondo", "Ostraciide",
+  sp("pesci", "Pesce scatola", "Ostracion cubicum", "Mondo", "Ostraciide",
     "Fino a 45 cm", "2–40 m", "Lagune e reef",
     "Corpo a cubo, giallo a puntini neri da giovane, più beige da adulto.",
     "Nuota solo con le pinne. Se stressato può rilasciare una tossina.",
@@ -787,7 +787,7 @@ const MARINE_LIFE = [
     "Dorso nero a macchie bianche, testa sporgente come un'anatra.",
     "Nuota a lungo in acqua libera. Schiaccia molluschi.",
     "Si fotografa dal basso, senza salire sulla sua traiettoria."),
-  sp("pesci", "Pesce chitarra", "Rhina ancylostoma", "Mondo", "Rinide",
+  sp("pesci", "Pesce chitarra", "Rhina ancylostomus", "Mondo", "Rinide",
     "Fino a 2,7 m", "5–40 m", "Sabbia del reef",
     "Testa larga a pala, dorso spinoso e coda da squalo. Grigio a macchie bianche.",
     "Sta posato di giorno. È in pericolo per la pesca.",
@@ -933,7 +933,7 @@ const MARINE_LIFE = [
     "Lamine a ventaglio, rosso-brune, calcificate sotto e spesso sovrapposte.",
     "Alga rossa incrostante. Fa parte del coralligeno.",
     "Sembra una crosta di corallo. Il margine libero, sollevabile, dice che è un'alga."),
-  sp("flora", "Maerl", "Lithothamnion corallioides", "Mediterraneo", "Alga rossa",
+  sp("flora", "Maerl", "Boreolithothamnion corallioides", "Mediterraneo", "Alga rossa",
     "Rametti di pochi centimetri", "10–60 m", "Fondi di alghe calcaree libere",
     "Rametti rosa-viola, pietrosi, sciolti sul fondo come una ghiaia viva.",
     "Alga rossa libera. I letti di maerl crescono lentissimamente e ospitano una fauna propria.",
@@ -1119,7 +1119,7 @@ const MARINE_LIFE = [
     "Penna rosa-rossa, con i polipi disposti su due file.",
     "Vive piantata nel sedimento e si illumina se disturbata.",
     "Tipica delle immersioni su fango. Una pinneggiata la copre."),
-  sp("coralli", "Pteroeides", "Pteroeides spinosum", "Mediterraneo", "Pennatula",
+  sp("coralli", "Pteroeides", "Pteroeides griseum", "Mediterraneo", "Pennatula",
     "Fino a 30 cm", "15–50 m", "Detrito",
     "Penna più rigida, grigia o bruna, con foglie spinulose.",
     "Altro pennatulaceo di fondo mobile.",
@@ -1224,7 +1224,7 @@ const MARINE_LIFE = [
     "Coralliti sporgenti, a corona, spesso verdi al centro e chiari sul bordo.",
     "I tentacoli possono essere urticanti anche di giorno.",
     "Meglio non sfiorarla: tra le madrepore è una di quelle che brucia."),
-  sp("coralli", "Corallo martello", "Euphyllia ancora", "Mondo", "Madrepora",
+  sp("coralli", "Corallo martello", "Fimbriaphyllia ancora", "Mondo", "Madrepora",
     "Colonie di 20–50 cm", "5–25 m", "Acque calme del reef",
     "Tentacoli a martello, con la punta a T, spesso verdi o beige.",
     "Madrepora a polipi grandi. I tentacoli sono carnosi e restano fuori di giorno.",
@@ -1299,7 +1299,7 @@ const MARINE_LIFE = [
     "Massa a fungo, color crema, con i polipi a margherita sulla superficie.",
     "Corallo molle. Può chiudersi in una palla liscia.",
     "Se è liscio e senza polipi, non è morto: è retratto."),
-  sp("coralli", "Sinularia", "Sinularia polydactyla", "Mondo", "Corallo molle",
+  sp("coralli", "Sinularia", "Sclerophytum polydactylum", "Mondo", "Corallo molle",
     "Fino a 40 cm", "3–20 m", "Reef piatti",
     "Lobi carnosi a dita, beige, che coprono la roccia.",
     "Corallo molle incrostante-eretto. Ospita spesso piccoli granchi.",
@@ -1324,7 +1324,7 @@ const MARINE_LIFE = [
     "Polipi corti, bruni, inglobati in un tessuto comune spesso incrostato.",
     "Produce palitossina, pericolosa se entra in una ferita o sulle mucose.",
     "Non toccarla e non rompere la colonia. Si ammira senza contatto."),
-  sp("coralli", "Discosoma", "Discosoma nummifera", "Mondo", "Corallimorfo",
+  sp("coralli", "Discosoma", "Discosoma nummiforme", "Mondo", "Corallimorfo",
     "Dischi di 3–8 cm", "3–25 m", "Pareti e relitti in penombra",
     "Dischi carnosi, senza lo scheletro di un corallo, spesso rossi, blu o verdi.",
     "Parente degli anemoni, non una madrepora. Resta aperto di giorno.",
@@ -1370,12 +1370,12 @@ const MARINE_LIFE = [
     "Blu-viola con macchie gialle rotonde e linee chiare.",
     "Mangia spugne del coralligeno.",
     "Le macchie gialle a bottone lo distinguono dal doride dipinto, che è più striato."),
-  sp("nudibranchi", "Felimida di Krohn", "Felimida krohni", "Mediterraneo", "Doride",
+  sp("nudibranchi", "Felimida di Krohn", "Rudmania krohni", "Mediterraneo", "Doride",
     "Fino a 3 cm", "5–30 m", "Pareti e spugne",
     "Viola con tre linee bianche longitudinali e un bordo giallo.",
     "Doride di spugna, comune ma piccolo.",
     "Le tre linee bianche sono il segno da cercare."),
-  sp("nudibranchi", "Doride porpora", "Felimida purpurea", "Mediterraneo", "Doride",
+  sp("nudibranchi", "Doride porpora", "Rudmania purpurea", "Mediterraneo", "Doride",
     "Fino a 4 cm", "5–30 m", "Spugne di parete",
     "Porpora, con macchie gialle e un bordo del mantello più chiaro.",
     "Si nutre di spugne. I rinofori sono scuri.",
@@ -1385,7 +1385,7 @@ const MARINE_LIFE = [
     "Rosa-giallo con macchie rosse e un anello viola sui rinofori.",
     "Doride appariscente, meno comune dei blu.",
     "L'anello viola sui rinofori evita di confonderlo con altri rosa."),
-  sp("nudibranchi", "Doride leopardo", "Doris pseudoargus", "Mediterraneo", "Doride",
+  sp("nudibranchi", "Doride leopardo", "Archidoris pseudoargus", "Mediterraneo", "Doride",
     "Fino a 8 cm", "5–30 m", "Scogli con spugne",
     "Ovale, giallo o bruno, coperto di macchie scure come un leopardo.",
     "Mangia spugne. Il corpo è più bombato della vacchetta.",
@@ -1430,7 +1430,7 @@ const MARINE_LIFE = [
     "Viola, con cerata lunghi e le punte più chiare. Rinofori lamellati.",
     "Mangia idroidi e riusa le loro cellule urticanti.",
     "La più fotografata delle flabelline. Non staccarla dall'idroide."),
-  sp("nudibranchi", "Flabellina di Babai", "Flabellina babai", "Mediterraneo", "Eolide",
+  sp("nudibranchi", "Flabellina di Babai", "Luisella babai", "Mediterraneo", "Eolide",
     "Fino a 5 cm", "10–40 m", "Idroidi di parete",
     "Bianca o rosa, con cerata dai puntini rossi e apici viola.",
     "Eolide di idroide, più chiara della flabellina lilla.",
@@ -1440,7 +1440,7 @@ const MARINE_LIFE = [
     "Viola uniforme, più snella, con i cerata disposti in ciuffi.",
     "Mangia idroidi. Il nome storico è Flabellina pedata.",
     "Meno trasparente di F. affinis e senza la punteggiatura di F. babai."),
-  sp("nudibranchi", "Flabellina di Ischia", "Paraflabellina ischitana", "Mediterraneo", "Eolide",
+  sp("nudibranchi", "Flabellina di Ischia", "Flabellina ischitana", "Mediterraneo", "Eolide",
     "Fino a 3 cm", "5–30 m", "Idroidi",
     "Rosa-lilla, con una linea bianca sul dorso e cerata appuntiti.",
     "Eolide mediterranea, descritta su esemplari di Ischia.",
@@ -1460,7 +1460,7 @@ const MARINE_LIFE = [
     "Trasparente, con linee bianche e cerata dai riflessi blu.",
     "Mangia idroidi. I cerata sembrano vetro colorato.",
     "Serve un po' di luce laterale per far uscire il blu."),
-  sp("nudibranchi", "Calmella", "Calmella cavolini", "Mediterraneo", "Eolide",
+  sp("nudibranchi", "Calmella", "Flabellina cavolini", "Mediterraneo", "Eolide",
     "Fino a 1,5 cm", "5–25 m", "Idroidi rossi",
     "Piccola, bianca e rossa, con i cerata in ciuffi ordinati.",
     "Legata agli idroidi di cui si nutre.",
@@ -1470,7 +1470,7 @@ const MARINE_LIFE = [
     "Minuscola, con cerata blu a banda arancione.",
     "Una delle eolidi più colorate in pochi millimetri.",
     "Senza lente sembra un granello. Con la lente è uno dei soggetti migliori."),
-  sp("nudibranchi", "Dondice", "Dondice banyulensis", "Mediterraneo", "Eolide",
+  sp("nudibranchi", "Dondice", "Nemesignis banyulensis", "Mediterraneo", "Eolide",
     "Fino a 7 cm", "10–40 m", "Idroidi e pareti",
     "Grande, arancione, con linee bianche e cerata lunghi.",
     "Eolide vistosa. Mangia idroidi.",
@@ -1500,7 +1500,7 @@ const MARINE_LIFE = [
     "Chiara, con tanti cerata corti e una macchia arancione davanti alla testa.",
     "Mangia anemoni. Spesso mezza insabbiata.",
     "La macchia arancione frontale è il dettaglio da cercare."),
-  sp("nudibranchi", "Tritonia delle gorgonie", "Tritonia nilsodhneri", "Mediterraneo", "Tritoniide",
+  sp("nudibranchi", "Tritonia delle gorgonie", "Candiella odhneri", "Mediterraneo", "Tritoniide",
     "Fino a 3 cm", "15–40 m", "Sulle gorgonie Eunicella",
     "Bianca o rosa, con ciuffi ramificati che imitano i polipi della gorgonia.",
     "Si mimetizza sulla gorgonia di cui si nutre.",
@@ -1761,7 +1761,7 @@ const MARINE_LIFE = [
     "Sacco muscoloso, pelle che cambia colore e otto braccia con ventose in doppia fila.",
     "Caccia granchi e molluschi. Può usare conchiglie come porta.",
     "Non infilare la mano nella tana. Se impallidisce e si appiattisce, è allarme."),
-  sp("molluschi", "Polpo macchiato", "Callistoctopus macropus", "Mediterraneo", "Polpo",
+  sp("molluschi", "Polpo macchiato", "Pinnoctopus macropus", "Mediterraneo", "Polpo",
     "Fino a 1 m", "1–20 m", "Scogli bassi, spesso di notte",
     "Braccia lunghissime e macchie bianche fisse su fondo arancio o rosso.",
     "Più notturno del polpo comune.",
@@ -1911,7 +1911,7 @@ const MARINE_LIFE = [
     "Striato di scuro. Si rifugia in noci di cocco o conchiglie e le trasporta.",
     "Usa il rifugio come strumento.",
     "Non portargli via il guscio per vedere la reazione."),
-  sp("molluschi", "Seppia del reef", "Sepia latimanus", "Mondo", "Seppia",
+  sp("molluschi", "Seppia del reef", "Ascarosepion latimanus", "Mondo", "Seppia",
     "Fino a 50 cm", "3–30 m", "Reef e praterie tropicali",
     "Grande, passa dal bianco al bruno. I maschi mostrano strisce.",
     "Caccia pesci e depone nelle fessure del corallo.",
@@ -2017,7 +2017,7 @@ const MARINE_LIFE = [
     "Giallo e rosso, con chele lunghe e antenne bianche.",
     "Pulitore. Sta all'ingresso della tana.",
     "Parente del gambero meccanico tropicale. Le chele sono un segnale, non un gioco."),
-  sp("crostacei", "Granchio di sabbia", "Liocarcinus vernalis", "Mediterraneo", "Granchio",
+  sp("crostacei", "Granchio di sabbia", "Polybius vernalis", "Mediterraneo", "Granchio",
     "Fino a 5 cm", "2–30 m", "Sabbia",
     "Ultimo paio di zampe a paletta. Guscio chiaro.",
     "Nuotatore. Si insabbia in un attimo.",
@@ -2192,7 +2192,7 @@ const MARINE_LIFE = [
     "Piuma con polipi bianchi a bottone.",
     "Idroide urticante, comune d'estate.",
     "Non strusciare le braccia sulle piume bianche dei moli."),
-  sp("meduse", "Anemone magnifico", "Heteractis magnifica", "Mondo", "Anemone",
+  sp("meduse", "Anemone magnifico", "Radianthus magnifica", "Mondo", "Anemone",
     "Fino a 50 cm", "1–15 m", "Reef indo-pacifici",
     "Colonna viola o verde e tentacoli lunghi, spesso in alto su una sporgenza.",
     "Ospite classico dei pesci pagliaccio.",
@@ -2338,7 +2338,7 @@ const MARINE_LIFE = [
     "Barile marrone, con un'apertura grande in cima.",
     "Può vivere secoli. Filtra enormi volumi d'acqua.",
     "Non entrare nel barile e non sederti sul bordo."),
-  sp("spugne", "Spugna a tubo", "Callyspongia vaginalis", "Mondo", "Demospongia",
+  sp("spugne", "Spugna a tubo", "Callyspongia aculeata", "Mondo", "Demospongia",
     "Tubi fino a 50 cm", "5–25 m", "Reef caraibici",
     "Tubi lavanda o grigi, sottili, in gruppi.",
     "Spugna di barriera, morbida.",
@@ -2418,7 +2418,7 @@ const MARINE_LIFE = [
     "Piattissima, con spine sul bordo, spesso mezza insabbiata.",
     "Caccia molluschi sulla sabbia, anche di notte.",
     "Cercala al tramonto sul fondo mobile."),
-  sp("echinodermi", "Ofiura liscia", "Ophioderma longicauda", "Mediterraneo", "Ofiura",
+  sp("echinodermi", "Ofiura liscia", "Ophioderma longicaudum", "Mediterraneo", "Ofiura",
     "Fino a 25 cm", "2–40 m", "Sotto i sassi e tra le alghe",
     "Disco centrale e cinque braccia scure che si muovono a frusta.",
     "Non è una stella: le braccia partono nette dal disco.",
@@ -2636,7 +2636,7 @@ const MARINE_LIFE = [
     "Cespuglio viola-bruno, flessuoso.",
     "Briozoo comune sulle corde.",
     "Non è un'alga: i rami sono una fila di loggette."),
-  sp("briozoi", "Pizzo di Nettuno", "Sertella septentrionalis", "Mediterraneo", "Briozoo",
+  sp("briozoi", "Pizzo di Nettuno", "Reteporella grimaldii", "Mediterraneo", "Briozoo",
     "Fino a 8 cm", "15–40 m", "Grotte",
     "Ventaglio a rete, piccolo e fragile.",
     "Briozoo di grotta.",
@@ -2771,27 +2771,151 @@ const MARINE_LIFE = [
     "La coda non è un pungiglione. Non capovolgerlo."),
 ];
 
+// Nomi scientifici aggiornati secondo WoRMS (18/11/2026): il nome vecchio resta cercabile.
+const LIFE_OLD_NAMES = {
+  "boreolithothamnion corallioides": "Lithothamnion corallioides",
+  "pteroeides griseum": "Pteroeides spinosum",
+  "fimbriaphyllia ancora": "Euphyllia ancora",
+  "ascarosepion latimanus": "Sepia latimanus",
+  "polybius vernalis": "Liocarcinus vernalis",
+  "ostracion cubicum": "Ostracion cubicus",
+  "rhina ancylostomus": "Rhina ancylostoma",
+  "oblada melanurus": "Oblada melanura",
+  "pinnoctopus macropus": "Callistoctopus macropus",
+  "sclerophytum polydactylum": "Sinularia polydactyla",
+  "discosoma nummiforme": "Discosoma nummifera",
+  "rudmania krohni": "Felimida krohni",
+  "rudmania purpurea": "Felimida purpurea",
+  "archidoris pseudoargus": "Doris pseudoargus",
+  "luisella babai": "Flabellina babai",
+  "flabellina ischitana": "Paraflabellina ischitana",
+  "flabellina cavolini": "Calmella cavolini",
+  "nemesignis banyulensis": "Dondice banyulensis",
+  "candiella odhneri": "Tritonia nilsodhneri",
+  "radianthus magnifica": "Heteractis magnifica",
+  "reteporella grimaldii": "Sertella septentrionalis",
+  "callyspongia aculeata": "Callyspongia vaginalis",
+  "ophioderma longicaudum": "Ophioderma longicauda",
+};
+
 function lifeSection(id) {
   return LIFE_SECTIONS.find((s) => s.id === id) || null;
 }
 
 const worldLife = new Map();
 
-function findMarineLife(id) {
-  return MARINE_LIFE.find((x) => x.id === id) || worldLife.get(id) || null;
+/* ---------- Catalogo esteso ----------
+   marine-catalog.json, generato una volta con tools/catalogo-marino.ps1 da iNaturalist e WoRMS:
+   migliaia di specie marine del Mediterraneo e del mondo, con nome italiano quando c'è, foto con
+   licenza libera e credito. Si scarica solo quando si apre la Biologia; le 543 schede scritte a mano
+   restano le più complete (taglia, profondità, consigli in immersione). */
+const catalogLife = [];
+const catalogById = new Map();
+const catalogByLatin = new Map();
+const curatedPhotoByLatin = new Map(); // foto libere delle schede scritte a mano, preparate nel catalogo
+let catalogPromise = null;
+
+function catalogEntry(row, fields) {
+  const r = {};
+  fields.forEach((f, i) => { r[f] = row[i]; });
+  const la = String(r.la || "").trim();
+  if (!la) return null;
+  const it = String(r.it || "").trim();
+  return {
+    id: lifeId(la),
+    ext: true,
+    group: LIFE_SECTIONS.some((s) => s.id === r.g) ? r.g : "altri",
+    it: it || la,
+    itKnown: Boolean(it),
+    la,
+    valid: String(r.v || ""),
+    where: r.z === "med" ? "Mediterraneo" : "Mondo",
+    obs: Number(r.n) || 0,
+    photo: r.p && r.c ? { src: String(r.p), credit: { text: String(r.c), url: r.ph ? `https://www.inaturalist.org/photos/${encodeURIComponent(r.ph)}` : "https://www.inaturalist.org/", source: "iNaturalist" } } : null,
+    inat: String(r.t || ""),
+    aphia: String(r.a || ""),
+    tag: "",
+    size: "",
+    depth: "",
+    habitat: "",
+    look: "",
+    life: "",
+    dive: "",
+  };
 }
 
-function filterMarineLife(query, group, where) {
+function loadMarineCatalog(version) {
+  if (catalogPromise) return catalogPromise;
+  catalogPromise = fetch(`./marine-catalog.json?v=${encodeURIComponent(version || "1")}`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((doc) => {
+      const fields = Array.isArray(doc?.fields) ? doc.fields : [];
+      Object.entries(doc?.curatedPhotos || {}).forEach(([la, p]) => {
+        if (Array.isArray(p) && p[0] && p[1]) {
+          curatedPhotoByLatin.set(lifeNorm(la), { src: String(p[0]), credit: { text: String(p[1]), url: p[2] ? `https://www.inaturalist.org/photos/${encodeURIComponent(p[2])}` : "https://www.inaturalist.org/", source: "iNaturalist" } });
+        }
+      });
+      // Foto preparate con il nome vecchio: valgono anche per il nome aggiornato.
+      Object.entries(LIFE_OLD_NAMES).forEach(([valid, old]) => {
+        const photo = curatedPhotoByLatin.get(lifeNorm(old));
+        if (photo && !curatedPhotoByLatin.has(lifeNorm(valid))) curatedPhotoByLatin.set(lifeNorm(valid), photo);
+      });
+      (Array.isArray(doc?.species) ? doc.species : []).forEach((row) => {
+        // Tollera anche le righe avvolte come {"value":[...]} (difetto di ConvertTo-Json in PowerShell 5.1).
+        const cells = Array.isArray(row) ? row : Array.isArray(row?.value) ? row.value : null;
+        const x = cells ? catalogEntry(cells, fields) : null;
+        // Specie già nella guida scritta a mano: dal catalogo si prende solo la foto, se le manca.
+        if (x && MARINE_LIFE.some((m) => m.id === x.id)) {
+          if (x.photo && !curatedPhotoByLatin.has(lifeNorm(x.la))) curatedPhotoByLatin.set(lifeNorm(x.la), x.photo);
+          return;
+        }
+        if (!x || catalogById.has(x.id) || MARINE_LIFE.some((m) => m.id === x.id)) return;
+        catalogLife.push(x);
+        catalogById.set(x.id, x);
+        catalogByLatin.set(lifeNorm(x.la), x);
+      });
+      return catalogLife.length;
+    })
+    .catch(() => {
+      catalogPromise = null; // offline: si riprova la prossima volta
+      return 0;
+    });
+  return catalogPromise;
+}
+
+function catalogReady() {
+  return catalogLife.length > 0;
+}
+
+// Il nome latino è già nella guida scritta a mano o nel catalogo esteso?
+function knownLatin(la) {
+  const key = lifeNorm(la);
+  return MARINE_LIFE.some((m) => lifeNorm(m.la) === key) || catalogByLatin.has(key);
+}
+
+function findMarineLife(id) {
+  return MARINE_LIFE.find((x) => x.id === id) || catalogById.get(id) || worldLife.get(id) || null;
+}
+
+function lifeMatches(x, group, where, q) {
+  if (group && group !== "all" && x.group !== group) return false;
+  // Le invasive sono tutte specie aliene arrivate nel Mediterraneo: compaiono anche lì.
+  if (where === "med" && x.where !== "Mediterraneo" && x.where !== "Invasiva") return false;
+  if (where === "world" && x.where !== "Mondo") return false;
+  if (where === "alien" && x.where !== "Invasiva") return false;
+  if (!q) return true;
+  const text = x.ext
+    ? `${x.it} ${x.la} ${x.valid} ${x.group} ${x.where}`
+    : `${x.it} ${x.la} ${LIFE_OLD_NAMES[x.la.toLowerCase()] || ""} ${x.group} ${x.tag} ${x.where} ${x.habitat} ${x.look} ${x.life} ${x.dive}`;
+  return lifeNorm(text).includes(q);
+}
+
+// Prima le schede scritte a mano, poi il catalogo esteso (già ordinato per gruppo e numero di osservazioni).
+function filterMarineLife(query, group, where, withCatalog = true) {
   const q = lifeNorm(query).trim();
-  return MARINE_LIFE.filter((x) => {
-    if (group && group !== "all" && x.group !== group) return false;
-    // Le invasive sono tutte specie aliene arrivate nel Mediterraneo: compaiono anche lì.
-    if (where === "med" && x.where !== "Mediterraneo" && x.where !== "Invasiva") return false;
-    if (where === "world" && x.where !== "Mondo") return false;
-    if (where === "alien" && x.where !== "Invasiva") return false;
-    if (!q) return true;
-    return lifeNorm(`${x.it} ${x.la} ${x.group} ${x.tag} ${x.where} ${x.habitat} ${x.look} ${x.life} ${x.dive}`).includes(q);
-  });
+  const curated = MARINE_LIFE.filter((x) => lifeMatches(x, group, where, q));
+  if (!withCatalog || !catalogLife.length) return curated;
+  return curated.concat(catalogLife.filter((x) => lifeMatches(x, group, where, q)));
 }
 
 const LIFE_PHOTO_COLORS = {
@@ -2959,9 +3083,38 @@ async function lifeInat(la) {
   return null;
 }
 
-async function lifePage(la, it) {
+// Al massimo 3 ricerche contemporanee verso Wikipedia e iNaturalist (iNaturalist chiede circa 1 richiesta al secondo),
+// e una sola ricerca per specie anche se più schede la chiedono insieme.
+const LIFE_PAGE_PARALLEL = 3;
+const lifePageFlight = new Map();
+const lifePageQueue = [];
+let lifePageActive = 0;
+
+function lifePageNext() {
+  while (lifePageActive < LIFE_PAGE_PARALLEL && lifePageQueue.length) {
+    const job = lifePageQueue.shift();
+    lifePageActive += 1;
+    job().finally(() => {
+      lifePageActive -= 1;
+      lifePageNext();
+    });
+  }
+}
+
+function lifePage(la, it) {
   const key = String(la || it || "");
-  if (Object.prototype.hasOwnProperty.call(lifePageCache, key)) return lifePageCache[key];
+  if (Object.prototype.hasOwnProperty.call(lifePageCache, key)) return Promise.resolve(lifePageCache[key]);
+  if (lifePageFlight.has(key)) return lifePageFlight.get(key);
+  const flight = new Promise((resolve) => {
+    lifePageQueue.push(() => lifePageFetch(la, it).then(resolve, () => resolve({ extract: "", thumb: "", credit: null, url: "", desc: "" })));
+    lifePageNext();
+  }).finally(() => lifePageFlight.delete(key));
+  lifePageFlight.set(key, flight);
+  return flight;
+}
+
+async function lifePageFetch(la, it) {
+  const key = String(la || it || "");
   const empty = { extract: "", thumb: "", credit: null, url: "", desc: "" };
   const titles = [la, it].filter(Boolean);
   for (const wiki of ["it", "en"]) {
@@ -3013,7 +3166,12 @@ async function lifePage(la, it) {
 }
 
 // Foto con il suo credito: { src, credit: { text, url, source } } oppure null.
+// Le specie del catalogo esteso hanno già la foto: nessuna richiesta in rete.
 async function lifePhoto(la, it) {
+  const known = catalogByLatin.get(lifeNorm(la));
+  if (known?.photo) return known.photo;
+  const prepared = curatedPhotoByLatin.get(lifeNorm(la));
+  if (prepared) return prepared;
   const page = await lifePage(la, it);
   return page.thumb && page.credit ? { src: page.thumb, credit: page.credit } : null;
 }
@@ -3312,6 +3470,9 @@ window.SeaDiveBiology = {
   lifeWorms,
   lifeEmoji,
   lifeWhereLabel,
+  loadMarineCatalog,
+  catalogReady,
+  knownLatin,
   lifeThumb,
   lifePhoto,
   lifePage,

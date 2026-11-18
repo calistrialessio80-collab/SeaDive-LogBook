@@ -8047,6 +8047,14 @@ async function rankPhotoOnGuide(signals, token, onStep) {
   return (good.length >= 4 ? good : scored).slice(0, 16).map((row) => row.species);
 }
 
+// "(c) Mario Rossi, some rights reserved (CC BY-NC)" -> "© Mario Rossi · CC BY-NC" (versione corta per le miniature).
+function shortCredit(text) {
+  const raw = String(text || "").replace(/^\s*\(c\)\s*/i, "").trim();
+  const license = (raw.match(/\((CC[^)]*)\)/i) || [])[1] || "";
+  const author = raw.replace(/,?\s*(some|no|all) rights reserved.*$/i, "").replace(/\s*\(CC[^)]*\)\s*$/i, "").trim();
+  return `© ${author || "autore"}${license ? ` · ${license}` : ""}`;
+}
+
 function bindBioThumbs(root) {
   const api = window.SeaDiveBiology;
   if (!api?.lifeThumb || !root) return;
@@ -8067,7 +8075,7 @@ function bindBioThumbs(root) {
         if (pic && !pic.querySelector(".bio-credit")) {
           const credit = document.createElement("span");
           credit.className = "bio-credit";
-          credit.textContent = `© ${photo.credit.text}`;
+          credit.textContent = shortCredit(photo.credit.text);
           credit.title = `Foto: ${photo.credit.text} (${photo.credit.source})`;
           pic.append(credit);
         }
@@ -8133,8 +8141,32 @@ function bioWhereOn() {
   return "all";
 }
 
+// 5735 -> "5.735" (il formato italiano del browser non mette il punto sotto le 10.000).
+function fmtCount(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+const BIO_PAGE = 60;
+const BIO_SECTION_PREVIEW = 24;
+
 function bioCardHtml(api, x) {
   const section = api.lifeSection(x.group);
+  if (x.ext) {
+    const note = x.obs ? `${fmtCount(x.obs)} osservazioni · catalogo mondiale` : "Catalogo mondiale";
+    // Senza nome italiano il titolo è il nome latino (in corsivo), una volta sola.
+    const title = x.itKnown ? `<h3>${escapeHtml(x.it)}</h3><p class="bio-la">${escapeHtml(x.la)}</p>` : `<h3 class="bio-title-la">${escapeHtml(x.la)}</h3>`;
+    return `<article class="bio-card bio-card-ext" data-bioid="${escapeHtml(x.id)}" role="button" tabindex="0">
+        <div class="bio-pic">
+          <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+          <img class="bio-shot" alt="" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
+        </div>
+        <div class="bio-body">
+          <p class="bio-kicker">${escapeHtml(section?.label || x.group)} · ${escapeHtml(x.where)}</p>
+          ${title}
+          <p class="bio-look">${escapeHtml(note)}</p>
+        </div>
+      </article>`;
+  }
   return `<article class="bio-card" data-bioid="${escapeHtml(x.id)}" role="button" tabindex="0">
         <div class="bio-pic">
           <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
@@ -8166,10 +8198,10 @@ function renderBiology() {
     <header class="bio-head">
       <p class="bio-kicker">Guida da immersione</p>
       <h2 class="serif">Biologia Marina</h2>
-      <p class="bio-lead">La guida è per l’immersione. Dal terzo carattere la ricerca aggiunge il registro mondiale: pesci, flora, coralli e il resto della fauna marina.</p>
+      <p class="bio-lead">Flora e fauna marina del Mediterraneo e del mondo, divise per tipo.</p>
     </header>
     <div class="bio-search">
-      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca nella guida o nel registro mondiale" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
+      <input class="search" type="search" enterkeyhint="search" placeholder="Cerca per nome italiano o latino" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
       <div class="bio-search-actions">
         <button class="btn ghost" type="button" data-biophoto>Cerca con foto</button>
         <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
@@ -8224,7 +8256,15 @@ function renderBiology() {
     }
     const section = group === "all" ? null : api.lifeSection(group);
     blurb.textContent = photo ? "" : (section?.blurb || "");
-    count.textContent = photo?.pending ? "Riconoscimento…" : (rows.length === 1 ? "1 specie" : `${rows.length} specie`);
+    const extCount = rows.filter((x) => x.ext).length;
+    if (photo?.pending) {
+      count.textContent = "Riconoscimento…";
+    } else {
+      const detail = extCount
+        ? `${fmtCount(rows.length - extCount)} con scheda completa · ${fmtCount(extCount)} dal catalogo mondiale`
+        : api.catalogReady?.() || photo ? "" : "Carico il catalogo mondiale…";
+      count.innerHTML = `<b>${rows.length === 1 ? "1 specie" : `${fmtCount(rows.length)} specie`}</b>${detail ? `<span>${escapeHtml(detail)}</span>` : ""}`;
+    }
     if (!rows.length) {
       list.innerHTML = photo
         ? `<p class="hint">${escapeHtml(photo.pending ? photo.hint : "Non ho riconosciuto questo soggetto nella guida. Avvicina l’animale e riprova.")}</p>`
@@ -8232,20 +8272,52 @@ function renderBiology() {
       showWorld();
       return;
     }
+    // Con migliaia di specie la lista va a blocchi: in "Tutti" le prime per sezione, in una sezione 60 alla volta.
     if (photo || group === "all") {
+      const perSection = photo ? Infinity : BIO_SECTION_PREVIEW;
       list.innerHTML = (api.LIFE_SECTIONS || [])
         .map((s) => {
           const items = rows.filter((x) => x.group === s.id);
           if (!items.length) return "";
-          return `<h3 class="bio-sec"><i>${s.emoji}</i><span>${escapeHtml(s.label)}</span><em>${items.length}</em></h3>${items.map((x) => bioCardHtml(api, x)).join("")}`;
+          const more = items.length > perSection
+            ? `<button class="btn ghost bio-more" type="button" data-bioopen="${escapeHtml(s.id)}">Mostra tutte le ${fmtCount(items.length)} specie di ${escapeHtml(s.label)}</button>`
+            : "";
+          return `<h3 class="bio-sec"><i>${s.emoji}</i><span>${escapeHtml(s.label)}</span><em>${fmtCount(items.length)}</em></h3>${items.slice(0, perSection).map((x) => bioCardHtml(api, x)).join("")}${more}`;
         })
         .join("");
     } else {
-      list.innerHTML = rows.map((x) => bioCardHtml(api, x)).join("");
+      const shown = Math.max(BIO_PAGE, Number(view.bioShow) || BIO_PAGE);
+      const more = rows.length > shown
+        ? `<button class="btn ghost bio-more" type="button" data-biomore>Mostra altre ${Math.min(BIO_PAGE, rows.length - shown)} (${fmtCount(rows.length - shown)} rimaste)</button>`
+        : "";
+      list.innerHTML = rows.slice(0, shown).map((x) => bioCardHtml(api, x)).join("") + more;
     }
     bindBioThumbs(list);
     showWorld();
   };
+  list.addEventListener("click", (e) => {
+    const open = e.target.closest("[data-bioopen]");
+    if (open) {
+      e.stopPropagation();
+      view.bioFilter = open.dataset.bioopen;
+      view.bioShow = BIO_PAGE;
+      groupChips.querySelectorAll(".chip").forEach((el) => el.classList.toggle("on", el.dataset.group === view.bioFilter));
+      paint();
+      sec.querySelector("[data-biofilters]")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      return;
+    }
+    if (e.target.closest("[data-biomore]")) {
+      e.stopPropagation();
+      view.bioShow = (Math.max(BIO_PAGE, Number(view.bioShow) || BIO_PAGE)) + BIO_PAGE;
+      paint();
+    }
+  }, true);
+  // Il catalogo mondiale si scarica solo qui, una volta; poi la lista si aggiorna da sola.
+  if (api.loadMarineCatalog && !api.catalogReady?.()) {
+    api.loadMarineCatalog(APP_VERSION).then(() => {
+      if (sec.isConnected) paint();
+    });
+  }
   let worldTimer = 0;
   let worldToken = 0;
   const showWorld = () => {
@@ -8268,7 +8340,7 @@ function renderBiology() {
         found = [];
       }
       if (token !== worldToken || !box.isConnected) return;
-      const known = new Set((api.MARINE_LIFE || []).map((row) => lifeNorm(row.la)));
+      const known = { has: (la) => (api.knownLatin ? api.knownLatin(la) : (api.MARINE_LIFE || []).some((row) => lifeNorm(row.la) === la)) };
       const group = bioGroupOn();
       const extra = found.filter((row) => !known.has(lifeNorm(row.la)) && (group === "all" || row.group === group));
       if (!extra.length) {
@@ -8311,9 +8383,11 @@ function renderBiology() {
     const b = document.createElement("button");
     b.type = "button";
     b.className = `chip bio-chip${bioGroupOn() === id ? " on" : ""}`;
+    b.dataset.group = id;
     b.innerHTML = `${emoji ? `<span class="bio-emoji">${emoji}</span>` : ""}${escapeHtml(label)}`;
     b.onclick = () => {
       view.bioFilter = id;
+      view.bioShow = BIO_PAGE;
       groupChips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
       b.classList.add("on");
       paint();
@@ -8327,13 +8401,17 @@ function renderBiology() {
     b.textContent = label;
     b.onclick = () => {
       view.bioWhere = id;
+      view.bioShow = BIO_PAGE;
       whereChips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
       b.classList.add("on");
       paint();
     };
     whereChips.append(b);
   });
-  input.oninput = paint;
+  input.oninput = () => {
+    view.bioShow = BIO_PAGE;
+    paint();
+  };
   input.onkeydown = async (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -8346,7 +8424,7 @@ function renderBiology() {
     }
     if (q.length >= 3 && bioWhereOn() !== "med" && bioWhereOn() !== "alien") {
       const world = await api.searchWorldLife(q);
-      const known = new Set((api.MARINE_LIFE || []).map((row) => lifeNorm(row.la)));
+      const known = { has: (la) => (api.knownLatin ? api.knownLatin(la) : (api.MARINE_LIFE || []).some((row) => lifeNorm(row.la) === la)) };
       const hit = world.find((row) => !known.has(lifeNorm(row.la)) && lifeNorm(row.la) === lifeNorm(q)) || world.find((row) => !known.has(lifeNorm(row.la)));
       if (hit) {
         openBioGuide(hit.id);
@@ -8495,12 +8573,20 @@ function renderBioGuide() {
         <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         <div class="bio-hero-caption">
           <p>${escapeHtml(section?.emoji || "")} ${escapeHtml(section?.label || "")} · ${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
-          <h2 class="serif" data-bioname>${escapeHtml(x.it)}</h2>
-          <p class="bio-la">${escapeHtml(x.la)}</p>
+          ${x.ext && !x.itKnown
+            ? `<h2 class="serif bio-title-la" data-bioname>${escapeHtml(x.la)}</h2>`
+            : `<h2 class="serif" data-bioname>${escapeHtml(x.it)}</h2>
+          <p class="bio-la">${escapeHtml(x.la)}</p>`}
         </div>
       </div>
       <p class="bio-credit-line" data-biocredit hidden></p>
-      ${x.worms ? `<div class="kv">
+      ${x.ext ? `<div class="kv">
+        <div><b>Gruppo</b>${escapeHtml(section?.label || "")}</div>
+        <div><b>Mari</b>${escapeHtml(x.where)}</div>
+        <div><b>Osservazioni</b>${escapeHtml(x.obs ? fmtCount(x.obs) : "—")}</div>
+        ${x.valid ? `<div><b>Nome aggiornato</b>${escapeHtml(x.valid)}</div>` : `<div><b>Fonte</b>iNaturalist · WoRMS</div>`}
+      </div>
+      <div class="bio-block"><h3>Catalogo mondiale</h3><p>${escapeHtml(`Specie marina ${x.where === "Mediterraneo" ? "presente anche nel Mediterraneo" : "dei mari del mondo"}. Le note da subacqueo (taglia, profondità, consigli) sono nelle schede complete della guida.`)}</p></div>` : x.worms ? `<div class="kv">
         <div><b>Rango</b>${escapeHtml(x.rank || "Specie")}</div>
         <div><b>Stato</b>${escapeHtml(x.statusLabel || "")}</div>
         <div><b>Famiglia</b>${escapeHtml(x.tag || "")}</div>
@@ -8521,7 +8607,8 @@ function renderBioGuide() {
       <div class="bio-block" data-biowiki><p class="hint">Caricamento della scheda enciclopedica…</p></div>
       <div class="bio-actions">
         <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>
-        <a class="btn ghost" href="${api.lifeWorms(x.la)}" target="_blank" rel="noopener noreferrer">Scheda WoRMS</a>
+        <a class="btn ghost" href="${api.lifeWorms(x.la)}" target="_blank" rel="noopener noreferrer">WoRMS</a>
+        ${x.ext && x.inat ? `<a class="btn ghost" href="https://www.inaturalist.org/taxa/${encodeURIComponent(x.inat)}" target="_blank" rel="noopener noreferrer">iNaturalist</a>` : ""}
       </div>
     `;
   }
@@ -8563,29 +8650,33 @@ function bindBioGuide(root, species) {
   const img = root.querySelector("[data-bioimg]");
   // La foto di riferimento del riconoscimento non si mostra più: poteva venire dalla Wikipedia locale
   // (immagini non libere). Si usa sempre la foto con licenza e credito, come nella lista.
-  api.lifePage(species.la, species.it).then((page) => {
-    if (gen !== bioThumbGen || !root.isConnected) return;
-    const src = page?.credit ? String(page?.thumb || "") : "";
-    if (src) {
-      showSpeciesPhoto(img, src, "");
-      const line = root.querySelector("[data-biocredit]");
-      if (line) {
-        const a = document.createElement("a");
-        a.href = page.credit.url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.textContent = page.credit.source;
-        line.replaceChildren(`Foto: ${page.credit.text} · `, a);
-        line.hidden = false;
-      }
+  const showPhoto = (photo) => {
+    if (!photo?.src || !photo.credit) return;
+    showSpeciesPhoto(img, photo.src, "");
+    const line = root.querySelector("[data-biocredit]");
+    if (line) {
+      const a = document.createElement("a");
+      a.href = photo.credit.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = photo.credit.source;
+      line.replaceChildren(`Foto: ${photo.credit.text} · `, a);
+      line.hidden = false;
     }
+  };
+  // Foto: dal catalogo (specie estese e schede complete) o, se manca, cercata in rete con il suo credito.
+  api.lifePhoto(species.valid || species.la, species.it).then((photo) => {
+    if (gen === bioThumbGen && root.isConnected) showPhoto(photo);
+  });
+  api.lifePage(species.valid || species.la, species.ext && !species.itKnown ? "" : species.it).then((page) => {
+    if (gen !== bioThumbGen || !root.isConnected) return;
     const box = root.querySelector("[data-biowiki]");
     if (!box) return;
     if (page?.extract) {
       const more = page.url
         ? `<p><a href="${escapeHtml(page.url)}" target="_blank" rel="noopener noreferrer">Apri la voce</a></p>`
         : "";
-      box.innerHTML = `<h3>Scheda enciclopedica</h3><p>${escapeHtml(page.extract)}</p>${more}<p class="hint">Testo da Wikipedia, licenza CC BY-SA.</p>`;
+      box.innerHTML = `<h3>Scheda enciclopedica</h3><p>${escapeHtml(page.extract)}</p>${more}<p class="hint">${page.lang === "en" ? "Testo in inglese da Wikipedia (manca la voce italiana)" : "Testo da Wikipedia"}, licenza CC BY-SA.</p>`;
     } else {
       box.innerHTML = `<p class="hint">La scheda enciclopedica si carica quando c'è rete. Riconoscimento, habitat e note restano nella guida anche offline.</p>`;
     }

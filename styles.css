@@ -2299,17 +2299,25 @@ body.page-people .community-page {
 .bio-page [data-bioblurb]:empty { display: none; }
 .bio-page [data-bioblurb] { margin: 8px 0 0; font-size: 13px; line-height: 1.4; }
 .bio-page [data-biocount] {
-  display: inline-block;
-  margin: 8px 0 0;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(11, 107, 104, 0.1);
-  color: #0b6b68;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 10px 0 0;
+  padding: 7px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 2px 10px rgba(11, 79, 77, 0.08);
+  color: #0b4f4d;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
+.bio-page [data-biocount] b { font-size: 15px; font-weight: 800; }
+.bio-page [data-biocount] span { opacity: 0.78; }
+.bio-page [data-biocount]:empty { display: none; }
 .bio-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .bio-sec {
   display: flex;
@@ -2909,3 +2917,10 @@ body.page-home .app-rate p {
 }
 .bio-credit-line { margin: 6px 2px 0; font-size: 11px; opacity: 0.75; overflow-wrap: anywhere; }
 .bio-credit-line a { color: inherit; }
+
+/* Catalogo mondiale: lista a blocchi */
+.bio-more { display: block; width: 100%; margin: 6px 0 14px; }
+.bio-title-la { font-style: italic; }
+.bio-page .bio-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; }
+.bio-page .bio-actions .btn { padding-left: 8px; padding-right: 8px; text-align: center; white-space: nowrap; }
+.bio-page [data-biowiki] a { color: #0b6b68; font-weight: 700; text-decoration: none; }
