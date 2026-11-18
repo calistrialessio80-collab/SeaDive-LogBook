@@ -5039,12 +5039,12 @@ function setPageSkin() {
   document.body.classList.toggle("page-people", Boolean(loadSession()) && view.name === "people" && !view.personId);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (!meta) return;
-  let color = "#021018";
+  let color = "#04121c";
   if (!loadSession()) color = "#0c3a42";
   else if (view.name === "map") color = "#061018";
-  else if (view.name === "bio") color = "#d7f6ff";
-  else if (view.name === "people" && !view.personId) color = "#d7f6ff";
-  else if (view.name === "profile") color = "#08343c";
+  else if (view.name === "bio") color = "#04121c";
+  else if (view.name === "people" && !view.personId) color = "#04121c";
+  else if (view.name === "profile") color = "#04121c";
   meta.setAttribute("content", color);
 }
 
@@ -6311,7 +6311,7 @@ function homeBioPreview() {
     )
     .join("");
   const line = life.length
-    ? `${life.length.toLocaleString("it-IT")} specie nella guida`
+    ? `${fmtCount(life.length)} schede complete e migliaia di specie dal mondo`
     : "Guida e riconoscimento";
   return { chips, rows, line };
 }
@@ -6884,12 +6884,13 @@ function diveCard(d) {
 }
 
 function fillOcean(ctx, w, h) {
+  // Tema Abisso: dalla superficie (blu petrolio) al fondo scuro, senza l'azzurro chiaro che stonava.
   const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, "#9fd4f0");
-  g.addColorStop(0.18, "#4aa3d4");
-  g.addColorStop(0.48, "#1c5f9a");
-  g.addColorStop(0.78, "#0c3260");
-  g.addColorStop(1, "#04101f");
+  g.addColorStop(0, "#0f5a78");
+  g.addColorStop(0.22, "#0b4562");
+  g.addColorStop(0.5, "#082f47");
+  g.addColorStop(0.8, "#051d2e");
+  g.addColorStop(1, "#030d17");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 }

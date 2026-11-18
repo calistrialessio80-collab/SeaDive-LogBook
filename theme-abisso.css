@@ -1,0 +1,392 @@
+/* ============================================================
+   Tema "Abisso" — scuro, immersivo, moderno.
+   Fondale blu profondo, pannelli di vetro, accento ciano.
+   Si attiva con <body class="abisso"> e si carica dopo styles.css:
+   togliendo la classe (o questo file) l'app torna allo stile precedente.
+   ============================================================ */
+
+body.abisso {
+  --ab-bg-0: #030a11;
+  --ab-bg-1: #061722;
+  --ab-bg-2: #0a2433;
+  --ab-glass: rgba(255, 255, 255, 0.055);
+  --ab-glass-2: rgba(255, 255, 255, 0.085);
+  --ab-glass-strong: rgba(10, 30, 44, 0.78);
+  --ab-line: rgba(255, 255, 255, 0.09);
+  --ab-line-2: rgba(255, 255, 255, 0.16);
+  --ab-text: #e7f3f8;
+  --ab-text-2: #a9c3cf;
+  --ab-text-3: #7894a1;
+  --ab-cyan: #22d3ee;
+  --ab-cyan-2: #0ea5e9;
+  --ab-violet: #a78bfa;
+  --ab-coral: #fb7185;
+  --ab-green: #34d399;
+  --ab-amber: #fbbf24;
+  --ab-radius: 20px;
+  --ab-display: "Sora", "Outfit", system-ui, sans-serif;
+  --ab-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+
+  /* variabili del vecchio tema riutilizzate dai componenti */
+  --foam: var(--ab-text);
+  --line: var(--ab-line);
+  --teal: var(--ab-cyan);
+  --lagoon: var(--ab-cyan);
+  --shadow: var(--ab-shadow);
+
+  color: var(--ab-text);
+  background: var(--ab-bg-0);
+  color-scheme: dark;
+}
+
+/* ---------- Fondale: stesso per tutte le pagine ---------- */
+body.abisso,
+body.abisso.page-home,
+body.abisso.page-app,
+body.abisso.page-bio,
+body.abisso.page-people,
+body.abisso.page-profile {
+  background:
+    radial-gradient(120% 60% at 50% -12%, #0f5470 0%, rgba(15, 84, 112, 0) 60%),
+    radial-gradient(90% 50% at 100% 30%, rgba(34, 211, 238, 0.08) 0%, rgba(34, 211, 238, 0) 60%),
+    radial-gradient(80% 60% at 0% 80%, rgba(167, 139, 250, 0.07) 0%, rgba(167, 139, 250, 0) 60%),
+    linear-gradient(180deg, #072232 0%, #04121c 45%, #02080e 100%) fixed;
+  background-color: var(--ab-bg-0);
+}
+body.abisso.page-home::before,
+body.abisso.page-app::before,
+body.abisso.page-bio::before,
+body.abisso.page-bio::after,
+body.abisso.page-profile::before {
+  /* luce che filtra dalla superficie, molto leggera */
+  content: "";
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    repeating-linear-gradient(112deg, rgba(255, 255, 255, 0) 0 70px, rgba(120, 220, 255, 0.025) 76px, rgba(255, 255, 255, 0) 120px);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 55%);
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 55%);
+}
+body.abisso.page-bio::after { display: none; }
+body.abisso .ocean { display: none !important; }
+body.abisso .status-scrim,
+body.abisso.page-bio .status-scrim,
+body.abisso.page-people .status-scrim { background: #04121c; }
+
+/* ---------- Caratteri ---------- */
+body.abisso h1, body.abisso h2, body.abisso h3, body.abisso .serif,
+body.abisso .home-brand h1, body.abisso .brand h1 {
+  font-family: var(--ab-display);
+  letter-spacing: -0.02em;
+  color: var(--ab-text);
+}
+body.abisso .hint, body.abisso .meta { color: var(--ab-text-2); opacity: 1; }
+body.abisso a { color: var(--ab-cyan); }
+body.abisso ::selection { background: rgba(34, 211, 238, 0.35); }
+
+/* ---------- Intestazione delle pagine ---------- */
+body.abisso .brand h1,
+body.abisso.page-app .brand h1,
+body.abisso.page-bio .brand h1,
+body.abisso.page-people .brand h1 { color: #fff; text-shadow: none; font-weight: 700; }
+body.abisso .brand p,
+body.abisso.page-app .brand p,
+body.abisso.page-bio .brand p,
+body.abisso.page-people .brand p { color: var(--ab-cyan); text-shadow: none; opacity: 1; letter-spacing: 0.22em; font-weight: 600; }
+body.abisso .mark { background: conic-gradient(from 200deg, #22d3ee, #0ea5e9, #a78bfa, #22d3ee); box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 6px 18px rgba(34, 211, 238, 0.25); }
+body.abisso .home-brand h1 { color: #fff; text-shadow: none; }
+body.abisso .home-brand p { color: var(--ab-text-2); text-shadow: none; }
+body.abisso .section-head h3,
+body.abisso.page-app .section-head h3,
+body.abisso.page-home .section-head h3 { color: #fff; text-shadow: none; }
+body.abisso .icon-btn { background: var(--ab-glass-2); color: var(--ab-text); border: 1px solid var(--ab-line); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+body.abisso .icon-btn.add,
+body.abisso .fab {
+  background: linear-gradient(135deg, var(--ab-cyan) 0%, var(--ab-cyan-2) 100%);
+  color: #032230; border: 0;
+  box-shadow: 0 8px 24px rgba(34, 211, 238, 0.35), inset 0 1px 0 rgba(255,255,255,.35);
+}
+
+/* ---------- Pannelli di vetro ---------- */
+body.abisso .card,
+body.abisso .profile-block,
+body.abisso .bio-card,
+body.abisso .bio-block,
+body.abisso .people-card,
+body.abisso .sign-card,
+body.abisso .confirm-card,
+body.abisso .community-page .card {
+  background: var(--ab-glass);
+  border: 1px solid var(--ab-line);
+  box-shadow: var(--ab-shadow);
+  color: var(--ab-text);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+body.abisso .card { border-radius: 24px; }
+body.abisso .kv div {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--ab-line);
+  color: var(--ab-text);
+}
+body.abisso .kv b { color: var(--ab-text-3); opacity: 1; }
+body.abisso .thumb, body.abisso .cover { border-color: var(--ab-line); }
+@media (hover: hover) and (pointer: fine) {
+  body.abisso .dive-card:hover, body.abisso .bio-card:hover { border-color: rgba(34, 211, 238, 0.4); }
+}
+
+/* ---------- Pulsanti ---------- */
+body.abisso .btn {
+  font-weight: 600;
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+body.abisso .btn:active { transform: scale(0.98); }
+body.abisso .btn.primary {
+  background: linear-gradient(135deg, var(--ab-cyan) 0%, var(--ab-cyan-2) 100%);
+  color: #032230;
+  box-shadow: 0 6px 18px rgba(34, 211, 238, 0.28), inset 0 1px 0 rgba(255,255,255,.3);
+}
+body.abisso .btn.ghost {
+  background: var(--ab-glass-2);
+  color: var(--ab-text);
+  border: 1px solid var(--ab-line-2);
+}
+body.abisso .btn.danger { background: rgba(251, 113, 133, 0.14); color: #fda4af; border: 1px solid rgba(251, 113, 133, 0.28); }
+body.abisso .btn:disabled { opacity: 0.45; }
+
+/* ---------- Campi ---------- */
+body.abisso input,
+body.abisso textarea,
+body.abisso select,
+body.abisso .search,
+body.abisso .field input,
+body.abisso .field textarea,
+body.abisso .field select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--ab-line-2);
+  color: var(--ab-text);
+  border-radius: 14px;
+}
+body.abisso input::placeholder, body.abisso textarea::placeholder { color: var(--ab-text-3); }
+body.abisso input:focus, body.abisso textarea:focus, body.abisso select:focus, body.abisso .search:focus {
+  outline: none;
+  border-color: rgba(34, 211, 238, 0.7);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
+}
+body.abisso select option { background: #0a2433; color: var(--ab-text); }
+body.abisso .field { color: var(--ab-text-2); }
+body.abisso input[type="date"], body.abisso input[type="time"] { color-scheme: dark; }
+body.abisso input[type="checkbox"], body.abisso input[type="radio"] { accent-color: var(--ab-cyan); }
+
+/* ---------- Filtri a pillola ---------- */
+body.abisso .chip {
+  background: var(--ab-glass);
+  border: 1px solid var(--ab-line-2);
+  color: var(--ab-text-2);
+}
+body.abisso .chip.on {
+  background: var(--ab-cyan);
+  border-color: var(--ab-cyan);
+  color: #032230;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(34, 211, 238, 0.3);
+}
+
+/* ---------- Barra in basso ---------- */
+body.abisso .nav-dock,
+body.abisso.page-bio .nav-dock,
+body.abisso.page-people .nav-dock {
+  background: linear-gradient(180deg, rgba(2, 8, 14, 0) 0%, rgba(2, 8, 14, 0.85) 55%);
+}
+body.abisso .nav {
+  background: rgba(8, 24, 36, 0.78);
+  border: 1px solid var(--ab-line);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+body.abisso .nav button { color: var(--ab-text-3); }
+body.abisso .nav button.active { color: var(--ab-cyan); }
+
+/* ---------- Finestre e avvisi ---------- */
+body.abisso .confirm-veil { background: rgba(1, 6, 10, 0.65); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+body.abisso .confirm-card { background: rgba(10, 30, 44, 0.92); }
+body.abisso .confirm-card p { color: var(--ab-text-2); }
+body.abisso .backup-banner {
+  background: rgba(251, 191, 36, 0.12); color: #fde68a;
+  border: 1px solid rgba(251, 191, 36, 0.3); border-left: 1px solid rgba(251, 191, 36, 0.3);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+body.abisso .err-toast { background: rgba(60, 14, 22, 0.92); color: #fecdd3; border: 1px solid rgba(251, 113, 133, 0.4); }
+body.abisso .update-banner { background: rgba(8, 40, 56, 0.94); color: var(--ab-text); border: 1px solid rgba(34, 211, 238, 0.4); }
+
+/* ---------- Un solo carattere per titoli e numeri ---------- */
+body.abisso .gate-card h1,
+body.abisso .num,
+body.abisso .add-site-dock summary,
+body.abisso .sat-place .sat-name,
+body.abisso .bio-sec,
+body.abisso .home-stats .kpi strong,
+body.abisso .kpi strong { font-family: var(--ab-display); letter-spacing: -0.03em; }
+
+/* ---------- Etichette piccole in ciano ---------- */
+body.abisso .home-head p,
+body.abisso .home-gate-copy small,
+body.abisso .bio-kicker,
+body.abisso .section-head p { color: var(--ab-cyan); }
+
+/* ---------- Schede del diario e statistiche ---------- */
+body.abisso .log-card,
+body.abisso .kpi {
+  background: var(--ab-glass);
+  border: 1px solid var(--ab-line);
+  box-shadow: var(--ab-shadow);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+body.abisso .log-card::before,
+body.abisso .kpi::before { background: none; }
+body.abisso .kpi p, body.abisso .kpi em { color: var(--ab-text-3); }
+body.abisso .kpi strong { color: #fff; }
+body.abisso .home-stats {
+  background: linear-gradient(160deg, rgba(34, 211, 238, 0.10) 0%, rgba(255, 255, 255, 0.04) 45%, rgba(167, 139, 250, 0.08) 100%);
+  border: 1px solid var(--ab-line);
+  box-shadow: var(--ab-shadow);
+}
+body.abisso .home-stats::before { background: none; }
+body.abisso .home-stats .kpi { background: rgba(255, 255, 255, 0.045); }
+body.abisso .yb i, body.abisso .home-stats .yb i { background: rgba(255, 255, 255, 0.12); }
+body.abisso .yb:last-child i, body.abisso .home-stats .yb:last-child i { background: linear-gradient(180deg, var(--ab-cyan), var(--ab-violet)); box-shadow: 0 0 16px rgba(34, 211, 238, 0.35); }
+body.abisso .yb b, body.abisso .home-stats .yb b { color: var(--ab-cyan); }
+body.abisso .yb small { color: var(--ab-text-3); }
+body.abisso .num { background: linear-gradient(135deg, var(--ab-cyan), var(--ab-cyan-2)); color: #032230; }
+body.abisso .log-kpis div { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--ab-line); }
+body.abisso .log-kpis small { color: var(--ab-text-3); }
+body.abisso .log-kpis b { color: #fff; }
+body.abisso .log-profile, body.abisso .log-map, body.abisso .log-thermo { border: 1px solid var(--ab-line); background: #061a28; }
+body.abisso .nav button.active > span {
+  background: radial-gradient(circle at 50% 35%, rgba(34, 211, 238, 0.32), rgba(34, 211, 238, 0.10) 70%);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.35), 0 6px 18px rgba(34, 211, 238, 0.25);
+}
+
+/* ---------- Biologia ---------- */
+body.abisso .bio-page [data-biocount] { background: rgba(34, 211, 238, 0.08); border: 1px solid rgba(34, 211, 238, 0.22); box-shadow: none; color: var(--ab-text); }
+body.abisso .bio-page [data-biocount] span { color: var(--ab-text-2); opacity: 1; }
+body.abisso .bio-sec em { color: var(--ab-cyan); }
+body.abisso .bio-sec i { background: rgba(34, 211, 238, 0.12); }
+body.abisso .bio-la { color: var(--ab-text-2); }
+body.abisso .bio-look { color: var(--ab-text-2); }
+body.abisso .bio-mark { background: linear-gradient(160deg, #0d3a50, #072433); }
+body.abisso .bio-credit-line, body.abisso .bio-credit-line a { color: var(--ab-text-3); }
+body.abisso .bio-page [data-biowiki] a { color: var(--ab-cyan); }
+body.abisso .bio-back { color: var(--ab-cyan); }
+
+/* ---------- Profilo ---------- */
+body.abisso .date-box,
+body.abisso .time-box { background: rgba(255, 255, 255, 0.05); border-color: var(--ab-line-2); color: var(--ab-text); }
+body.abisso .certs-fold { background: var(--ab-glass); border: 1px solid var(--ab-line); color: var(--ab-text); }
+body.abisso .certs-fold input,
+body.abisso .cert-row input { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--ab-line-2); color: var(--ab-text); }
+/* La firma resta su fondo chiaro: si disegna con inchiostro scuro, come su carta. */
+body.abisso .sign-pad,
+body.abisso .sign-stage { border-radius: 16px; }
+body.abisso .sign-stage { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+body.abisso .profile-hero { box-shadow: var(--ab-shadow); }
+
+/* ---------- Community ---------- */
+body.abisso .sea-photo-fallback,
+body.abisso .contact-fallback,
+body.abisso .gate-face b {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.28), rgba(167, 139, 250, 0.28));
+  color: #fff;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+}
+
+/* ---------- Mappa ---------- */
+body.abisso .maplibregl-ctrl-group,
+body.abisso .maplibregl-ctrl-attrib { background: rgba(8, 24, 36, 0.82) !important; border: 1px solid var(--ab-line); }
+body.abisso .maplibregl-ctrl-group button { filter: invert(1) hue-rotate(180deg); }
+body.abisso .maplibregl-ctrl-attrib a { color: var(--ab-text-2); }
+body.abisso .add-site-dock { background: rgba(8, 24, 36, 0.86); border: 1px solid var(--ab-line); color: var(--ab-text); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+
+/* ---------- Home: collegamenti (Biologia, Community, Mappa) ---------- */
+body.abisso .home-gate { border: 1px solid var(--ab-line); box-shadow: var(--ab-shadow); }
+body.abisso .home-gate.gate-bio {
+  background:
+    radial-gradient(90% 70% at 85% 0%, rgba(34, 211, 238, 0.28), rgba(34, 211, 238, 0) 60%),
+    radial-gradient(70% 60% at 0% 100%, rgba(52, 211, 153, 0.16), rgba(52, 211, 153, 0) 60%),
+    linear-gradient(170deg, #0b3a50 0%, #072433 55%, #051823 100%);
+}
+body.abisso .home-gate.gate-people {
+  background:
+    radial-gradient(90% 70% at 10% 0%, rgba(167, 139, 250, 0.30), rgba(167, 139, 250, 0) 60%),
+    radial-gradient(70% 60% at 100% 100%, rgba(34, 211, 238, 0.16), rgba(34, 211, 238, 0) 60%),
+    linear-gradient(170deg, #1a2350 0%, #0e1838 55%, #081026 100%);
+}
+body.abisso .gate-bubbles { opacity: 0.35; }
+body.abisso .gate-chips em,
+body.abisso .gate-life > span {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--ab-text);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+body.abisso .gate-life > span * { color: inherit; }
+body.abisso .gate-life i, body.abisso .gate-life small, body.abisso .gate-life em { color: var(--ab-text-2); }
+/* La costa della Mappa diventa un tramonto: stessa illustrazione, luce più bassa */
+body.abisso .coast-scene { filter: brightness(0.72) saturate(0.95) hue-rotate(-8deg); }
+body.abisso .gate-face {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.35), rgba(167, 139, 250, 0.35));
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+body.abisso .gate-face b { background: none; border: 0; color: #fff; }
+
+/* ---------- Accesso ---------- */
+body.abisso.page-auth { background: #04121c; }
+body.abisso.page-auth::before {
+  background: linear-gradient(180deg, rgba(3, 10, 17, 0.15) 0%, rgba(3, 10, 17, 0.55) 40%, rgba(3, 10, 17, 0.94) 100%);
+}
+body.abisso .gate-card {
+  background: rgba(8, 26, 38, 0.72);
+  border: 1px solid var(--ab-line-2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+}
+body.abisso .gate-card p,
+body.abisso .privacy-accept,
+body.abisso .privacy-body { color: var(--ab-text-2); }
+body.abisso .privacy-fold summary { color: var(--ab-cyan); }
+body.abisso .sso-google { background: #fff; color: #1f1f1f; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+
+/* ---------- Firma: riquadro scuro, area di firma chiara ---------- */
+body.abisso .sign-pad { background: var(--ab-glass); border: 1px solid var(--ab-line); color: var(--ab-text); }
+body.abisso .sign-stage { background: #f2f7f9; border-radius: 14px; }
+body.abisso canvas.sign { background: #f2f7f9; border-radius: 14px; }
+body.abisso .sign-ghost { color: rgba(8, 56, 72, 0.4); }
+body.abisso .btn-wipe { background: rgba(251, 113, 133, 0.16); color: #fda4af; border: 1px solid rgba(251, 113, 133, 0.3); }
+
+/* ---------- Altri componenti ---------- */
+body.abisso .brand-card,
+body.abisso .stage-card,
+body.abisso .stat,
+body.abisso .check-pick,
+body.abisso .dive-chip,
+body.abisso .dive-shot {
+  background: var(--ab-glass);
+  border: 1px solid var(--ab-line);
+  color: var(--ab-text);
+}
+body.abisso .check-pick:has(input:checked) { border-color: rgba(34, 211, 238, 0.55); background: rgba(34, 211, 238, 0.10); }
+body.abisso .dive-shot { color: var(--ab-text-2); }
+body.abisso .leaflet-container { background: #061a28; }
+body.abisso .leaflet-bar a,
+body.abisso .leaflet-control-zoom a { background: rgba(8, 24, 36, 0.9); color: var(--ab-text); border-color: var(--ab-line); }
+body.abisso .leaflet-control-attribution { background: rgba(8, 24, 36, 0.75) !important; color: var(--ab-text-3); }
+body.abisso .leaflet-control-attribution a { color: var(--ab-text-2); }
+body.abisso .coffee-btn,
+body.abisso a.btn.coffee-btn { color: #1b1b1b; box-shadow: 0 8px 22px rgba(255, 221, 0, 0.22); }
+body.abisso .app-rate,
+body.abisso.page-home .app-rate,
+body.abisso .coffee-card { border-color: var(--ab-line); background-color: var(--ab-glass); }

@@ -5,6 +5,7 @@ const ASSETS = [
   "./frame-guard.js",
   "./errors.js",
   "./styles.css",
+  "./theme-abisso.css",
   "./app.js",
   "./computers.js",
   "./ble-eon.js",
