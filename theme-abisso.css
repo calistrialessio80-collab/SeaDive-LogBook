@@ -409,3 +409,38 @@ body.abisso a.btn.coffee-btn { color: #1b1b1b; box-shadow: 0 8px 22px rgba(255, 
 body.abisso .app-rate,
 body.abisso.page-home .app-rate,
 body.abisso .coffee-card { border-color: var(--ab-line); background-color: var(--ab-glass); }
+
+/* Home: voto e caffè in un solo riquadro */
+body.abisso.page-home .app-rate.rate-coffee {
+  margin-top: 14px;
+  padding: 16px 16px 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(103, 232, 249, 0.16);
+  background:
+    radial-gradient(90% 70% at 100% 110%, rgba(251, 191, 36, 0.13), transparent 60%),
+    radial-gradient(80% 70% at 0% -10%, rgba(34, 211, 238, 0.12), transparent 60%),
+    rgba(8, 28, 40, 0.72);
+}
+.rate-coffee h3 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: #fff; }
+body.page-home .app-rate.rate-coffee p.rate-sub { margin: 3px 0 8px; font-size: 12px; font-weight: 500; letter-spacing: 0; color: rgba(255, 255, 255, 0.62); text-shadow: none; }
+.rate-coffee .star { width: 40px; height: 40px; }
+.rate-coffee .rate-note { min-height: 0; }
+.rate-coffee .rate-note:empty { display: none; }
+.rate-coffee-row {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  text-align: left;
+}
+body.page-home .app-rate.rate-coffee .rate-coffee-row p {
+  flex: 1; margin: 0; font-size: 12.5px; font-weight: 500; line-height: 1.4; letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.72); text-shadow: none;
+}
+.coffee-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 13px; border-radius: 99px;
+  font-size: 13px; font-weight: 650; white-space: nowrap; text-decoration: none;
+  color: #fde68a; background: rgba(251, 191, 36, 0.14); border: 1px solid rgba(251, 191, 36, 0.42);
+}
+.coffee-pill svg { display: block; width: 16px; height: 16px; }
+.coffee-pill:active { background: rgba(251, 191, 36, 0.24); }

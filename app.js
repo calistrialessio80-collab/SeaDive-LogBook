@@ -4451,6 +4451,7 @@ function showUpdateBanner(reg) {
 
 const APP_VERSION = "226";
 const COFFEE_URL = "https://buymeacoffee.com/seadive";
+const COFFEE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>`;
 
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
@@ -4800,6 +4801,10 @@ function effortModel(d) {
 
 function effortHtml(d, compact = false) {
   const e = effortModel(d);
+  // Nelle schede, senza dati una barra vuota non dice niente: meglio spiegare cosa manca.
+  if (compact && !(e.sac > 0)) {
+    return `<p class="effort-missing"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M9 6.5h6a2 2 0 0 1 2 2V19a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2zM10 6.5V4.5h4v2M12 2.5v2"/></svg><span>Consumo d’aria: aggiungi bombola e bar finali per vederlo.</span></p>`;
+  }
   const val = e.sac > 0 ? `SAC ${fmtDepth(e.sac)} L/min · ${e.label}` : e.label;
   const ticks = [12, 16, 20, 24, 28]
     .map((n) => `<i class="effort-tick" style="left:${sacBarPct(n)}%"></i>`)
@@ -7024,11 +7029,12 @@ function renderHome() {
       .catch(() => {});
   }
   const rate = document.createElement("section");
-  rate.className = "app-rate";
+  rate.className = "app-rate rate-coffee";
   const rating = loadAppRating();
   rate.innerHTML = `
-    <p>Ti piace questa app</p>
-    <div class="stars" role="group" aria-label="Ti piace questa app">
+    <h3>Ti piace SeaDive?</h3>
+    <p class="rate-sub">Tocca le stelle per dare il tuo voto</p>
+    <div class="stars" role="group" aria-label="Ti piace SeaDive?">
       ${[1, 2, 3, 4, 5]
         .map(
           (n) => `<button class="star${n <= rating ? " on" : ""}" type="button" data-star="${n}" aria-label="${n} ${n === 1 ? "stella" : "stelle"}" aria-pressed="${n <= rating ? "true" : "false"}">
@@ -7038,6 +7044,10 @@ function renderHome() {
         .join("")}
     </div>
     <p class="rate-note" data-ratenote></p>
+    <div class="rate-coffee-row">
+      <p>Se il diario ti è utile, puoi offrire un caffè a chi lo sviluppa.</p>
+      <a class="coffee-pill" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${COFFEE_ICON}Offri un caffè</a>
+    </div>
   `;
   const note = rate.querySelector("[data-ratenote]");
   const showRatingLine = (status, board) => {
@@ -7080,18 +7090,18 @@ function renderHome() {
     };
   });
   frag.append(rate);
-  frag.append(coffeeCard("home"));
   return frag;
 }
 
-function coffeeCard(where) {
+// Nel Profilo; in Home il caffè sta dentro il riquadro del voto.
+function coffeeCard() {
   const el = document.createElement("section");
-  el.className = where === "home" ? "coffee-card" : "card coffee-card profile-coffee";
+  el.className = "card coffee-card profile-coffee";
   el.innerHTML = `
     <h3 class="serif">Sostieni SeaDive</h3>
     <p>Se il diario ti è utile, puoi offrire un caffè.</p>
     <a class="btn coffee-btn" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>
+      ${COFFEE_ICON}
       Offri un caffè
     </a>
   `;
@@ -7117,6 +7127,8 @@ function diveCard(d, opts = {}) {
   const temps = thermo.map(pointTemp);
   const tMin = temps.length ? Math.min(...temps) : null;
   const tMax = temps.length ? Math.max(...temps) : null;
+  // Il pannello serve solo se la temperatura cambia con la profondità.
+  const thermoUseful = thermo.length >= 3 && tMax - tMin >= 0.3;
   const tLabel = tMin != null ? (tMin === tMax ? `${fmtDepth(tMin)} °C` : `${fmtDepth(tMin)}–${fmtDepth(tMax)} °C`) : "";
   art.className = "log-card";
   art.innerHTML = `
@@ -7136,16 +7148,20 @@ function diveCard(d, opts = {}) {
     </div>
     <div class="log-viz">
       <div class="log-profile">
-        <span>${thermo.length >= 3 ? "Profondità + temp" : "Profilo profondità"}</span>
+        <span>Profilo</span>
         <canvas class="spark"></canvas>
         <strong>${fmtDepth(d.maxDepth)} m</strong>
       </div>
-      <div class="log-map">${map || (isSafeImage(d.photo) ? `<img alt="" src="${escapeHtml(d.photo)}" />` : `<div class="map-fallback">Mappa</div>`)}</div>
-      <div class="log-thermo">
+      <div class="log-map">${map || (isSafeImage(d.photo) ? `<img alt="" src="${escapeHtml(d.photo)}" />` : mapPlaceholder(d))}</div>
+      ${
+        thermoUseful
+          ? `<div class="log-thermo">
         <span>Temperatura / profondità</span>
         <canvas class="thermo"></canvas>
-        <strong>${escapeHtml(tLabel || (d.bottomTemp ? d.bottomTemp + " °C fondo" : "—"))}</strong>
-      </div>
+        <strong>${escapeHtml(tLabel)}</strong>
+      </div>`
+          : ""
+      }
     </div>
     ${effortHtml(d, true)}
   `;
@@ -7169,6 +7185,16 @@ function diveCard(d, opts = {}) {
     if (th) drawTempDepth(th, drawn);
   });
   return art;
+}
+
+// Miniatura senza coordinate: segnaposto con la località invece di un riquadro vuoto.
+function mapPlaceholder(d) {
+  const where = d.location || d.site || "";
+  return `<div class="map-fallback">
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 21s-6.5-6.1-6.5-11a6.5 6.5 0 0 1 13 0c0 4.9-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+    ${where ? `<b>${escapeHtml(where)}</b>` : ""}
+    <small>Posizione da aggiungere</small>
+  </div>`;
 }
 
 function fillOcean(ctx, w, h) {
@@ -7203,29 +7229,54 @@ function drawSpark(canvas, points) {
   fillOcean(ctx, w, h);
   if (!pts.length) return;
   const { maxT, maxD } = profileExtent(pts);
-  const x = (t) => (t / maxT) * w;
-  const y = (d) => (d / maxD) * h * 0.86 + h * 0.08;
+  // Margini: la linea resta dentro il riquadro e sotto la profondità scritta in alto.
+  const x = (t) => w * 0.06 + (t / maxT) * w * 0.88;
+  const y = (d) => h * 0.34 + (d / maxD) * h * 0.5;
+  const top = y(0);
+  ctx.save();
+  ctx.setLineDash([4 * dpr, 4 * dpr]);
   ctx.beginPath();
-  pts.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p.d)) : ctx.moveTo(x(p.t), y(p.d))));
-  ctx.strokeStyle = "#ffffff";
+  ctx.moveTo(w * 0.06, top);
+  ctx.lineTo(w * 0.94, top);
+  ctx.strokeStyle = "rgba(165,243,252,0.35)";
+  ctx.lineWidth = 1 * dpr;
+  ctx.stroke();
+  ctx.restore();
+  const trace = () => {
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(x(p.t), y(p.d)) : ctx.moveTo(x(p.t), y(p.d))));
+  };
+  trace();
+  ctx.lineTo(x(pts[pts.length - 1].t), top);
+  ctx.lineTo(x(pts[0].t), top);
+  ctx.closePath();
+  const fill = ctx.createLinearGradient(0, top, 0, y(maxD));
+  fill.addColorStop(0, "rgba(34,211,238,0.05)");
+  fill.addColorStop(1, "rgba(34,211,238,0.28)");
+  ctx.fillStyle = fill;
+  ctx.fill();
+  trace();
+  const line = ctx.createLinearGradient(0, top, 0, y(maxD));
+  line.addColorStop(0, "#a5f3fc");
+  line.addColorStop(1, "#22d3ee");
+  ctx.strokeStyle = line;
   ctx.lineWidth = 2.2 * dpr;
   ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.stroke();
-  ctx.lineTo(x(pts[pts.length - 1].t), h);
-  ctx.lineTo(x(pts[0].t), h);
-  ctx.closePath();
-  ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fill();
   let deep = pts[0];
   pts.forEach((p) => {
     if (p.d >= deep.d) deep = p;
   });
   ctx.beginPath();
-  ctx.arc(x(deep.t), y(deep.d), 5 * dpr, 0, Math.PI * 2);
+  ctx.arc(x(deep.t), y(deep.d), 4.5 * dpr, 0, Math.PI * 2);
   ctx.fillStyle = "#3dcf6a";
   ctx.fill();
+  ctx.strokeStyle = "#04121c";
+  ctx.lineWidth = 2 * dpr;
+  ctx.stroke();
   const temps = pts.map(pointTemp).filter((n) => n != null);
-  if (temps.length >= 3) {
+  if (temps.length >= 3 && Math.max(...temps) - Math.min(...temps) >= 0.3) {
     const lo = Math.min(...temps) - 0.4;
     const hi = Math.max(...temps) + 0.4;
     const yT = (c) => h - ((c - lo) / Math.max(0.6, hi - lo)) * h * 0.72 - h * 0.1;
@@ -10813,7 +10864,7 @@ function renderProfile() {
     location.replace("./");
   };
   frag.append(form);
-  frag.append(coffeeCard("profile"));
+  frag.append(coffeeCard());
   return frag;
 }
 

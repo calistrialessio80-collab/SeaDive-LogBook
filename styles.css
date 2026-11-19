@@ -573,11 +573,11 @@ body.page-home .vault-home { color: rgba(255, 255, 255, 0.92); text-shadow: 0 1p
 .log-profile, .log-map, .log-thermo { border-radius: 14px; overflow: hidden; position: relative; min-height: 132px; background: #161c2c; }
 .log-thermo { grid-column: 1 / -1; min-height: 118px; }
 .log-profile span {
-  position: absolute; left: 12px; top: 10px; z-index: 1;
+  position: absolute; right: 12px; top: 13px; z-index: 1;
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,.72);
 }
 .log-profile strong {
-  position: absolute; left: 12px; bottom: 10px; z-index: 1; color: #fff; font-size: 18px;
+  position: absolute; left: 12px; top: 7px; z-index: 1; color: #fff; font-size: 20px; letter-spacing: -0.02em;
 }
 .log-profile canvas, .log-thermo canvas { width: 100%; height: 132px; display: block; }
 .log-thermo canvas { height: 118px; }
@@ -591,7 +591,19 @@ body.page-home .vault-home { color: rgba(255, 255, 255, 0.92); text-shadow: 0 1p
 .log-map .sat-place { margin: 0; height: 132px; border-radius: 0; }
 .log-map .sat-place img, .log-map > img { width: 100%; height: 132px; object-fit: cover; display: block; }
 .log-map .sat-name { display: none; }
-.map-fallback { height: 132px; display: grid; place-items: center; color: #8a93a3; background: #e9edf3; }
+.map-fallback {
+  height: 132px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  padding: 0 10px; text-align: center; color: #67e8f9;
+  background: radial-gradient(70% 60% at 50% 40%, rgba(34, 211, 238, 0.18), rgba(34, 211, 238, 0) 70%), #061a28;
+}
+.map-fallback svg { display: block; margin-bottom: 2px; }
+.map-fallback b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: #fff; }
+.map-fallback small { font-size: 11px; color: rgba(255, 255, 255, 0.6); }
+.effort-missing {
+  display: flex; align-items: center; gap: 8px; margin: 10px 4px 2px;
+  font-size: 12px; line-height: 1.35; color: rgba(255, 255, 255, 0.66);
+}
+.effort-missing svg { flex: none; color: #67e8f9; }
 .meta { margin: 0; font-size: 13px; opacity: 0.72; }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .pill {
