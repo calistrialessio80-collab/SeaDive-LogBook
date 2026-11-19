@@ -2743,6 +2743,20 @@ body.page-people .community-page {
     radial-gradient(ellipse at 84% -10%, rgba(255, 250, 214, 0.85), transparent 42%),
     linear-gradient(180deg, #e9fdff 0%, #8ed8ea 34%, #167e86 100%);
 }
+/* Foto vera dietro le specie (NOAA, pubblico dominio), scurita a sinistra e in basso per leggere le scritte */
+.gate-photo { position: absolute; inset: 0; pointer-events: none; }
+.gate-photo img { width: 100%; height: 100%; object-fit: cover; display: block; filter: saturate(1.15) contrast(1.05); }
+.gate-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(5, 24, 35, 0.78) 0%, rgba(5, 24, 35, 0.35) 55%, rgba(5, 24, 35, 0.05) 100%),
+    linear-gradient(180deg, rgba(11, 58, 80, 0.25) 0%, rgba(5, 24, 35, 0) 40%, rgba(5, 24, 35, 0.6) 100%);
+}
+.gate-bio .gate-chips,
+.gate-bio .gate-life { position: relative; z-index: 1; }
+.gate-bio .gate-life { max-width: 74%; }
 .gate-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .gate-chips em {
   font-style: normal;

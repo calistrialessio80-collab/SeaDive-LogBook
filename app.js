@@ -6946,6 +6946,7 @@ function renderHome() {
     </div>
     <button class="home-gate gate-bio" type="button" data-port="bio">
       <span class="home-gate-scene" aria-hidden="true">
+        <span class="gate-photo"><img src="./gorgonie.jpg" alt="" width="720" height="473" decoding="async" loading="lazy" title="Gorgonie sul reef di Pagan (NOAA, pubblico dominio)" /></span>
         <span class="gate-bubbles"></span>
         <span class="gate-chips">${bio.chips}</span>
         <span class="gate-life">${bio.rows}</span>
