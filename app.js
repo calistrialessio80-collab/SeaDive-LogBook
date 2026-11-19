@@ -5811,92 +5811,201 @@ function confidencePhrase(c, source) {
   const n = Number(c) || 0;
   if (!n) return "Segnalato da " + (PLACE_SOURCES[source] || "OpenStreetMap");
   const band = n >= 100 ? "Molto alta" : n >= 50 ? "Alta" : n >= 10 ? "Media" : "Bassa";
-  return band + " · " + n.toLocaleString("it-IT") + " schede";
+  return band + " · " + n.toLocaleString("it-IT") + (n === 1 ? " scheda" : " schede");
 }
+
+// Bandierine della mappa: disegno 40×50 (punti logici), asta a sinistra con la base in (FLAG_POLE_X, 50).
+const FLAG_W = 40;
+const FLAG_H = 50;
+const FLAG_POLE_X = 3;
+const FLAG_SCALE = 3;
+// Angolo in alto a destra del telo rispetto alla base dell'asta: lì va il numero dei gruppi,
+// così il colore della bandierina resta visibile.
+const FLAG_CLOTH_DX = 33;
+const FLAG_CLOTH_DY = -46;
 
 function clusterIconSize(zoom) {
   const z = Number(zoom) || 1;
-  if (z <= 1) return 0.82;
-  if (z >= 12) return 1;
-  if (z <= 6) return 0.82 + ((z - 1) / 5) * 0.1;
-  return 0.92 + ((z - 6) / 6) * 0.08;
+  if (z <= 1) return 0.78;
+  if (z >= 12) return 0.96;
+  if (z <= 6) return 0.78 + ((z - 1) / 5) * 0.1;
+  return 0.88 + ((z - 6) / 6) * 0.08;
 }
 
-function makeFlagImage(color, stripe) {
+/**
+ * Bandierina con asta lucida, telo mosso dal vento, sfumatura e ombra.
+ * kind "dive": bandiera sub con banda diagonale; kind "alfa": bandiera Alfa a coda di rondine.
+ */
+function drawMapFlag({ kind = "dive", light, dark, stripe = "#ffffff" }) {
   const canvas = document.createElement("canvas");
-  canvas.width = 72;
-  canvas.height = 92;
+  canvas.width = FLAG_W * FLAG_SCALE;
+  canvas.height = FLAG_H * FLAG_SCALE;
   const g = canvas.getContext("2d");
-  g.scale(2, 2);
-  g.fillStyle = "#3e4854";
-  g.fillRect(16.8, 23.2, 2.6, 20.4);
-  const drawCloth = () => {
-    const x = 1.6;
-    const y = 1.6;
-    const w = 32.8;
-    const h = 22.4;
-    const r = 3.2;
-    g.beginPath();
-    g.moveTo(x + r, y);
-    g.arcTo(x + w, y, x + w, y + h, r);
-    g.arcTo(x + w, y + h, x, y + h, r);
-    g.arcTo(x, y + h, x, y, r);
-    g.arcTo(x, y, x + w, y, r);
-    g.closePath();
-  };
-  drawCloth();
-  g.fillStyle = color;
-  g.fill();
-  g.save();
-  g.clip();
-  g.strokeStyle = stripe || "rgba(255,255,255,0.95)";
-  g.lineWidth = 5.2;
-  g.beginPath();
-  g.moveTo(3.2, 22);
-  g.lineTo(32.6, 3.6);
-  g.stroke();
-  g.restore();
-  drawCloth();
-  g.lineWidth = 1.7;
-  g.strokeStyle = "#ffffff";
-  g.stroke();
-  const img = g.getImageData(0, 0, canvas.width, canvas.height);
-  return { width: img.width, height: img.height, data: img.data };
-}
-
-/** Bandiera "Alfa" (bianca e blu a coda di rondine): il segnale internazionale dei sub, usato per i diving. */
-function makeDivingImage() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 72;
-  canvas.height = 92;
-  const g = canvas.getContext("2d");
-  g.scale(2, 2);
-  g.fillStyle = "#3e4854";
-  g.fillRect(2.4, 1.6, 2.4, 42);
+  g.scale(FLAG_SCALE, FLAG_SCALE);
+  const x0 = 4.4;
+  const x1 = 37.4;
   const cloth = () => {
     g.beginPath();
-    g.moveTo(4.8, 2);
-    g.lineTo(34.4, 2);
-    g.lineTo(25.6, 12.6);
-    g.lineTo(34.4, 23.2);
-    g.lineTo(4.8, 23.2);
+    g.moveTo(x0, 4);
+    g.bezierCurveTo(14, 1.2, 25, 6.4, x1, 3.4);
+    if (kind === "alfa") {
+      g.lineTo(29.4, 13.2);
+      g.lineTo(x1, 23.2);
+    } else {
+      g.bezierCurveTo(x1 + 0.6, 10, x1 - 0.6, 17, x1, 23.2);
+    }
+    g.bezierCurveTo(25, 26.2, 14, 21, x0, 23.8);
     g.closePath();
   };
-  cloth();
-  g.fillStyle = "#ffffff";
+  // Ombra sotto la base dell'asta.
+  g.fillStyle = "rgba(0, 0, 0, 0.35)";
+  g.beginPath();
+  g.ellipse(FLAG_POLE_X + 1, 48.6, 3.8, 1.2, 0, 0, Math.PI * 2);
   g.fill();
+  // Asta metallica.
+  const pole = g.createLinearGradient(1.6, 0, 4.4, 0);
+  pole.addColorStop(0, "#f8fafc");
+  pole.addColorStop(0.5, "#94a3b8");
+  pole.addColorStop(1, "#334155");
+  g.fillStyle = pole;
+  g.beginPath();
+  if (g.roundRect) g.roundRect(1.8, 3, 2.4, 45.6, 1.2);
+  else g.rect(1.8, 3, 2.4, 45.6);
+  g.fill();
+  // Telo con ombra morbida.
   g.save();
+  g.shadowColor = "rgba(0, 0, 0, 0.45)";
+  g.shadowBlur = 3;
+  g.shadowOffsetY = 1.2;
+  cloth();
+  const fill = g.createLinearGradient(x0, 3, x1, 24);
+  fill.addColorStop(0, light);
+  fill.addColorStop(1, dark);
+  g.fillStyle = kind === "alfa" ? "#ffffff" : fill;
+  g.fill();
+  g.restore();
+  g.save();
+  cloth();
   g.clip();
-  g.fillStyle = "#1d4ed8";
-  g.fillRect(19.6, 0, 20, 26);
+  if (kind === "alfa") {
+    g.fillStyle = fill;
+    g.fillRect(20.6, 0, 20, 28);
+  } else {
+    g.strokeStyle = stripe;
+    g.lineWidth = 4.6;
+    g.lineCap = "butt";
+    g.beginPath();
+    g.moveTo(x0 - 1, 25.4);
+    g.lineTo(x1 + 1, 1.6);
+    g.stroke();
+  }
+  // Riflesso in alto e piega in basso: il telo sembra stoffa, non un rettangolo piatto.
+  const sheen = g.createLinearGradient(0, 2, 0, 25);
+  sheen.addColorStop(0, "rgba(255, 255, 255, 0.32)");
+  sheen.addColorStop(0.45, "rgba(255, 255, 255, 0)");
+  sheen.addColorStop(1, "rgba(0, 0, 0, 0.16)");
+  g.fillStyle = sheen;
+  g.fillRect(0, 0, FLAG_W, 28);
   g.restore();
   cloth();
-  g.lineWidth = 1.6;
-  g.strokeStyle = "#0b1f3a";
+  g.lineWidth = 1.1;
+  g.lineJoin = "round";
+  g.strokeStyle = kind === "alfa" ? "rgba(15, 23, 42, 0.55)" : "rgba(255, 255, 255, 0.92)";
   g.stroke();
+  // Pomolo in cima all'asta.
+  const knob = g.createRadialGradient(2.4, 1.8, 0.3, 3, 2.6, 2.2);
+  knob.addColorStop(0, "#ffffff");
+  knob.addColorStop(1, "#94a3b8");
+  g.fillStyle = knob;
+  g.beginPath();
+  g.arc(FLAG_POLE_X, 2.6, 2, 0, Math.PI * 2);
+  g.fill();
   const img = g.getImageData(0, 0, canvas.width, canvas.height);
   return { width: img.width, height: img.height, data: img.data };
 }
+
+const mapFlagUrls = {};
+
+/** La stessa bandierina della mappa come immagine, per la legenda. */
+function mapFlagUrl(id) {
+  if (mapFlagUrls[id]) return mapFlagUrls[id];
+  try {
+    const img = drawMapFlag(MAP_FLAGS[id] || MAP_FLAGS["flag-vh"]);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    canvas.getContext("2d").putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+    mapFlagUrls[id] = canvas.toDataURL("image/png");
+  } catch {
+    mapFlagUrls[id] = "";
+  }
+  return mapFlagUrls[id];
+}
+
+function paintLegendFlags(root) {
+  root.querySelectorAll(".flag-ico").forEach((el) => {
+    const kind = [...el.classList].find((c) => c !== "flag-ico" && c !== "drawn");
+    const url = mapFlagUrl(kind === "grp" ? "flag-vh" : "flag-" + kind);
+    if (!url) return;
+    el.style.backgroundImage = `url("${url}")`;
+    el.classList.add("drawn");
+  });
+}
+
+let starfieldUrl = "";
+
+/** Cielo stellato dietro il globo: stelle di grandezze e colori diversi, sempre uguali (seme fisso). */
+function makeStarfield() {
+  if (starfieldUrl) return starfieldUrl;
+  try {
+    const size = 640;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const g = canvas.getContext("2d");
+    let seed = 20261119;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    const tints = ["255,255,255", "255,255,255", "255,255,255", "202,220,255", "255,236,210", "214,232,255"];
+    for (let i = 0; i < 420; i++) {
+      const x = rnd() * size;
+      const y = rnd() * size;
+      const big = rnd() < 0.06;
+      const r = big ? 0.9 + rnd() * 0.9 : 0.25 + rnd() * 0.55;
+      const a = big ? 0.75 + rnd() * 0.25 : 0.25 + rnd() * 0.55;
+      const tint = tints[Math.floor(rnd() * tints.length)];
+      if (big) {
+        const glow = g.createRadialGradient(x, y, 0, x, y, r * 4);
+        glow.addColorStop(0, `rgba(${tint},${a * 0.35})`);
+        glow.addColorStop(1, `rgba(${tint},0)`);
+        g.fillStyle = glow;
+        g.beginPath();
+        g.arc(x, y, r * 4, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.fillStyle = `rgba(${tint},${a})`;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+    starfieldUrl = canvas.toDataURL("image/png");
+  } catch {
+    starfieldUrl = "";
+  }
+  return starfieldUrl;
+}
+
+const MAP_FLAGS = {
+  "flag-vh": { light: "#4ade80", dark: "#15803d" },
+  "flag-hi": { light: "#fde68a", dark: "#d4a106" },
+  "flag-md": { light: "#fdba74", dark: "#ea580c" },
+  "flag-lo": { light: "#fb7185", dark: "#be123c" },
+  "flag-na": { light: "#5eead4", dark: "#0e7490" },
+  "flag-mine": { light: "#ffffff", dark: "#cbd5e1", stripe: "#64748b" },
+  "flag-alfa": { kind: "alfa", light: "#3b82f6", dark: "#1e3a8a" },
+};
 
 function personalDiveGeo() {
   const sites = window.SeaDiveSites?.annotateSites(state.dives || [])?.sites || [];
@@ -5927,6 +6036,8 @@ function renderWorldMap() {
   const mapWrap = document.createElement("div");
   mapWrap.className = "world-map";
   mapWrap.setAttribute("data-worldmap", "");
+  const stars = makeStarfield();
+  if (stars) mapWrap.style.setProperty("--stars", `url("${stars}")`);
   stage.append(mapWrap);
   const legend = document.createElement("aside");
   legend.className = "map-legend-float";
@@ -5944,13 +6055,14 @@ function renderWorldMap() {
         <span><i class="flag-ico md"></i> Media, 10–49</span>
         <span><i class="flag-ico lo"></i> Bassa, 1–9</span>
         <span><i class="flag-ico na"></i> Senza schede, da altre fonti</span>
-        <span><i class="flag-ico grp">12</i> Zona con più siti</span>
+        <span><i class="flag-ico grp"><em>12</em></i> Zona con più siti</span>
         <span><i class="flag-ico alfa"></i> Diving · il cerchio blu ne raggruppa più d’uno</span>
         <span><i class="flag-ico mine"></i> Il tuo sito o diving</span>
       </div>
       <p class="map-legend-note">Siti e schede: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a> · Diving e siti © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (ODbL) · <a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a> (CC0) · Immagini © Esri</p>
     </details>
   `;
+  paintLegendFlags(legend);
   stage.append(legend);
   const dock = document.createElement("details");
   dock.className = "add-site-dock";
@@ -6072,14 +6184,25 @@ function renderWorldMap() {
                 maxzoom: 19,
               },
             },
+            // Atmosfera: alone azzurro sul bordo della Terra, che sfuma quando ci si avvicina.
+            sky: {
+              "sky-color": "#0a2a5e",
+              "horizon-color": "#8fd0ff",
+              "fog-color": "#a9d6ff",
+              "sky-horizon-blend": 0.6,
+              "horizon-fog-blend": 0.7,
+              "fog-ground-blend": 0.92,
+              "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 4, 0.9, 7, 0],
+            },
+            light: { anchor: "map", position: [1.5, 210, 30], intensity: 0.35 },
             layers: [
-              { id: "bg", type: "background", paint: { "background-color": "#061018" } },
-              { id: "sat", type: "raster", source: "sat" },
+              { id: "sat", type: "raster", source: "sat", paint: { "raster-saturation": 0.08, "raster-contrast": 0.06 } },
               { id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": 0.88 } },
             ],
           },
-          center: [12, 18],
-          zoom: 2,
+          // All'apertura la Terra si vede intera, sospesa nello spazio.
+          center: [18, 24],
+          zoom: (el.clientWidth || window.innerWidth) < 600 ? 1.15 : 1.7,
           minZoom: 0,
           maxZoom: 18,
           projection: "globe",
@@ -6096,6 +6219,18 @@ function renderWorldMap() {
           },
         });
         worldGlobe = map;
+        // Le stelle scorrono piano quando la Terra gira, come guardandola dallo spazio.
+        let starFrame = 0;
+        map.on("move", () => {
+          if (starFrame) return;
+          starFrame = requestAnimationFrame(() => {
+            starFrame = 0;
+            const c = map.getCenter();
+            const b = map.getBearing();
+            el.style.setProperty("--stars-x", `${(-c.lng * 1.6 - b * 1.2).toFixed(1)}px`);
+            el.style.setProperty("--stars-y", `${(c.lat * 1.6).toFixed(1)}px`);
+          });
+        });
         map.addControl(new maplibregl.NavigationControl({ visualizePitch: true, showCompass: true }), "top-right");
         map.scrollZoom.setWheelZoomRate(1 / 200);
         try {
@@ -6121,7 +6256,23 @@ function renderWorldMap() {
         };
         const openPopup = (lngLat, html) => {
           popup?.remove();
-          popup = new maplibregl.Popup({ offset: 18, closeButton: true, maxWidth: "280px" })
+          // La scheda si apre sopra la bandierina, non sopra il telo.
+          const up = [14, -44];
+          popup = new maplibregl.Popup({
+            offset: {
+              center: [0, 0],
+              top: [0, 6],
+              "top-left": [0, 6],
+              "top-right": [0, 6],
+              bottom: up,
+              "bottom-left": up,
+              "bottom-right": up,
+              left: [38, -24],
+              right: [-6, -24],
+            },
+            closeButton: true,
+            maxWidth: "280px",
+          })
             .setLngLat(lngLat)
             .setHTML(html)
             .addTo(map);
@@ -6131,7 +6282,9 @@ function renderWorldMap() {
           const feats = map.queryRenderedFeatures({ layers: ["clusters"] });
           const seen = new Set();
           const parts = [];
-          const lift = 46 * clusterIconSize(map.getZoom()) * 0.7;
+          const s = clusterIconSize(map.getZoom());
+          const dx = FLAG_CLOTH_DX * s;
+          const dy = FLAG_CLOTH_DY * s;
           feats.forEach((f) => {
             const id = f.properties.cluster_id;
             if (seen.has(id)) return;
@@ -6142,7 +6295,7 @@ function renderWorldMap() {
             if (n >= 10000) label = Math.round(n / 1000) + "k";
             else if (n >= 1000) label = (n / 1000).toFixed(1).replace(".", ",") + "k";
             parts.push(
-              `<b style="transform:translate(${pt.x}px,${pt.y - lift}px) translate(-50%,-50%)">${label}</b>`
+              `<b style="transform:translate(${pt.x + dx}px,${pt.y + dy}px) translate(-50%,-50%)">${label}</b>`
             );
           });
           badges.innerHTML = parts.join("");
@@ -6194,36 +6347,23 @@ function renderWorldMap() {
             }
           }
           try {
-            map.setFog({
-              range: [0.8, 8],
-              color: "rgba(186, 210, 235, 0.45)",
-              "high-color": "rgba(36, 92, 180, 0.35)",
-              "space-color": "#061018",
-              "horizon-blend": 0.08,
-              "star-intensity": 0.2,
-            });
-          } catch {
-            /* il globo resta visibile anche senza atmosfera */
-          }
-          try {
-          [
-            ["flag-vh", "#00AA00", "rgba(255,255,255,0.95)"],
-            ["flag-hi", "#FFD700", "rgba(255,255,255,0.95)"],
-            ["flag-md", "#FF8C00", "rgba(255,255,255,0.95)"],
-            ["flag-lo", "#DC143C", "rgba(255,255,255,0.95)"],
-            ["flag-na", "#0e7490", "rgba(255,255,255,0.9)"],
-            ["flag-mine", "#f4f7fb", "#8b95a1"],
-          ].forEach(([id, color, stripe]) => {
-            if (!map.hasImage(id)) map.addImage(id, makeFlagImage(color, stripe), { pixelRatio: 2 });
+          Object.entries(MAP_FLAGS).forEach(([id, look]) => {
+            if (!map.hasImage(id)) map.addImage(id, drawMapFlag(look), { pixelRatio: FLAG_SCALE });
           });
-          if (!map.hasImage("flag-alfa")) map.addImage("flag-alfa", makeDivingImage(), { pixelRatio: 2 });
-          const iconSize = ["interpolate", ["linear"], ["zoom"], 1, 0.82, 6, 0.92, 12, 1];
+          const iconSize = ["interpolate", ["linear"], ["zoom"], 1, 0.78, 6, 0.88, 12, 0.96];
+          // La base dell'asta (non l'angolo dell'immagine) sta esattamente sul punto.
+          const flagFoot = {
+            "icon-anchor": "bottom-left",
+            "icon-offset": [-FLAG_POLE_X, 0],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          };
           const flagByCount = (prop) => ["step", ["get", prop], "flag-na", 1, "flag-lo", 10, "flag-md", 50, "flag-hi", 100, "flag-vh"];
           map.addSource("dives", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
             cluster: true,
-            clusterRadius: 58,
+            clusterRadius: 70,
             clusterMaxZoom: 14,
             clusterProperties: { maxc: ["max", ["get", "c"]] },
           });
@@ -6236,9 +6376,7 @@ function renderWorldMap() {
             layout: {
               "icon-image": flagByCount("maxc"),
               "icon-size": iconSize,
-              "icon-anchor": "bottom",
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
+              ...flagFoot,
             },
           });
           map.addLayer({
@@ -6249,9 +6387,7 @@ function renderWorldMap() {
             layout: {
               "icon-image": flagByCount("c"),
               "icon-size": iconSize,
-              "icon-anchor": "bottom",
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
+              ...flagFoot,
             },
           });
           map.addSource("centres", {
@@ -6267,11 +6403,16 @@ function renderWorldMap() {
             source: "centres",
             filter: ["has", "point_count"],
             paint: {
-              "circle-color": "#1d4ed8",
-              "circle-opacity": 0.85,
-              "circle-radius": ["step", ["get", "point_count"], 9, 10, 11, 100, 13, 1000, 15],
-              "circle-stroke-width": 1.5,
-              "circle-stroke-color": "#ffffff",
+              "circle-color": "#2563eb",
+              "circle-opacity": 0.9,
+              "circle-radius": [
+                "interpolate", ["linear"], ["zoom"],
+                1, ["step", ["get", "point_count"], 4, 10, 5, 100, 6.5, 1000, 8],
+                6, ["step", ["get", "point_count"], 7, 10, 9, 100, 11, 1000, 13],
+              ],
+              "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 1, 1.2, 6, 2],
+              "circle-stroke-color": "rgba(255,255,255,0.9)",
+              "circle-blur": 0.05,
             },
           }, "clusters");
           map.addLayer({
@@ -6282,9 +6423,7 @@ function renderWorldMap() {
             layout: {
               "icon-image": "flag-alfa",
               "icon-size": iconSize,
-              "icon-anchor": "bottom-left",
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
+              ...flagFoot,
             },
           }, "clusters");
           map.addLayer({
@@ -6293,8 +6432,9 @@ function renderWorldMap() {
             source: "mine",
             layout: {
               "icon-image": "flag-mine",
-              "icon-size": 0.9,
-              "icon-anchor": "bottom",
+              "icon-size": 0.96,
+              "icon-anchor": "bottom-left",
+              "icon-offset": [-FLAG_POLE_X, 0],
               "icon-allow-overlap": true,
             },
           });
@@ -6360,14 +6500,17 @@ function renderWorldMap() {
             const coords = feat.geometry.coordinates.slice();
             const p = feat.properties || {};
             const web = safeWebLink(p.w);
-            const site = web
-              ? `<br><a href="${escapeHtml(web)}" target="_blank" rel="noopener nofollow">Sito del diving</a>`
-              : "";
+            const lat = Number(coords[1]).toFixed(5);
+            const lng = Number(coords[0]).toFixed(5);
+            const links = [
+              web ? `<a href="${escapeHtml(web)}" target="_blank" rel="noopener nofollow">Sito del diving</a>` : "",
+              `<a href="https://www.google.com/maps/dir/?api=1&amp;destination=${lat},${lng}" target="_blank" rel="noopener">Indicazioni</a>`,
+            ].filter(Boolean).join(" · ");
             openPopup(
               coords,
               `<div class="globe-pop"><strong>${escapeHtml(p.n || "Diving")}</strong>Diving${
                 p.t ? " · " + escapeHtml(p.t) : ""
-              }<br>${Number(coords[1]).toFixed(4)}, ${Number(coords[0]).toFixed(4)}${site}<br><small>Dati © OpenStreetMap</small></div>`
+              }<br>${links}<br><small>${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)} · Dati © OpenStreetMap</small></div>`
             );
             if (map.getZoom() < 14) flyIn(coords, 14);
           });
