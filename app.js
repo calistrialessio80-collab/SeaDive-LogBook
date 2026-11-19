@@ -5013,7 +5013,19 @@ function geoMapHtml(lat, lng, name) {
 }
 
 function rememberCatalogFromDives() {
-  (state.dives || []).forEach((d) => window.SeaDiveSites?.ensureSiteFromDive?.(d));
+  const sites = window.SeaDiveSites;
+  // Prima si riparano le coordinate copiate per errore da un sito con un altro nome (vedi isWrongAutoMatch).
+  sites?.repairAutoMatches?.();
+  let fixed = false;
+  (state.dives || []).forEach((d) => {
+    if (sites?.isWrongAutoMatch?.(d.site, d.lat, d.lng)) {
+      d.lat = "";
+      d.lng = "";
+      fixed = true;
+    }
+  });
+  if (fixed) save(state);
+  (state.dives || []).forEach((d) => sites?.ensureSiteFromDive?.(d));
 }
 
 function applyPlaceToDive(d) {

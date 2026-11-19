@@ -1186,7 +1186,12 @@ function namesClose(siteName, diveSite) {
   const b = normName(diveSite);
   if (!a || !b) return false;
   if (a === b) return true;
-  return a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a));
+  if (a.length < 4 || b.length < 4) return false;
+  // Il nome più corto deve stare dentro l'altro come parole intere, e non può essere una sola parola generica:
+  // "Secca" non deve agganciare "Secca della Meloria" (finiva in Croazia), "Le Scole" sì con "Isola del Giglio — Le Scole".
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (!` ${long} `.includes(` ${short} `)) return false;
+  return short.split(" ").length >= 2 || short.length / long.length >= 0.6;
 }
 
 function addCustomSite(partial) {
@@ -1257,9 +1262,29 @@ function removeCustomSite(id) {
   saveCustomSites(list);
 }
 
+/* Coordinate copiate per errore: identiche a un sito del catalogo che però ha un altro nome.
+   Succedeva con la vecchia regola dei nomi ("Secca della Meloria" prendeva le coordinate di "Secca", in Croazia).
+   Chi scrive le coordinate a mano non le fa coincidere al centomillesimo con un sito dal nome diverso. */
+function isWrongAutoMatch(name, lat, lng) {
+  const p = divePoint({ lat, lng });
+  if (!p || !String(name || "").trim()) return false;
+  return WORLD_SITES.some(
+    (s) => Math.abs(s.lat - p.lat) < 1e-6 && Math.abs(s.lng - p.lng) < 1e-6 && !namesClose(s.name, name)
+  );
+}
+
+// Toglie i siti salvati in automatico con quelle coordinate sbagliate. Non tocca i diving e i siti con indirizzo.
+function repairAutoMatches() {
+  const list = loadCustomSites();
+  const keep = list.filter((s) => s.kind === "diving" || String(s.address || "").trim() || !isWrongAutoMatch(s.name, s.lat, s.lng));
+  if (keep.length !== list.length) saveCustomSites(keep);
+  return list.length - keep.length;
+}
+
 function matchCatalog(d) {
   const list = allCatalogSites();
-  const named = list.find((s) => namesClose(s.name, d.site));
+  const want = normName(d.site);
+  const named = list.find((s) => normName(s.name) === want) || list.find((s) => namesClose(s.name, d.site));
   if (named) return named;
   const p = divePoint(d);
   if (!p) return null;
@@ -1390,6 +1415,8 @@ window.SeaDiveSites = {
   loadCustomSites,
   mergeCustomSites,
   matchCatalog,
+  isWrongAutoMatch,
+  repairAutoMatches,
   ensureSiteFromDive,
   divePoint,
   fetchOsmDivePlaces,
