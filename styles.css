@@ -1424,6 +1424,38 @@ body.page-map .nav-dock { background: transparent; }
   opacity: 0.82;
 }
 .map-legend-float a { color: #9ee8e4; }
+.map-toggles { display: flex; gap: 6px; }
+.map-toggle {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid rgba(158, 232, 228, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f7fb;
+  font: 600 12px/1 Outfit, system-ui, sans-serif;
+  cursor: pointer;
+}
+.map-toggle[aria-pressed="true"] { background: rgba(34, 211, 238, 0.22); border-color: #22d3ee; }
+.map-toggle[aria-pressed="false"] { opacity: 0.55; }
+.map-toggle[aria-pressed="false"] .flag-ico { filter: grayscale(1); }
+.map-legend-more { margin-top: 4px; }
+.map-legend-more summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ee8e4;
+  list-style: none;
+  padding: 2px 0;
+}
+.map-legend-more summary::-webkit-details-marker { display: none; }
+.map-legend-more summary::after { content: " ▾"; }
+.map-legend-more[open] summary::after { content: " ▴"; }
+.map-legend-more .map-legend { margin-top: 4px; }
 .add-site-dock {
   position: absolute;
   z-index: 5;
@@ -1696,6 +1728,22 @@ body.page-map .nav-dock { background: transparent; }
   color: #102028;
   background: linear-gradient(135deg, #00aa00 0 40%, #fff 40% 58%, #00aa00 58%);
 }
+.map-legend .flag-ico.na,
+.map-toggles .flag-ico.na {
+  background: linear-gradient(135deg, #0e7490 0 40%, #fff 40% 58%, #0e7490 58%);
+}
+.flag-ico.alfa {
+  background: linear-gradient(90deg, #fff 0 50%, #1d4ed8 50%);
+  clip-path: polygon(0 0, 100% 0, 72% 50%, 100% 100%, 0 100%);
+}
+.map-toggles .flag-ico {
+  display: inline-block;
+  width: 16px;
+  height: 11px;
+  margin-right: 6px;
+  border-radius: 2px;
+}
+.map-toggles .flag-ico.vh { background: linear-gradient(135deg, #00aa00 0 40%, #fff 40% 58%, #00aa00 58%); }
 .map-legend .flag-ico.mine {
   background: linear-gradient(135deg, #f4f7fb 0 40%, #9aa3ad 40% 58%, #f4f7fb 58%);
   box-shadow: 0 0 0 1px rgba(8, 56, 72, 0.35);

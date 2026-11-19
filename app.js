@@ -5685,42 +5685,61 @@ function flagIcon(kind, zoom) {
   };
 }
 
-const DIVE_COUNTRY = {
-  IT: "Italia", FR: "Francia", ES: "Spagna", PT: "Portogallo", HR: "Croazia", GR: "Grecia", TR: "Turchia",
-  MT: "Malta", CY: "Cipro", EG: "Egitto", IL: "Israele", JO: "Giordania", TN: "Tunisia", MA: "Marocco",
-  DZ: "Algeria", AL: "Albania", ME: "Montenegro", SI: "Slovenia", DE: "Germania", GB: "Regno Unito",
-  IE: "Irlanda", NO: "Norvegia", SE: "Svezia", IS: "Islanda", NL: "Paesi Bassi", BE: "Belgio",
-  US: "USA", MX: "Messico", AU: "Australia", NZ: "Nuova Zelanda", ID: "Indonesia", MY: "Malaysia",
-  TH: "Thailandia", PH: "Filippine", JP: "Giappone", MV: "Maldive", ZA: "Sudafrica", BR: "Brasile",
-};
+// Versione dei dati della mappa: cambia quando tools/mappa-siti.ps1 rigenera i file.
+const MAP_DATA_V = "20261119";
+const PLACE_SOURCES = { o: "OpenStreetMap", w: "Wikidata", s: "Catalogo SeaDive" };
 
-function diveCountryName(code) {
-  const raw = String(code || "").trim();
-  if (!raw) return "";
-  return DIVE_COUNTRY[raw.toUpperCase()] || raw;
+function mapPointOk(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 }
 
-let diveCatalogPromise = null;
-
-function loadDiveCatalog() {
-  if (!diveCatalogPromise) {
-    diveCatalogPromise = fetch("./dive-sites.json?v=111", { cache: "force-cache" })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((rows) =>
-        (Array.isArray(rows) ? rows : [])
-          .map((row) => ({
-            name: String(row.n || "").trim(),
-            country: diveCountryName(row.c),
-            lat: Number(row.a),
-            lng: Number(row.o),
-            kind: row.k === "d" ? "diving" : "sito",
-            osm: true,
-          }))
-          .filter((row) => row.name && Number.isFinite(row.lat) && Number.isFinite(row.lng))
-      )
-      .catch(() => []);
+function safeWebLink(raw) {
+  const s = String(raw || "").trim();
+  if (!/^https?:\/\/[^\s"'<>]+$/i.test(s)) return "";
+  try {
+    const u = new URL(s);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : "";
+  } catch {
+    return "";
   }
-  return diveCatalogPromise;
+}
+
+let divePlacesPromise = null;
+
+/** Diving (OpenStreetMap) e siti in più (OpenStreetMap, Wikidata, catalogo curato) da dive-sites.json. */
+function loadDivePlaces() {
+  if (!divePlacesPromise) {
+    const empty = { type: "FeatureCollection", features: [] };
+    divePlacesPromise = fetch("./dive-sites.json?v=" + MAP_DATA_V)
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((data) => {
+        const centres = [];
+        const extra = [];
+        (Array.isArray(data?.d) ? data.d : []).forEach((r) => {
+          const lat = Number(r?.[1]);
+          const lng = Number(r?.[2]);
+          if (!mapPointOk(lat, lng)) return;
+          centres.push({
+            type: "Feature",
+            properties: { n: String(r[0] || "Diving"), t: String(r[3] || ""), w: safeWebLink(r[4]) },
+            geometry: { type: "Point", coordinates: [lng, lat] },
+          });
+        });
+        (Array.isArray(data?.s) ? data.s : []).forEach((r) => {
+          const lat = Number(r?.[1]);
+          const lng = Number(r?.[2]);
+          if (!mapPointOk(lat, lng)) return;
+          extra.push({
+            type: "Feature",
+            properties: { n: String(r[0] || "") || "Sito di immersione", c: 0, s: String(r[3] || "o") },
+            geometry: { type: "Point", coordinates: [lng, lat] },
+          });
+        });
+        return { centres: { type: "FeatureCollection", features: centres }, extra };
+      })
+      .catch(() => ({ centres: empty, extra: [] }));
+  }
+  return divePlacesPromise;
 }
 
 function loadMapLibre() {
@@ -5760,7 +5779,7 @@ let divelogsPromise = null;
 
 function loadDivelogsGeo() {
   if (!divelogsPromise) {
-    divelogsPromise = fetch("./divelogs-sites.json?v=188")
+    divelogsPromise = fetch("./divelogs-sites.json?v=" + MAP_DATA_V)
       .then((res) => {
         if (!res.ok) throw new Error("catalogo");
         return res.json();
@@ -5788,8 +5807,9 @@ function loadDivelogsGeo() {
   return divelogsPromise;
 }
 
-function confidencePhrase(c) {
+function confidencePhrase(c, source) {
   const n = Number(c) || 0;
+  if (!n) return "Segnalato da " + (PLACE_SOURCES[source] || "OpenStreetMap");
   const band = n >= 100 ? "Molto alta" : n >= 50 ? "Alta" : n >= 10 ? "Media" : "Bassa";
   return band + " · " + n.toLocaleString("it-IT") + " schede";
 }
@@ -5844,6 +5864,40 @@ function makeFlagImage(color, stripe) {
   return { width: img.width, height: img.height, data: img.data };
 }
 
+/** Bandiera "Alfa" (bianca e blu a coda di rondine): il segnale internazionale dei sub, usato per i diving. */
+function makeDivingImage() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 72;
+  canvas.height = 92;
+  const g = canvas.getContext("2d");
+  g.scale(2, 2);
+  g.fillStyle = "#3e4854";
+  g.fillRect(2.4, 1.6, 2.4, 42);
+  const cloth = () => {
+    g.beginPath();
+    g.moveTo(4.8, 2);
+    g.lineTo(34.4, 2);
+    g.lineTo(25.6, 12.6);
+    g.lineTo(34.4, 23.2);
+    g.lineTo(4.8, 23.2);
+    g.closePath();
+  };
+  cloth();
+  g.fillStyle = "#ffffff";
+  g.fill();
+  g.save();
+  g.clip();
+  g.fillStyle = "#1d4ed8";
+  g.fillRect(19.6, 0, 20, 26);
+  g.restore();
+  cloth();
+  g.lineWidth = 1.6;
+  g.strokeStyle = "#0b1f3a";
+  g.stroke();
+  const img = g.getImageData(0, 0, canvas.width, canvas.height);
+  return { width: img.width, height: img.height, data: img.data };
+}
+
 function personalDiveGeo() {
   const sites = window.SeaDiveSites?.annotateSites(state.dives || [])?.sites || [];
   return {
@@ -5877,16 +5931,25 @@ function renderWorldMap() {
   const legend = document.createElement("aside");
   legend.className = "map-legend-float";
   legend.innerHTML = `
-    <div class="map-legend">
-      <span><i class="flag-ico vh"></i> Molto alta, 100+</span>
-      <span><i class="flag-ico hi"></i> Alta, 50–99</span>
-      <span><i class="flag-ico md"></i> Media, 10–49</span>
-      <span><i class="flag-ico lo"></i> Bassa, 1–9</span>
-      <span><i class="flag-ico grp">12</i> Zona</span>
-      <span><i class="flag-ico mine"></i> Il tuo sito o diving</span>
+    <div class="map-toggles" role="group" aria-label="Cosa mostrare">
+      <button type="button" class="map-toggle" data-maplayer="sites" aria-pressed="true"><i class="flag-ico vh"></i> Siti</button>
+      <button type="button" class="map-toggle" data-maplayer="diving" aria-pressed="true"><i class="flag-ico alfa"></i> Diving</button>
     </div>
     <p class="map-legend-note" data-mapstatus>Carico i punti…</p>
-    <p class="map-legend-note">Fonte: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a> · Luoghi e indirizzi © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (ODbL) · Immagini © Esri</p>
+    <details class="map-legend-more">
+      <summary>Legenda e fonti</summary>
+      <div class="map-legend">
+        <span><i class="flag-ico vh"></i> Molto frequentato, 100+ schede</span>
+        <span><i class="flag-ico hi"></i> Alta, 50–99</span>
+        <span><i class="flag-ico md"></i> Media, 10–49</span>
+        <span><i class="flag-ico lo"></i> Bassa, 1–9</span>
+        <span><i class="flag-ico na"></i> Senza schede, da altre fonti</span>
+        <span><i class="flag-ico grp">12</i> Zona con più siti</span>
+        <span><i class="flag-ico alfa"></i> Diving · il cerchio blu ne raggruppa più d’uno</span>
+        <span><i class="flag-ico mine"></i> Il tuo sito o diving</span>
+      </div>
+      <p class="map-legend-note">Siti e schede: <a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a> · Diving e siti © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> (ODbL) · <a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a> (CC0) · Immagini © Esri</p>
+    </details>
   `;
   stage.append(legend);
   const dock = document.createElement("details");
@@ -6047,6 +6110,15 @@ function renderWorldMap() {
         divingNames.className = "diving-names";
         el.appendChild(divingNames);
         let popup = null;
+        let pointsShown = false;
+        const applyToggles = () => {
+          legend.querySelectorAll("[data-maplayer]").forEach((btn) => {
+            const on = btn.getAttribute("aria-pressed") === "true";
+            const ids = btn.dataset.maplayer === "diving" ? ["dcluster", "dpoint"] : ["clusters", "sites"];
+            ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on ? "visible" : "none"));
+          });
+          queueBadges();
+        };
         const openPopup = (lngLat, html) => {
           popup?.remove();
           popup = new maplibregl.Popup({ offset: 18, closeButton: true, maxWidth: "280px" })
@@ -6099,7 +6171,7 @@ function renderWorldMap() {
             syncBadges();
           });
         };
-        const hitLayers = () => ["clusters", "sites", "mine"].filter((id) => map.getLayer(id));
+        const hitLayers = () => ["clusters", "sites", "dcluster", "dpoint", "mine"].filter((id) => map.getLayer(id));
         const flyIn = (center, zoom) => {
           map.easeTo({
             center,
@@ -6139,11 +6211,14 @@ function renderWorldMap() {
             ["flag-hi", "#FFD700", "rgba(255,255,255,0.95)"],
             ["flag-md", "#FF8C00", "rgba(255,255,255,0.95)"],
             ["flag-lo", "#DC143C", "rgba(255,255,255,0.95)"],
+            ["flag-na", "#0e7490", "rgba(255,255,255,0.9)"],
             ["flag-mine", "#f4f7fb", "#8b95a1"],
           ].forEach(([id, color, stripe]) => {
             if (!map.hasImage(id)) map.addImage(id, makeFlagImage(color, stripe), { pixelRatio: 2 });
           });
+          if (!map.hasImage("flag-alfa")) map.addImage("flag-alfa", makeDivingImage(), { pixelRatio: 2 });
           const iconSize = ["interpolate", ["linear"], ["zoom"], 1, 0.82, 6, 0.92, 12, 1];
+          const flagByCount = (prop) => ["step", ["get", prop], "flag-na", 1, "flag-lo", 10, "flag-md", 50, "flag-hi", 100, "flag-vh"];
           map.addSource("dives", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -6159,7 +6234,7 @@ function renderWorldMap() {
             source: "dives",
             filter: ["has", "point_count"],
             layout: {
-              "icon-image": ["step", ["get", "maxc"], "flag-lo", 10, "flag-md", 50, "flag-hi", 100, "flag-vh"],
+              "icon-image": flagByCount("maxc"),
               "icon-size": iconSize,
               "icon-anchor": "bottom",
               "icon-allow-overlap": true,
@@ -6172,13 +6247,46 @@ function renderWorldMap() {
             source: "dives",
             filter: ["!", ["has", "point_count"]],
             layout: {
-              "icon-image": ["step", ["get", "c"], "flag-lo", 10, "flag-md", 50, "flag-hi", 100, "flag-vh"],
+              "icon-image": flagByCount("c"),
               "icon-size": iconSize,
               "icon-anchor": "bottom",
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
             },
           });
+          map.addSource("centres", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+            cluster: true,
+            clusterRadius: 46,
+            clusterMaxZoom: 12,
+          });
+          map.addLayer({
+            id: "dcluster",
+            type: "circle",
+            source: "centres",
+            filter: ["has", "point_count"],
+            paint: {
+              "circle-color": "#1d4ed8",
+              "circle-opacity": 0.85,
+              "circle-radius": ["step", ["get", "point_count"], 9, 10, 11, 100, 13, 1000, 15],
+              "circle-stroke-width": 1.5,
+              "circle-stroke-color": "#ffffff",
+            },
+          }, "clusters");
+          map.addLayer({
+            id: "dpoint",
+            type: "symbol",
+            source: "centres",
+            filter: ["!", ["has", "point_count"]],
+            layout: {
+              "icon-image": "flag-alfa",
+              "icon-size": iconSize,
+              "icon-anchor": "bottom-left",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          }, "clusters");
           map.addLayer({
             id: "mine",
             type: "symbol",
@@ -6190,7 +6298,7 @@ function renderWorldMap() {
               "icon-allow-overlap": true,
             },
           });
-          ["clusters", "sites", "mine"].forEach((id) => {
+          ["clusters", "sites", "dcluster", "dpoint", "mine"].forEach((id) => {
             map.on("mouseenter", id, () => {
               map.getCanvas().style.cursor = "pointer";
             });
@@ -6221,15 +6329,47 @@ function renderWorldMap() {
               const p = api?.divePoint?.(d);
               return p && haversineMapKm(p, { lat, lng }) <= 3;
             });
+            const counted = Number(feat.properties.c) > 0;
+            const link = counted
+              ? `<br><a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a>`
+              : "";
             openPopup(
               coords,
               `<div class="globe-pop"><strong>${escapeHtml(feat.properties.n || "Sito")}</strong>${escapeHtml(
-                confidencePhrase(feat.properties.c)
-              )}${dived ? "<br>Già nel diario" : ""}<br>${lat.toFixed(4)}, ${lng.toFixed(
-                4
-              )}<br><a href="https://dive-sites.net/" target="_blank" rel="noopener">dive-sites.net</a></div>`
+                confidencePhrase(feat.properties.c, feat.properties.s)
+              )}${dived ? "<br>Già nel diario" : ""}<br>${lat.toFixed(4)}, ${lng.toFixed(4)}${link}</div>`
             );
             if (map.getZoom() < 15) flyIn(coords, Math.max(map.getZoom(), 15));
+          });
+          map.on("click", "dcluster", async (e) => {
+            const feat = e.features?.[0];
+            if (!feat) return;
+            popup?.remove();
+            let zoom = map.getZoom() + 1.8;
+            try {
+              const expanded = await map.getSource("centres").getClusterExpansionZoom(feat.properties.cluster_id);
+              zoom = Math.max(Number(expanded) || zoom, map.getZoom() + 0.8);
+            } catch {
+              /* avvicina comunque */
+            }
+            flyIn(feat.geometry.coordinates, zoom);
+          });
+          map.on("click", "dpoint", (e) => {
+            const feat = e.features?.[0];
+            if (!feat) return;
+            const coords = feat.geometry.coordinates.slice();
+            const p = feat.properties || {};
+            const web = safeWebLink(p.w);
+            const site = web
+              ? `<br><a href="${escapeHtml(web)}" target="_blank" rel="noopener nofollow">Sito del diving</a>`
+              : "";
+            openPopup(
+              coords,
+              `<div class="globe-pop"><strong>${escapeHtml(p.n || "Diving")}</strong>Diving${
+                p.t ? " · " + escapeHtml(p.t) : ""
+              }<br>${Number(coords[1]).toFixed(4)}, ${Number(coords[0]).toFixed(4)}${site}<br><small>Dati © OpenStreetMap</small></div>`
+            );
+            if (map.getZoom() < 14) flyIn(coords, 14);
           });
           map.on("click", "mine", (e) => {
             const feat = e.features?.[0];
@@ -6259,14 +6399,18 @@ function renderWorldMap() {
             if (hint) hint.textContent = "Punto preso. Dai un nome e salva.";
           });
           map.on("render", queueBadges);
-          loadDivelogsGeo().then((geo) => {
+          applyToggles();
+          Promise.all([loadDivelogsGeo(), loadDivePlaces()]).then(([geo, places]) => {
             if (worldGlobe !== map) return;
-            const src = map.getSource("dives");
-            if (src) src.setData(geo);
-            const n = geo.features.length;
+            const sites = { type: "FeatureCollection", features: geo.features.concat(places.extra) };
+            map.getSource("dives")?.setData(sites);
+            map.getSource("centres")?.setData(places.centres);
+            pointsShown = true;
+            const n = sites.features.length;
+            const d = places.centres.features.length;
             if (status) {
-              status.textContent = n
-                ? n.toLocaleString("it-IT") + " siti"
+              status.textContent = n || d
+                ? `${n.toLocaleString("it-IT")} siti · ${d.toLocaleString("it-IT")} diving`
                 : "Punti non caricati.";
             }
           });
@@ -6275,12 +6419,19 @@ function renderWorldMap() {
             if (status) status.textContent = err && err.message ? err.message : "Mappa non pronta.";
           }
         };
+        // Una singola immagine satellitare che non arriva non deve coprire il conteggio dei siti.
         map.on("error", (ev) => {
           const message = ev?.error?.message || "";
-          if (!status || !message) return;
-          const current = status.textContent || "";
-          if (current.includes("siti sul globo") || current.includes("Preparo")) return;
+          if (!status || !message || pointsShown || ev?.tile || ev?.sourceId) return;
           status.textContent = message;
+        });
+        legend.querySelectorAll("[data-maplayer]").forEach((btn) => {
+          btn.onclick = () => {
+            const on = btn.getAttribute("aria-pressed") !== "true";
+            btn.setAttribute("aria-pressed", on ? "true" : "false");
+            applyToggles();
+            popup?.remove();
+          };
         });
         try {
           map.setProjection({ type: "globe" });
