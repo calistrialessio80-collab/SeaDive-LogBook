@@ -67,6 +67,20 @@ body.abisso.page-profile::before {
   -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 55%);
 }
 body.abisso.page-bio::after { display: none; }
+/* Home: il sole visto da sotto la superficie, con raggi tenui che spariscono a metà schermo */
+body.abisso.page-home::before {
+  background:
+    radial-gradient(80% 26% at 50% -4%, rgba(224, 252, 255, 0.55), rgba(103, 232, 249, 0.18) 45%, rgba(103, 232, 249, 0) 75%),
+    conic-gradient(from 148deg at 50% -6%,
+      transparent 0deg, rgba(170, 240, 255, 0.16) 5deg, transparent 10deg,
+      transparent 15deg, rgba(170, 240, 255, 0.11) 19deg, transparent 24deg,
+      transparent 30deg, rgba(196, 181, 253, 0.13) 34deg, transparent 39deg,
+      transparent 44deg, rgba(170, 240, 255, 0.14) 49deg, transparent 55deg,
+      transparent 60deg, rgba(196, 181, 253, 0.09) 63deg, transparent 67deg,
+      transparent 360deg);
+  mask-image: linear-gradient(180deg, #000 10%, transparent 70%);
+  -webkit-mask-image: linear-gradient(180deg, #000 10%, transparent 70%);
+}
 body.abisso .ocean { display: none !important; }
 body.abisso .status-scrim,
 body.abisso.page-bio .status-scrim,
