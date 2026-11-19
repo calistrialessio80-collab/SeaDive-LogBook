@@ -20,6 +20,7 @@ const ASSETS = [
   "./aggiorna.js",
   "./version.txt",
   "./splash.jpg",
+  "./terra.jpg",
   "./nav-diver.png",
   "./register.jpg",
   "./privacy.html",

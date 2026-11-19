@@ -5228,6 +5228,8 @@ function topbar(subtitle, mode) {
     wrap.querySelector("[data-act=search]").onclick = () => {
       view = { name: "log", query: view.query || "" };
       render();
+      window.scrollTo(0, 0);
+      document.querySelector("[data-logsearch]")?.focus();
     };
     wrap.querySelector("[data-act=add]").onclick = startNew;
     return wrap;
@@ -6655,10 +6657,12 @@ function homeCrewModel() {
   const line = seaN
     ? `${seaN.toLocaleString("it-IT")} in Community`
     : localN
-      ? `${localN.toLocaleString("it-IT")} ${localN === 1 ? "contatto" : "contatti"}`
+      ? `${localN.toLocaleString("it-IT")} ${localN === 1 ? "contatto" : "contatti"}${localN < 3 ? " · aggiungi i tuoi buddy" : ""}`
       : "Chi usa SeaDive";
+  // Con pochi contatti i posti liberi invitano ad aggiungerne altri, invece di lasciare il riquadro vuoto.
+  const free = `<span class="gate-face ghost"><b>+</b></span>`;
   const html = faces.length
-    ? faces.join("")
+    ? faces.join("") + free.repeat(Math.max(0, 3 - faces.length))
     : `<span class="gate-face ghost"><b>🤿</b></span><span class="gate-face ghost"><b>🤿</b></span><span class="gate-face ghost"><b>🤿</b></span>`;
   return { html, line };
 }
@@ -6756,6 +6760,12 @@ function renderHome() {
   const maxY = Math.max(1, ...years.map((y) => y.n));
   const bio = homeBioPreview();
   const crew = homeCrewModel();
+  const deepest = [...state.dives]
+    .filter((d) => Number(d.maxDepth) > 0)
+    .sort((a, b) => Number(b.maxDepth) - Number(a.maxDepth))[0];
+  const sacNow = avgSac();
+  const kpiIcon = (path) =>
+    `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
   const dash = document.createElement("section");
   dash.className = "home-stats";
   dash.innerHTML = `
@@ -6765,27 +6775,27 @@ function renderHome() {
     </div>
     <div class="kpi-grid">
       <button class="kpi" type="button" data-go="log">
-        <p>Registrate <span>~</span></p>
+        <p>Registrate <span>${kpiIcon('<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>')}</span></p>
         <strong>${t.n}</strong>
-        <em>immersioni</em>
+        <em>${t.n === 1 ? "immersione" : "immersioni"}</em>
       </button>
       <button class="kpi" type="button" data-go="stats">
-        <p>Tempo di fondo <span>◷</span></p>
-        <strong>${fmtMins(t.mins)}</strong>
-        <em>in acqua</em>
+        <p>Tempo di fondo <span>${kpiIcon('<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/>')}</span></p>
+        <strong>${t.mins > 0 ? fmtMins(t.mins) : "—"}</strong>
+        <em>${t.mins > 0 ? "in acqua" : "durate mancanti"}</em>
       </button>
-      <button class="kpi" type="button" data-go="log">
-        <p>Profondità max <span>▼</span></p>
+      <button class="kpi" type="button" data-go="deepest">
+        <p>Profondità max <span>${kpiIcon('<path d="M12 3v15M6 12l6 6 6-6"/><path d="M4 21h16"/>')}</span></p>
         <strong>${t.max > 0 ? fmtDepth(t.max) : "—"}</strong>
-        ${t.max > 0 ? "<em>metri</em>" : ""}
+        <em>${t.max > 0 ? (deepest?.site ? escapeHtml(deepest.site) : "metri") : "nessun dato"}</em>
       </button>
       <button class="kpi" type="button" data-go="stats">
-        <p>SAC medio <span>◎</span></p>
-        <strong>${avgSac()}</strong>
-        ${avgSac() !== "—" ? "<em>L/min</em>" : ""}
+        <p>SAC medio <span>${kpiIcon('<path d="M9 3h6v3H9z"/><rect x="7" y="6" width="10" height="15" rx="4"/><path d="M12 11v5"/>')}</span></p>
+        <strong>${sacNow}</strong>
+        <em>${sacNow !== "—" ? "L/min" : "dati bombola mancanti"}</em>
       </button>
       <button class="kpi kpi-chart" type="button" data-go="stats">
-        <p>Immersioni per anno <span>▣</span></p>
+        <p>Immersioni per anno <span>${kpiIcon('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>')}</span></p>
         <div class="year-chart">
           ${years
             .map(
@@ -6803,8 +6813,14 @@ function renderHome() {
   `;
   dash.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
-      view = { ...view, name: b.dataset.go };
+      // La profondità massima porta alla scheda dell'immersione più profonda.
+      if (b.dataset.go === "deepest" && deepest) {
+        view = { name: "detail", diveId: deepest.id, draft: null, query: view.query || "" };
+      } else {
+        view = { ...view, name: b.dataset.go === "deepest" ? "log" : b.dataset.go };
+      }
       render();
+      window.scrollTo(0, 0);
     };
   });
   frag.append(dash);
@@ -6816,8 +6832,15 @@ function renderHome() {
   else {
     const ul = document.createElement("div");
     ul.className = "dive-list";
-    ul.append(diveCard(last));
+    // In Home la scheda è solo da guardare: si elimina dal Diario o dalla scheda dell'immersione.
+    ul.append(diveCard(last, { noDelete: true }));
     listWrap.append(ul);
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "btn ghost btn-block home-all";
+    all.textContent = t.n > 1 ? `Vedi tutte le ${t.n} immersioni` : "Apri il diario";
+    all.onclick = () => openNavSection("log");
+    listWrap.append(all);
   }
   frag.append(listWrap);
 
@@ -6853,170 +6876,32 @@ function renderHome() {
     </button>
     <button class="home-gate gate-map" type="button" data-port="map">
       <span class="home-gate-scene" aria-hidden="true">
-        <span class="coast-scene">
-          <svg class="coast-art" viewBox="0 0 360 196" preserveAspectRatio="xMidYMid slice">
-            <defs>
-              <linearGradient id="hmSky" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#1f6eab"/>
-                <stop offset="0.42" stop-color="#7eb6dc"/>
-                <stop offset="0.72" stop-color="#f3d7b4"/>
-                <stop offset="1" stop-color="#f7e2c4"/>
-              </linearGradient>
-              <linearGradient id="hmSea" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#c5e7ee"/>
-                <stop offset="0.08" stop-color="#3f9fbe"/>
-                <stop offset="0.34" stop-color="#1a749c"/>
-                <stop offset="0.68" stop-color="#0d5578"/>
-                <stop offset="1" stop-color="#08364c"/>
-              </linearGradient>
-              <linearGradient id="hmSand" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#f6e7c4"/>
-                <stop offset="0.28" stop-color="#e4c892"/>
-                <stop offset="1" stop-color="#c49a62"/>
-              </linearGradient>
-              <linearGradient id="hmWet" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#d7c092" stop-opacity="0.15"/>
-                <stop offset="1" stop-color="#8d6a3e" stop-opacity="0.45"/>
-              </linearGradient>
-              <radialGradient id="hmSun" cx="50%" cy="50%" r="50%">
-                <stop offset="0" stop-color="#fffdf6"/>
-                <stop offset="0.45" stop-color="#ffe7a8"/>
-                <stop offset="1" stop-color="#ffe7a8" stop-opacity="0"/>
-              </radialGradient>
-            </defs>
-            <rect width="360" height="196" fill="url(#hmSky)"/>
-            <circle cx="64" cy="42" r="46" fill="url(#hmSun)"/>
-            <circle cx="64" cy="42" r="13" fill="#fffaf0"/>
-            <g class="coast-cloud a">
-              <ellipse cx="28" cy="30" rx="22" ry="9" fill="#f7fbff"/>
-              <ellipse cx="46" cy="26" rx="16" ry="10" fill="#ffffff"/>
-              <ellipse cx="18" cy="33" rx="12" ry="6" fill="#d5e2ea"/>
-              <ellipse cx="40" cy="34" rx="18" ry="6" fill="#e4edf2"/>
-            </g>
-            <g class="coast-cloud b">
-              <ellipse cx="168" cy="18" rx="18" ry="7" fill="#f4f8fb"/>
-              <ellipse cx="184" cy="16" rx="12" ry="6" fill="#ffffff"/>
-              <ellipse cx="174" cy="21" rx="16" ry="4" fill="#d9e4ea"/>
-            </g>
-            <g class="coast-gull" fill="#f7f4ee">
-              <ellipse cx="124" cy="38" rx="7" ry="2.2"/>
-              <path d="M116 37 q8 -8 14 1" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/>
-              <path d="M128 38 q7 -7 12 1" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/>
-            </g>
-            <path d="M210 78 C250 62 290 70 334 52 C352 46 360 50 360 50 L360 92 C320 78 270 96 230 84 C214 78 206 86 210 78 Z" fill="#8ea4ae"/>
-            <path d="M228 74 C258 64 300 72 340 58 C322 70 286 78 250 80 Z" fill="#6e8a86" opacity="0.7"/>
-            <path d="M150 108 C176 78 196 92 228 58 C258 78 292 52 338 70 C352 78 360 68 360 68 L360 132 L150 124 Z" fill="#6d8f78"/>
-            <path d="M162 112 C188 74 210 90 244 52 C274 74 308 58 360 82 L360 140 L162 132 Z" fill="#1d5a38"/>
-            <path d="M170 108 C196 78 214 92 246 58 C236 78 214 96 176 112 Z" fill="#3e8a4e"/>
-            <path d="M188 96 C206 78 214 86 228 66 C220 84 206 98 190 104 Z" fill="#2f6d40"/>
-            <g fill="#143c28">
-              <ellipse cx="206" cy="70" rx="5" ry="14"/>
-              <ellipse cx="218" cy="60" rx="4.5" ry="16"/>
-              <ellipse cx="232" cy="66" rx="6" ry="13"/>
-              <ellipse cx="248" cy="58" rx="4" ry="15"/>
-              <ellipse cx="262" cy="70" rx="5.5" ry="12"/>
-              <ellipse cx="278" cy="64" rx="4" ry="13"/>
-              <ellipse cx="294" cy="74" rx="6" ry="11"/>
-            </g>
-            <g fill="#0e2e1e">
-              <ellipse cx="212" cy="78" rx="7" ry="4"/>
-              <ellipse cx="236" cy="74" rx="8" ry="4"/>
-              <ellipse cx="258" cy="80" rx="6" ry="3.5"/>
-              <ellipse cx="286" cy="82" rx="8" ry="4"/>
-            </g>
-            <path d="M156 118 C186 108 210 122 236 112 C258 104 286 118 320 108" fill="none" stroke="#0c2418" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
-            <path d="M0 96 C70 86 130 106 196 92 C258 80 310 108 360 90 L360 196 L0 196 Z" fill="url(#hmSea)"/>
-            <path d="M0 98 C90 90 170 108 250 96 C310 88 340 100 360 94 L360 118 C280 112 190 126 100 114 C40 106 0 116 0 116 Z" fill="#5ec0cc" opacity="0.38"/>
-            <path d="M0 108 C70 102 120 116 180 108 C230 102 280 114 340 106 C352 104 360 108 360 108 L360 122 C300 118 230 128 160 118 C90 110 40 122 0 116 Z" fill="#187898" opacity="0.35"/>
-            <path d="M88 126 C102 120 118 128 132 122 C126 130 108 132 92 130 Z" fill="rgba(255,255,255,0.8)"/>
-            <path d="M104 134 C114 130 124 136 136 132 C130 138 116 140 106 138 Z" fill="rgba(255,255,255,0.45)"/>
-            <path d="M150 138 C166 132 184 142 200 134 C192 144 170 146 154 142 Z" fill="rgba(255,255,255,0.62)"/>
-            <path d="M176 148 C188 144 200 150 212 146 C206 152 192 154 178 152 Z" fill="rgba(255,255,255,0.4)"/>
-            <path d="M48 98 L70 154" stroke="rgba(255,248,220,0.28)" stroke-width="18" stroke-linecap="round"/>
-            <path d="M56 100 L66 150" stroke="rgba(255,252,236,0.45)" stroke-width="6" stroke-linecap="round"/>
-            <g fill="#fff" class="sea-glint">
-              <ellipse cx="60" cy="112" rx="1.6" ry="0.7"/>
-              <ellipse cx="66" cy="124" rx="1.2" ry="0.55"/>
-              <ellipse cx="58" cy="136" rx="1.8" ry="0.7"/>
-              <ellipse cx="70" cy="146" rx="1.1" ry="0.5"/>
-            </g>
-            <path fill="none" stroke="rgba(255,255,255,0.72)" stroke-width="1.6" stroke-linecap="round" d="M8 114 C22 110 30 118 44 114 C58 110 70 118 86 113">
-              <animate attributeName="d" dur="5.4s" repeatCount="indefinite" values="M8 114 C22 110 30 118 44 114 C58 110 70 118 86 113;M8 114 C22 118 30 110 44 114 C58 118 70 110 86 114;M8 114 C22 110 30 118 44 114 C58 110 70 118 86 113"/>
-            </path>
-            <path fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1.3" stroke-linecap="round" d="M120 122 C138 116 150 126 168 120 C186 114 198 124 214 118"/>
-            <path fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.2" stroke-linecap="round" d="M240 128 C258 122 274 132 296 124 C314 118 332 128 352 122"/>
-            <path d="M0 148 C48 142 86 156 132 148 C186 138 230 158 286 146 C322 140 344 150 360 144 L360 162 L0 164 Z" fill="#1c8f98" opacity="0.22"/>
-            <path d="M0 152 C28 148 46 156 70 151 C96 146 112 156 140 150 C168 144 190 156 220 149" fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M168 156 C196 150 214 160 242 154 C270 148 292 158 324 152 C342 148 352 154 360 152" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.6" stroke-linecap="round"/>
-            <path d="M0 156 C78 148 132 168 206 154 C268 142 316 166 360 152 L360 196 L0 196 Z" fill="url(#hmSand)"/>
-            <path d="M0 156 C78 150 132 164 206 156 C268 148 316 162 360 154 L360 168 L0 170 Z" fill="url(#hmWet)"/>
-            <path d="M0 170 C90 160 150 182 224 166 C280 154 326 176 360 164 L360 196 L0 196 Z" fill="#c9a56c"/>
-            <g fill="#b08958">
-              <ellipse cx="36" cy="176" rx="6" ry="2.4"/>
-              <ellipse cx="98" cy="168" rx="3.4" ry="1.6"/>
-              <ellipse cx="154" cy="180" rx="4.2" ry="1.8"/>
-              <ellipse cx="48" cy="164" rx="1.3" ry="0.8" fill="#efe2c4"/>
-              <ellipse cx="122" cy="174" rx="1.1" ry="0.7" fill="#efe2c4"/>
-            </g>
-            <path d="M300 156 C318 148 338 158 356 150 C360 154 360 166 346 168 C324 176 306 164 300 168 Z" fill="#5a6864"/>
-            <path d="M308 154 C322 150 336 156 348 152 C344 158 328 162 314 158 Z" fill="#9aa6a2"/>
-          </svg>
-          <span class="dan-flag">
-            <span class="dan-shadow"></span>
-            <span class="dan-pole"></span>
-            <svg class="dan-fly" viewBox="0 0 220 128">
-              <defs>
-                <linearGradient id="hmClothRed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#e23c3c"/>
-                  <stop offset="0.5" stop-color="#c4121c"/>
-                  <stop offset="1" stop-color="#7e1016"/>
-                </linearGradient>
-                <linearGradient id="hmFold" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0" stop-color="#000" stop-opacity="0"/>
-                  <stop offset="0.42" stop-color="#fff" stop-opacity="0.42"/>
-                  <stop offset="1" stop-color="#000" stop-opacity="0.18"/>
-                </linearGradient>
-                <clipPath id="hmClothClip">
-                  <path d="M4 16 C48 10 86 26 128 12 C168 2 198 16 214 10 L212 92 C168 108 112 84 64 104 C32 114 12 102 4 106 Z">
-                    <animate attributeName="d" dur="2.4s" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1" keyTimes="0;0.38;0.7;1" values="M4 16 C48 10 86 26 128 12 C168 2 198 16 214 10 L212 92 C168 108 112 84 64 104 C32 114 12 102 4 106 Z;M4 16 C46 20 84 6 126 22 C170 16 200 2 214 20 L212 104 C166 90 114 112 66 94 C30 86 12 108 4 106 Z;M4 16 C50 8 88 24 130 6 C172 14 196 2 214 6 L210 86 C170 112 110 80 62 110 C28 120 10 100 4 106 Z;M4 16 C48 10 86 26 128 12 C168 2 198 16 214 10 L212 92 C168 108 112 84 64 104 C32 114 12 102 4 106 Z"/>
-                  </path>
-                </clipPath>
-                <filter id="hmWind" x="-10%" y="-24%" width="130%" height="160%" color-interpolation-filters="sRGB">
-                  <feTurbulence type="fractalNoise" baseFrequency="0.015 0.055" numOctaves="2" seed="2" result="n">
-                    <animate attributeName="baseFrequency" dur="2.4s" values="0.012 0.04;0.022 0.08;0.014 0.05;0.012 0.04" repeatCount="indefinite"/>
-                  </feTurbulence>
-                  <feDisplacementMap in="SourceGraphic" in2="n" scale="7" xChannelSelector="R" yChannelSelector="G">
-                    <animate attributeName="scale" dur="2.4s" values="4;11;6;4" repeatCount="indefinite"/>
-                  </feDisplacementMap>
-                </filter>
-              </defs>
-              <g clip-path="url(#hmClothClip)" filter="url(#hmWind)">
-                <rect x="-8" y="-16" width="240" height="160" fill="url(#hmClothRed)"/>
-                <polygon points="-4,2 -4,36 224,118 224,82" fill="#f6f3ec"/>
-                <polygon points="-4,2 -4,11 224,93 224,82" fill="#ffffff"/>
-                <polygon points="-4,27 -4,36 224,118 224,109" fill="#d9d3cb"/>
-                <text x="112" y="78" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="700" fill="#9d1218" transform="rotate(20 108 64)">DAN</text>
-                <rect x="-50" y="-12" width="36" height="150" fill="url(#hmFold)">
-                  <animate attributeName="x" values="-60;190;-60" dur="2.4s" repeatCount="indefinite"/>
-                </rect>
-              </g>
-              <circle cx="8" cy="22" r="2.4" fill="#f4f1ea"/>
-              <circle cx="8" cy="22" r="1.1" fill="#4a3424"/>
-              <circle cx="8" cy="100" r="2.4" fill="#f4f1ea"/>
-              <circle cx="8" cy="100" r="1.1" fill="#4a3424"/>
-            </svg>
+        <span class="space-scene" data-homestars>
+          <span class="earth">
+            <img src="./terra.jpg" alt="" width="640" height="640" decoding="async" loading="lazy" title="La Terra vista da Apollo 17 (NASA, pubblico dominio)" />
+            <span class="earth-shade"></span>
+            <i class="earth-flag" style="left:52%;top:11%" data-flag="flag-vh"></i>
+            <i class="earth-flag" style="left:50%;top:27%" data-flag="flag-md"></i>
+            <i class="earth-flag" style="left:58%;top:40%" data-flag="flag-alfa"></i>
           </span>
         </span>
       </span>
       <span class="home-gate-copy">
         <small>Siti e diving</small>
         <strong>Mappa</strong>
-        <em>${t.sites ? `${t.sites.toLocaleString("it-IT")} ${t.sites === 1 ? "sito nel diario" : "siti nel diario"}` : "Il mare, sito per sito"}</em>
+        <em>${t.sites ? `${t.sites.toLocaleString("it-IT")} ${t.sites === 1 ? "sito nel diario" : "siti nel diario"} · ` : ""}siti e diving di tutto il mondo</em>
       </span>
     </button>
   `;
   gates.querySelectorAll("[data-port]").forEach((b) => {
     b.onclick = () => openNavSection(b.dataset.port);
+  });
+  const homeStars = gates.querySelector("[data-homestars]");
+  const starsUrl = makeStarfield();
+  if (homeStars && starsUrl) homeStars.style.setProperty("--stars", `url("${starsUrl}")`);
+  gates.querySelectorAll("[data-flag]").forEach((el) => {
+    const url = mapFlagUrl(el.dataset.flag);
+    if (url) el.style.backgroundImage = `url("${url}")`;
   });
   frag.append(gates);
   if (!seaDirectory.at) {
@@ -7115,7 +7000,7 @@ function emptyState() {
   return d;
 }
 
-function diveCard(d) {
+function diveCard(d, opts = {}) {
   applyDiveMetrics(d);
   const art = document.createElement("article");
   const map = satMapHtml(d, "sat-place bare");
@@ -7133,7 +7018,7 @@ function diveCard(d) {
         <h3>${escapeHtml(d.site || "Sito da nominare")}</h3>
         <p>#${escapeHtml(d.number)} · ${escapeHtml(fmtItDateLong(d.date))}${d.timeIn ? " · " + escapeHtml(d.timeIn) : ""} · ${escapeHtml(d.location || "—")}</p>
       </div>
-      <button class="btn danger log-del" type="button" data-deldive>Elimina</button>
+      ${opts.noDelete ? "" : `<button class="btn danger log-del" type="button" data-deldive>Elimina</button>`}
     </header>
     <div class="log-kpis">
       <div><small>Profondità max</small><b>${fmtDepth(d.maxDepth)} m</b></div>
@@ -7157,7 +7042,8 @@ function diveCard(d) {
     </div>
     ${effortHtml(d, true)}
   `;
-  art.querySelector("[data-deldive]").onclick = async (e) => {
+  const del = art.querySelector("[data-deldive]");
+  if (del) del.onclick = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (!(await removeDive(d))) return;
@@ -7166,6 +7052,7 @@ function diveCard(d) {
   art.onclick = () => {
     view = { name: "detail", diveId: d.id, draft: null, query: view.query };
     render();
+    window.scrollTo(0, 0);
   };
   queueMicrotask(() => {
     const c = art.querySelector("canvas.spark");
@@ -9027,6 +8914,9 @@ function renderLog() {
     });
   const search = document.createElement("input");
   search.className = "search";
+  search.type = "search";
+  search.dataset.logsearch = "";
+  search.enterKeyHint = "search";
   search.placeholder = "Cerca sito, località, diving, buddy…";
   search.value = view.query || "";
   search.oninput = () => {

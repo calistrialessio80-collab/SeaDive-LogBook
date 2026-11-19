@@ -2805,106 +2805,77 @@ body.page-people .community-page {
 .gate-face.ghost { background: rgba(8, 36, 58, 0.28); color: #fff; }
 .gate-face:nth-child(2) { width: 68px; height: 68px; transform: translateY(-12px); }
 .gate-face:nth-child(4) { transform: translateY(-8px); }
-.gate-map { background: #041824; }
+.gate-map { background: #01030a; }
 .gate-map .home-gate-scene { min-height: 196px; padding: 0; }
 .gate-map .home-gate-copy { z-index: 3; }
-.coast-scene { position: absolute; inset: 0; overflow: hidden; }
-.coast-art { display: block; width: 100%; height: 100%; }
-.coast-cloud { transform-box: fill-box; transform-origin: center; animation: hmCloud 22s ease-in-out infinite alternate; }
-.coast-cloud.b { animation-duration: 30s; animation-direction: alternate-reverse; }
-.coast-gull { transform-box: fill-box; transform-origin: center; animation: hmGull 18s linear infinite; }
-.sea-glare { animation: hmGlare 3.4s ease-in-out infinite; }
-.sea-glint { animation: hmGlint 2.6s ease-in-out infinite; }
-.sea-glint.b { animation-delay: 0.5s; }
-.sea-glint.c { animation-delay: 1.1s; }
-.coast-scene::before {
-  content: "";
+/* La Terra vera (NASA, Apollo 17) su un cielo stellato, come la mappa a globo. */
+.space-scene {
   position: absolute;
-  z-index: 1;
-  left: -30%;
-  right: -10%;
-  top: 50%;
-  height: 16%;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 46px 5px at 8% 40%, rgba(255, 255, 255, 0.75), transparent 70%),
-    radial-gradient(ellipse 62px 6px at 32% 68%, rgba(255, 255, 255, 0.4), transparent 72%),
-    radial-gradient(ellipse 50px 5px at 58% 36%, rgba(255, 255, 255, 0.62), transparent 70%),
-    radial-gradient(ellipse 40px 5px at 82% 62%, rgba(255, 255, 255, 0.38), transparent 72%);
-  background-size: 220px 100%;
-  animation: hmWater 8s linear infinite;
+  inset: 0;
+  overflow: hidden;
+  background-color: #01030a;
+  background-image:
+    var(--stars, none),
+    radial-gradient(ellipse 60% 80% at 78% 40%, rgba(60, 130, 220, 0.28), transparent 70%),
+    linear-gradient(118deg, transparent 20%, rgba(150, 160, 220, 0.07) 42%, transparent 62%),
+    radial-gradient(circle at 30% 50%, #071328 0%, #01030a 80%);
+  background-size: 640px 640px, 100% 100%, 100% 100%, 100% 100%;
+  background-repeat: repeat, no-repeat, no-repeat, no-repeat;
+  animation: hmStars 120s linear infinite;
 }
-.dan-flag {
+.earth {
   position: absolute;
-  z-index: 2;
-  left: 56%;
-  top: 2%;
-  width: 42%;
-  height: 90%;
-  transform: rotate(-8deg);
-  transform-origin: 12% 88%;
-  filter: drop-shadow(7px 9px 5px rgba(12, 28, 22, 0.32));
+  right: -78px;
+  top: 6px;
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(140, 200, 255, 0.35),
+    0 0 18px 4px rgba(110, 180, 255, 0.45),
+    0 0 60px 16px rgba(60, 130, 230, 0.28);
+  animation: hmFloat 9s ease-in-out infinite;
 }
-.dan-pole {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 8px;
+.earth img {
+  display: block;
+  width: 100%;
   height: 100%;
-  border-radius: 4px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+/* Lato in ombra e bordo dell'atmosfera: la sfera prende volume. */
+.earth-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
   background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.28), transparent 22%, rgba(255, 255, 255, 0.28) 58%, rgba(0, 0, 0, 0.22)),
-    repeating-linear-gradient(#6a4b2e 0 2px, #7c5a38 2px 4px, #543c24 4px 6px);
-  box-shadow: 1px 0 0 rgba(255, 236, 210, 0.25);
+    radial-gradient(circle at 70% 30%, rgba(255, 255, 255, 0.10), transparent 45%),
+    radial-gradient(circle at 30% 70%, transparent 52%, rgba(1, 3, 10, 0.55) 78%, rgba(1, 3, 10, 0.85) 100%);
+  box-shadow: inset 0 0 14px 3px rgba(150, 210, 255, 0.35);
+  pointer-events: none;
 }
-.dan-pole::before {
-  content: "";
+.earth-flag {
   position: absolute;
-  top: -6px;
-  left: -3px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 32%, #fff4d2, #d7b15a 42%, #8a6428 74%);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  width: 22px;
+  height: 28px;
+  margin: -28px 0 0 -2px;
+  background: center / contain no-repeat;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+  animation: hmFlagIn 0.7s ease-out both;
 }
-.dan-fly {
-  position: absolute;
-  left: 5px;
-  top: 2px;
-  width: calc(100% - 4px);
-  height: 70%;
-  overflow: visible;
-  transform-origin: 4% 48%;
-  animation: hmBillow 3.6s ease-in-out infinite;
-  filter: drop-shadow(4px 8px 3px rgba(16, 12, 8, 0.3));
-}
-.dan-shadow {
-  position: absolute;
-  left: 12%;
-  bottom: 6%;
-  width: 78%;
-  height: 7%;
-  border-radius: 50%;
-  background: rgba(28, 22, 14, 0.32);
-  filter: blur(3px);
-  transform-origin: left center;
-  animation: hmShadow 1.7s ease-in-out infinite;
-}
-@keyframes hmCloud { from { transform: translateX(0); } to { transform: translateX(18px); } }
-@keyframes hmGull { from { transform: translate(0, 0); } to { transform: translate(86px, 8px); } }
-@keyframes hmGlare { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
-@keyframes hmGlint { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
-@keyframes hmWater { from { background-position: 0 0; } to { background-position: -220px 0; } }
-@keyframes hmBillow {
-  0%, 100% { transform: perspective(640px) rotateY(-4deg) rotate(0.6deg); }
-  50% { transform: perspective(640px) rotateY(-11deg) rotate(-1.2deg); }
-}
-@keyframes hmShadow { 0%, 100% { transform: scaleX(1); opacity: 0.32; } 50% { transform: scaleX(0.86) translateX(6px); opacity: 0.2; } }
+.earth-flag:nth-of-type(2) { animation-delay: 0.15s; }
+.earth-flag:nth-of-type(3) { animation-delay: 0.3s; }
+@keyframes hmStars { from { background-position: 0 0, center, center, center; } to { background-position: -640px 0, center, center, center; } }
+@keyframes hmFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes hmFlagIn { from { opacity: 0; transform: translateY(-6px) scale(0.8); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .coast-cloud, .coast-gull, .sea-glare, .sea-glint, .coast-scene::before, .dan-fly, .dan-shadow { animation: none; }
+  .space-scene, .earth, .earth-flag { animation: none; }
 }
-body.page-home .app-rate {
+.home-all { margin-top: 10px; }
+body .home-brand p.hint { font-size: 11px; opacity: 0.55; letter-spacing: 0.02em; margin-top: 4px; }
+.home-stats .kpi-chart .year-chart { margin-top: 16px; }
+.kpi p span svg { display: block; opacity: 0.75; }
+.home-stats .kpi em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }body.page-home .app-rate {
   margin-top: 8px;
   padding: 16px 14px 12px;
   background:

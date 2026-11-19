@@ -332,8 +332,6 @@ body.abisso .gate-life > span {
 }
 body.abisso .gate-life > span * { color: inherit; }
 body.abisso .gate-life i, body.abisso .gate-life small, body.abisso .gate-life em { color: var(--ab-text-2); }
-/* La costa della Mappa diventa un tramonto: stessa illustrazione, luce più bassa */
-body.abisso .coast-scene { filter: brightness(0.72) saturate(0.95) hue-rotate(-8deg); }
 body.abisso .gate-face {
   background: linear-gradient(135deg, rgba(34, 211, 238, 0.35), rgba(167, 139, 250, 0.35));
   border: 1px solid rgba(255, 255, 255, 0.25);
@@ -341,6 +339,12 @@ body.abisso .gate-face {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
 }
 body.abisso .gate-face b { background: none; border: 0; color: #fff; }
+body.abisso .gate-face.ghost {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1.5px dashed rgba(255, 255, 255, 0.32);
+  box-shadow: none;
+}
+body.abisso .gate-face.ghost b { color: rgba(255, 255, 255, 0.6); font-weight: 400; font-size: 24px; }
 
 /* ---------- Accesso ---------- */
 body.abisso.page-auth { background: #04121c; }
