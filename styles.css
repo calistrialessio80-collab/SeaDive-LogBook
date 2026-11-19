@@ -2779,8 +2779,16 @@ body.page-people .community-page {
     radial-gradient(circle at 10% 0%, rgba(255, 255, 255, 0.5), transparent 34%),
     linear-gradient(180deg, #e4f6ff 0%, #79b7ea 38%, #1b4f88 100%);
 }
+.gate-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 .gate-crew {
   position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-end;
   gap: 8px;
