@@ -1,0 +1,47 @@
+NOTIFICHE DELLA CHAT AD APP CHIUSA – servizio gratuito su Cloudflare Workers
+==========================================================================
+
+Cosa fa
+  Quando qualcuno scrive in chat, il servizio "sveglia" i telefoni degli altri partecipanti con una
+  notifica, anche se l'app è chiusa. La notifica dice solo "Nuovo messaggio in chat": il testo resta
+  cifrato nell'app. Il servizio avvisa solo chi si segue a vicenda con chi scrive.
+
+Costo
+  Zero. Piano gratuito Cloudflare: 100.000 richieste al giorno; archivio KV con 1.000 scritture al giorno
+  (ogni telefono si registra una volta alla settimana).
+
+Telefoni
+  Android (Chrome): sì.  iPhone: sì, solo se l'app è aggiunta alla schermata Home (iOS 16.4 o successivo).
+  Computer (Chrome, Edge, Firefox): sì.
+
+Le due chiavi (create una volta sola, NON rifarle: chi è già iscritto smetterebbe di ricevere)
+  Pubblica:  .claude/notifiche-chiave-pubblica.txt   (è già anche in config.js, può stare online)
+  Privata:   .claude/notifiche-chiave-privata.json   (SEGRETA: solo nel campo "Secret" di Cloudflare,
+             mai su GitHub, mai in chat. La cartella .claude è esclusa da GitHub.)
+
+ATTIVAZIONE (una volta, circa 10 minuti, tutto dal sito di Cloudflare)
+  1. Crea un account gratuito su https://dash.cloudflare.com/sign-up (non serve carta di credito).
+  2. Menu a sinistra "Workers & Pages" → "Create" → "Create Worker".
+     Nome: seadive-notifiche → "Deploy".
+  3. "Edit code": cancella tutto, incolla il contenuto di tools/notifiche/worker.js → "Deploy".
+  4. Menu "Storage & Databases" → "KV" → "Create" → nome: SEADIVE_SUBS.
+  5. Torna al worker seadive-notifiche → "Settings" → "Bindings" → "Add" → "KV namespace":
+     Variable name: SUBS   KV namespace: SEADIVE_SUBS → "Deploy".
+  6. "Settings" → "Variables and Secrets" → "Add":
+       VAPID_PUBLIC    tipo Text    valore: il contenuto di .claude/notifiche-chiave-pubblica.txt
+       VAPID_PRIVATE   tipo Secret  valore: il contenuto di .claude/notifiche-chiave-privata.json
+       VAPID_SUBJECT   tipo Text    valore: l'indirizzo del sito dell'app (es. https://<utente>.github.io/SeaDive-LogBook/)
+       ALLOWED_ORIGIN  tipo Text    valore: solo l'inizio dell'indirizzo (es. https://<utente>.github.io)
+     → "Deploy".
+  7. In alto nella pagina del worker c'è il suo indirizzo, tipo https://seadive-notifiche.<nome>.workers.dev
+     Scrivilo in config.js:  window.SEADIVE_NOTIFY_URL = window.SEADIVE_NOTIFY_URL || "https://seadive-notifiche.<nome>.workers.dev";
+     (o chiedilo a Claude), poi pubblica l'app come sempre.
+
+Prova
+  Due telefoni che si seguono a vicenda: su entrambi apri la chat e accetta le notifiche.
+  Chiudi l'app su uno dei due, scrivi dall'altro: arriva "SeaDive – Nuovo messaggio in chat".
+  Toccando la notifica si apre la chat.
+
+Riservatezza
+  Il servizio conserva solo, per ogni profilo (codice anonimo), l'indirizzo push del telefono.
+  Non vede messaggi, nomi, brevetti o firme. Chi esce dalla Community o dall'account viene tolto.

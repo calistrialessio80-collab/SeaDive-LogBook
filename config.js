@@ -12,3 +12,8 @@ window.SEADIVE_OAUTH = {
     scope: "openid email profile https://www.googleapis.com/auth/drive.appdata",
   },
 };
+
+/* Notifiche della chat ad app chiusa (servizio gratuito su Cloudflare, vedi tools/notifiche/LEGGIMI.txt).
+   Finché l'indirizzo è vuoto le notifiche funzionano solo con l'app aperta. */
+window.SEADIVE_NOTIFY_URL = window.SEADIVE_NOTIFY_URL || "";
+window.SEADIVE_VAPID_PUBLIC = window.SEADIVE_VAPID_PUBLIC || "BOzZXwRVz-E-TfaEruPR8NbuZ4vkH4dmVpkh5KTFYvpSVQzycQq5wBmTD1Rg62gAdd7T_xx0RV2MxqFjLJYoruc";

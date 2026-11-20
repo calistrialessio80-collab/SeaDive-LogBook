@@ -1195,6 +1195,7 @@ async function signOutAndForget() {
   }
   clearTimeout(backupTimer);
   backupTimer = 0;
+  await disablePushNotices();
   await window.SeaDiveDrive?.signOutGoogle?.();
   localAccountKeys().forEach((k) => {
     try {
@@ -3319,6 +3320,7 @@ async function leaveCommunity() {
   } catch {
     return { error: "network" };
   }
+  await disablePushNotices();
   state.profile.communityOff = true;
   (state.people || []).forEach((p) => {
     if (p.remoteOwner) {
@@ -3484,8 +3486,80 @@ const chatSeen = new Set();
 let chatNoticeReady = false;
 
 function askChatNotice() {
-  if (!("Notification" in window) || Notification.permission !== "default") return;
-  Notification.requestPermission().catch(() => {});
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    enablePushNotices().catch(() => {});
+    return;
+  }
+  if (Notification.permission !== "default") return;
+  Notification.requestPermission()
+    .then((answer) => {
+      if (answer === "granted") enablePushNotices().catch(() => {});
+    })
+    .catch(() => {});
+}
+
+/* ---------- Notifiche ad app chiusa ----------
+   Un piccolo servizio gratuito su Cloudflare (tools/notifiche) "sveglia" i telefoni di chi è nella chat
+   quando qualcuno scrive. Il telefono registra presso il servizio solo il suo indirizzo push, legato
+   al codice anonimo del profilo; la notifica non contiene il messaggio, che resta cifrato nell'app.
+   Senza SEADIVE_NOTIFY_URL in config.js tutto questo resta spento. */
+const PUSH_REG_KEY = "seadive-push-reg";
+
+function pushConfigured() {
+  return Boolean(window.SEADIVE_NOTIFY_URL && window.SEADIVE_VAPID_PUBLIC && "serviceWorker" in navigator && "PushManager" in window);
+}
+
+function bytesFromB64Url(text) {
+  const b64 = String(text || "").replace(/-/g, "+").replace(/_/g, "/");
+  return bytesFromB64(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+}
+
+async function notifyService(path, body) {
+  const base = String(window.SEADIVE_NOTIFY_URL || "").replace(/\/+$/, "");
+  if (!base) return null;
+  const res = await fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return res.ok ? res.json().catch(() => ({})) : null;
+}
+
+async function enablePushNotices() {
+  if (!pushConfigured() || !loadSession() || state.profile?.communityOff) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytesFromB64Url(window.SEADIVE_VAPID_PUBLIC) });
+  }
+  const owner = await profileOwnerKey();
+  let last = {};
+  try {
+    last = JSON.parse(localStorage.getItem(PUSH_REG_KEY) || "{}") || {};
+  } catch {
+    last = {};
+  }
+  // Si riscrive al servizio solo se cambia qualcosa o una volta alla settimana.
+  if (last.owner === owner && last.endpoint === sub.endpoint && Date.now() - Number(last.at || 0) < 7 * 864e5) return;
+  const ok = await notifyService("/subscribe", { owner, sub: { endpoint: sub.endpoint } });
+  if (ok) localStorage.setItem(PUSH_REG_KEY, JSON.stringify({ owner, endpoint: sub.endpoint, at: Date.now() }));
+}
+
+async function disablePushNotices() {
+  try {
+    const last = JSON.parse(localStorage.getItem(PUSH_REG_KEY) || "{}") || {};
+    if (last.owner && last.endpoint) await notifyService("/unsubscribe", { owner: last.owner, endpoint: last.endpoint }).catch(() => null);
+    const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    const sub = await reg?.pushManager?.getSubscription?.();
+    if (sub) await sub.unsubscribe().catch(() => {});
+  } catch {
+    /* niente da togliere */
+  }
+  localStorage.removeItem(PUSH_REG_KEY);
+}
+
+function pushChatMembers(owner, members) {
+  if (!pushConfigured()) return;
+  const to = [...(members || [])].filter((id) => id && id !== owner);
+  if (to.length) notifyService("/notify", { from: owner, to }).catch(() => null);
 }
 
 function chatUnreadTotal() {
@@ -3842,6 +3916,7 @@ async function watchChatNotices() {
 function armChatNotices() {
   if (armChatNotices.started || !loadSession()) return;
   armChatNotices.started = true;
+  enablePushNotices().catch(() => {});
   watchChatNotices().catch(() => {});
   // Ogni 60 s e solo con l'app in primo piano: la chat aperta ha già il suo aggiornamento ogni 15 s.
   setInterval(() => {
@@ -4325,6 +4400,7 @@ function renderChat() {
         };
         chatTextCache.set(msgId, text);
         await cloudSet(`m-${msg._id}`, msg);
+        pushChatMembers(owner, active.members);
         input.value = "";
         stick = true;
         await pull();
@@ -5301,6 +5377,10 @@ function renderScreen() {
   refreshLocalSaveBanner();
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
+  if (loadSession() && location.hash === "#chat") {
+    history.replaceState(null, "", location.pathname + location.search);
+    setTimeout(() => openMainChat(""), 0);
+  }
   if (view.name === "log") {
     const fab = document.createElement("button");
     fab.className = "fab";

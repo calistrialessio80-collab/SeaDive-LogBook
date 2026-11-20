@@ -55,6 +55,22 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+// Notifica ad app chiusa (dal servizio su Cloudflare): non porta il messaggio, che resta cifrato nell'app.
+// I browser chiedono di mostrare sempre una notifica per ogni push ricevuto: la stessa etichetta
+// fa sì che più messaggi di fila restino una sola notifica.
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    self.registration.showNotification("SeaDive", {
+      body: "Nuovo messaggio in chat. Tocca per leggerlo.",
+      icon: "./icon-192.png",
+      badge: "./icon-192.png",
+      tag: "seadive-chat",
+      renotify: true,
+      data: { chat: true },
+    })
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const owner = event.notification.data?.owner || "";
@@ -64,7 +80,7 @@ self.addEventListener("notificationclick", (event) => {
         client.postMessage({ type: "seadive-chat", owner });
         if ("focus" in client) return client.focus();
       }
-      if (self.clients.openWindow) return self.clients.openWindow("./");
+      if (self.clients.openWindow) return self.clients.openWindow("./#chat");
     })
   );
 });
