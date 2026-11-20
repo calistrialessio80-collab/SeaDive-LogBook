@@ -294,6 +294,69 @@ body.abisso .bio-credit-line, body.abisso .bio-credit-line a { color: var(--ab-t
 body.abisso .bio-page [data-biowiki] a { color: var(--ab-cyan); }
 body.abisso .bio-back { color: var(--ab-cyan); }
 
+/* Intestazione: foto vera di reef (NOAA, pubblico dominio) e i numeri della guida */
+body.abisso .bio-head {
+  position: relative; overflow: hidden; isolation: isolate;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  min-height: 210px; margin: 0 0 14px; padding: 26px 16px 14px;
+  border-radius: 22px; border: 1px solid var(--ab-line);
+  background: #061a28 url("./gorgonie.jpg") center / cover no-repeat;
+}
+body.abisso .bio-head::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(180deg, rgba(4, 20, 30, 0.15) 0%, rgba(4, 20, 30, 0.55) 45%, rgba(4, 20, 30, 0.93) 100%);
+}
+body.abisso .bio-head .bio-lead { color: rgba(255, 255, 255, 0.84); opacity: 1; margin-bottom: 12px; }
+body.abisso .bio-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+body.abisso .bio-stats div {
+  padding: 7px 9px; border-radius: 12px;
+  background: rgba(4, 20, 30, 0.55); border: 1px solid rgba(103, 232, 249, 0.22);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+body.abisso .bio-stats b { display: block; font-family: var(--ab-display); font-size: 16px; color: #fff; letter-spacing: -0.02em; }
+body.abisso .bio-stats small { display: block; font-size: 10px; line-height: 1.2; color: rgba(255, 255, 255, 0.65); }
+body.abisso .bio-page [data-biocount][hidden] { display: none; }
+
+/* Sezioni: icona a linea, nome del gruppo e nome scientifico */
+body.abisso .bio-sec { gap: 12px; margin: 18px 0 4px; padding: 0 2px 10px; border-bottom: 1px solid rgba(103, 232, 249, 0.14); }
+body.abisso .bio-sec i {
+  width: 40px; height: 40px; flex: none; border-radius: 12px; color: #67e8f9;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(139, 92, 246, 0.14));
+  border: 1px solid rgba(103, 232, 249, 0.25);
+}
+body.abisso .bio-sec span { display: flex; flex-direction: column; min-width: 0; line-height: 1.1; }
+body.abisso .bio-sec small {
+  margin-top: 3px; font-family: Outfit, system-ui, sans-serif; font-size: 12px; font-style: italic; font-weight: 500;
+  letter-spacing: 0; color: rgba(255, 255, 255, 0.55);
+}
+body.abisso .bio-sec em { flex: none; padding: 3px 9px; border-radius: 99px; background: rgba(34, 211, 238, 0.1); }
+body.abisso .bio-emoji { display: inline-flex; color: #67e8f9; }
+body.abisso .bio-chip.on .bio-emoji { color: inherit; }
+body.abisso .bio-mark { color: rgba(103, 232, 249, 0.55); }
+
+/* Schede: famiglia in oro; riflesso mentre la foto arriva */
+body.abisso .bio-card .bio-kicker { letter-spacing: 0.06em; }
+body.abisso .bio-fam { color: #fbbf24; }
+body.abisso .bio-pic:not(.has-photo) .bio-mark {
+  background: linear-gradient(110deg, #0a2534 30%, #123a4f 50%, #0a2534 70%);
+  background-size: 200% 100%;
+  animation: bio-shimmer 1.4s linear infinite;
+}
+@keyframes bio-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { body.abisso .bio-pic:not(.has-photo) .bio-mark { animation: none; } }
+
+/* Scheda specie: classificazione dal regno alla specie */
+body.abisso .tax-list { list-style: none; margin: 6px 0 4px; padding: 0; }
+body.abisso .tax-list li {
+  display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+  padding: 7px 0 7px calc(var(--d) * 8px); border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+body.abisso .tax-list li:last-child { border-bottom: 0; }
+body.abisso .tax-list span { font-size: 12px; color: var(--ab-text-3); text-transform: uppercase; letter-spacing: 0.06em; }
+body.abisso .tax-list b { font-size: 14px; color: #fff; text-align: right; }
+body.abisso .tax-list b.la { font-style: italic; color: #a5f3fc; }
+body.abisso .tax-list li:nth-child(5) b { color: #fbbf24; }
+
 /* ---------- Profilo ---------- */
 body.abisso .date-box,
 body.abisso .time-box { background: rgba(255, 255, 255, 0.05); border-color: var(--ab-line-2); color: var(--ab-text); }

@@ -24,20 +24,20 @@ function sp(group, it, la, where, tag, size, depth, habitat, look, life, dive) {
 }
 
 const LIFE_SECTIONS = [
-  { id: "pesci", label: "Pesci", emoji: "🐟", blurb: "Pesci ossei e cartilaginei di scogliera, di grotta e di largo, con razze e squali." },
-  { id: "flora", label: "Flora", emoji: "🌿", blurb: "Piante marine, alghe verdi, brune e rosse, praterie e kelp." },
-  { id: "coralli", label: "Coralli", emoji: "🪸", blurb: "Madrepore, gorgonie, coralli molli, coralli neri, zoantidei e pennatule." },
-  { id: "nudibranchi", label: "Nudibranchi", emoji: "🐚", blurb: "Nudibranchi, lepri di mare, sacoglossi e altre lumache senza conchiglia." },
-  { id: "molluschi", label: "Molluschi", emoji: "🦑", blurb: "Polpi, seppie, calamari, bivalvi e conchiglie." },
-  { id: "crostacei", label: "Crostacei", emoji: "🦀", blurb: "Aragoste, granchi, gamberi, paguri e balani." },
-  { id: "meduse", label: "Meduse e anemoni", emoji: "🪼", blurb: "Meduse, anemoni, cerianti, idroidi e ctenofori." },
-  { id: "spugne", label: "Spugne", emoji: "🧽", blurb: "Spugne incrostanti, a tubo, erette e di grotta." },
-  { id: "echinodermi", label: "Echinodermi", emoji: "⭐", blurb: "Stelle marine, ricci, cetrioli di mare, ofiure e gigli di mare." },
-  { id: "vermi", label: "Vermi", emoji: "🌀", blurb: "Policheti di parete: spirografi, serpule e vermi di fuoco." },
-  { id: "tunicati", label: "Tunicati", emoji: "🟣", blurb: "Ascidie solitarie, coloniali e forme di mare aperto." },
-  { id: "briozoi", label: "Briozoi", emoji: "🔶", blurb: "Colonie calcaree spesso scambiate per piccoli coralli." },
-  { id: "rettili", label: "Rettili", emoji: "🐢", blurb: "Tartarughe marine, serpenti di mare e iguana marina." },
-  { id: "mammiferi", label: "Mammiferi", emoji: "🐋", blurb: "Delfini, balene, foche e sirenidi." },
+  { id: "pesci", label: "Pesci", sci: "Actinopterygii · Chondrichthyes", emoji: "🐟", blurb: "Pesci ossei e cartilaginei di scogliera, di grotta e di largo, con razze e squali." },
+  { id: "flora", label: "Flora", sci: "Alghe e fanerogame marine", emoji: "🌿", blurb: "Piante marine, alghe verdi, brune e rosse, praterie e kelp." },
+  { id: "coralli", label: "Coralli", sci: "Anthozoa · Hydrozoa", emoji: "🪸", blurb: "Madrepore, gorgonie, coralli molli, coralli neri, zoantidei e pennatule." },
+  { id: "nudibranchi", label: "Nudibranchi e lumache di mare", short: "Nudibranchi e lumache", sci: "Nudibranchia · Aplysiida · Sacoglossa · Cephalaspidea", emoji: "🐚", blurb: "Nudibranchi, lepri di mare, sacoglossi e altre lumache senza conchiglia." },
+  { id: "molluschi", label: "Molluschi", sci: "Cephalopoda · Bivalvia · Gastropoda", emoji: "🦑", blurb: "Polpi, seppie, calamari, bivalvi e conchiglie." },
+  { id: "crostacei", label: "Crostacei", sci: "Crustacea", emoji: "🦀", blurb: "Aragoste, granchi, gamberi, paguri e balani." },
+  { id: "meduse", label: "Meduse e anemoni", sci: "Cnidaria · Ctenophora", emoji: "🪼", blurb: "Meduse, anemoni, cerianti, idroidi e ctenofori." },
+  { id: "spugne", label: "Spugne", sci: "Porifera", emoji: "🧽", blurb: "Spugne incrostanti, a tubo, erette e di grotta." },
+  { id: "echinodermi", label: "Echinodermi", sci: "Echinodermata", emoji: "⭐", blurb: "Stelle marine, ricci, cetrioli di mare, ofiure e gigli di mare." },
+  { id: "vermi", label: "Vermi", sci: "Annelida · Platyhelminthes", emoji: "🌀", blurb: "Policheti di parete: spirografi, serpule e vermi di fuoco." },
+  { id: "tunicati", label: "Tunicati", sci: "Tunicata", emoji: "🟣", blurb: "Ascidie solitarie, coloniali e forme di mare aperto." },
+  { id: "briozoi", label: "Briozoi", sci: "Bryozoa", emoji: "🔶", blurb: "Colonie calcaree spesso scambiate per piccoli coralli." },
+  { id: "rettili", label: "Rettili", sci: "Testudines · Squamata", emoji: "🐢", blurb: "Tartarughe marine, serpenti di mare e iguana marina." },
+  { id: "mammiferi", label: "Mammiferi", sci: "Cetacea · Pinnipedia · Sirenia", emoji: "🐋", blurb: "Delfini, balene, foche e sirenidi." },
   { id: "altri", label: "Altri", emoji: "🌊", blurb: "Forme marine che stanno fuori dalle sezioni precedenti." },
 ];
 
@@ -2993,6 +2993,58 @@ function lifeEmoji(x) {
   return lifeSection(x.group)?.emoji || "🌊";
 }
 
+// Icone a linea dei gruppi, nello stile di una guida di identificazione (al posto delle emoji).
+const LIFE_ICONS = {
+  pesci: '<path d="M3 12c3-4.5 8-5.5 12-3.5l4-3v13l-4-3c-4 2-9 1-12-3.5z"/><circle cx="8" cy="11" r=".9" fill="currentColor"/>',
+  flora: '<path d="M12 21V9M12 13c-3-1-5-4-5-8 3 1 5 4 5 8zM12 16c3-1 5-4 5-8-3 1-5 4-5 8z"/>',
+  coralli: '<path d="M12 21v-7M12 14c-3 0-4-2-4-5M8 9V5M8 9c-2 0-3-1-3-3M12 14c3 0 4-2 4-5M16 9V4M16 9c2 0 3-1 3-3M9 21h6"/>',
+  nudibranchi: '<path d="M3 16c2-4 6-6 10-6s6 2 8 6H3z"/><path d="M8 10V7M11 10V6M16 11l1-3M19 13l2-1"/>',
+  molluschi: '<path d="M12 20c-5 0-8-3-8-7 0-5 4-9 9-9 4 0 7 3 7 6 0 3-2 5-5 5-2 0-4-1-4-3 0-1.5 1-3 3-3"/>',
+  crostacei: '<ellipse cx="12" cy="14" rx="6" ry="4"/><path d="M6 13 3 9l2-3M18 13l3-4-2-3M8 17l-2 3M16 17l2 3M12 10V8"/>',
+  meduse: '<path d="M5 12a7 7 0 0 1 14 0z"/><path d="M8 12v5c0 1 1 2 0 4M12 12v8M16 12v5c0 1-1 2 0 4"/>',
+  spugne: '<path d="M7 21V8c0-2 1-4 3-4h4c2 0 3 2 3 4v13z"/><circle cx="12" cy="8" r="1.2"/><circle cx="10" cy="13" r="1"/><circle cx="14" cy="16" r="1"/>',
+  echinodermi: '<path d="M12 3l2.2 6.3H21l-5.4 4 2 6.7L12 16l-5.6 4 2-6.7L3 9.3h6.8z"/>',
+  vermi: '<path d="M4 18c2-4 4 0 6-4s4 0 6-4 3-2 4-3"/><circle cx="20" cy="7" r="1"/>',
+  tunicati: '<path d="M9 21c-2-3-2-9 0-13l1-4h4l1 4c2 4 2 10 0 13z"/><path d="M10 4h4"/>',
+  briozoi: '<path d="M4 20h16M6 20V10h4v10M10 20V7h4v13M14 20V12h4v8"/>',
+  rettili: '<ellipse cx="12" cy="13" rx="6" ry="5"/><path d="M12 8V6M7 10 4 8M17 10l3-2M7 16l-3 2M17 16l3 2M12 18v2"/>',
+  mammiferi: '<path d="M3 13c3-4 9-5 14-2l4-3-1 6c-3 4-10 5-15 2"/><path d="M17 11c1 0 2-1 2-2"/>',
+  altri: '<path d="M3 12c3-3 6 3 9 0s6 3 9 0"/>',
+};
+
+function lifeIcon(group, size = 22) {
+  const path = LIFE_ICONS[group] || LIFE_ICONS.altri;
+  return `<svg class="life-ico" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+}
+
+/* ---------- Classificazione scientifica ----------
+   marine-taxonomy.json (GBIF Backbone Taxonomy): regno, phylum, classe, ordine e famiglia di ogni specie
+   della guida, preparato con tools/biologia. Si scarica con il catalogo, solo nella Biologia. */
+let taxonomyData = null;
+let taxonomyPromise = null;
+
+function loadMarineTaxonomy(version) {
+  if (taxonomyPromise) return taxonomyPromise;
+  taxonomyPromise = fetch(`./marine-taxonomy.json?v=${encodeURIComponent(version || "1")}`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (data && Array.isArray(data.names) && data.t) taxonomyData = data;
+      return Boolean(taxonomyData);
+    })
+    .catch(() => {
+      taxonomyPromise = null;
+      return false;
+    });
+  return taxonomyPromise;
+}
+
+function lifeTaxonomy(la) {
+  const row = taxonomyData?.t?.[String(la || "").trim()];
+  if (!row) return null;
+  const n = taxonomyData.names;
+  return { kingdom: n[row[0]] || "", phylum: n[row[1]] || "", klass: n[row[2]] || "", order: n[row[3]] || "", family: n[row[4]] || "" };
+}
+
 const lifePageCache = {};
 
 /* ---------- Crediti delle foto ----------
@@ -3469,6 +3521,9 @@ window.SeaDiveBiology = {
   lifeWeb,
   lifeWorms,
   lifeEmoji,
+  lifeIcon,
+  loadMarineTaxonomy,
+  lifeTaxonomy,
   lifeWhereLabel,
   loadMarineCatalog,
   catalogReady,

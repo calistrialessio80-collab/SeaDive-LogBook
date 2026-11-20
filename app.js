@@ -6708,7 +6708,7 @@ function homeBioPreview() {
   const want = ["pesci", "flora", "coralli"];
   const sections = (api?.LIFE_SECTIONS || []).filter((s) => want.includes(s.id));
   const picks = want.map((id) => life.find((x) => x.group === id)).filter(Boolean);
-  const chips = sections.map((s) => `<em>${s.emoji} ${escapeHtml(s.label)}</em>`).join("");
+  const chips = sections.map((s) => `<em>${s.emoji} ${escapeHtml(s.short || s.label)}</em>`).join("");
   const rows = picks
     .map(
       (x) => `<span><i>${escapeHtml(api.lifeEmoji(x))}</i><b>${escapeHtml(x.it)}</b><small>${escapeHtml(x.la)}</small></span>`
@@ -8369,6 +8369,13 @@ function fmtCount(n) {
 const BIO_PAGE = 60;
 const BIO_SECTION_PREVIEW = 24;
 
+// Sopra il nome: la famiglia scientifica (se nota) e il mare; altrimenti il gruppo.
+function bioKicker(api, x, section, where) {
+  const fam = api.lifeTaxonomy?.(x.la)?.family;
+  const head = fam ? `<span class="bio-fam">${escapeHtml(fam)}</span>` : escapeHtml(section?.label || x.group);
+  return `${head} · ${escapeHtml(where)}`;
+}
+
 function bioCardHtml(api, x) {
   const section = api.lifeSection(x.group);
   if (x.ext) {
@@ -8377,11 +8384,11 @@ function bioCardHtml(api, x) {
     const title = x.itKnown ? `<h3>${escapeHtml(x.it)}</h3><p class="bio-la">${escapeHtml(x.la)}</p>` : `<h3 class="bio-title-la">${escapeHtml(x.la)}</h3>`;
     return `<article class="bio-card bio-card-ext" data-bioid="${escapeHtml(x.id)}" role="button" tabindex="0">
         <div class="bio-pic">
-          <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+          <span class="bio-mark" aria-hidden="true">${api.lifeIcon(x.group, 30)}</span>
           <img class="bio-shot" alt="" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         </div>
         <div class="bio-body">
-          <p class="bio-kicker">${escapeHtml(section?.label || x.group)} · ${escapeHtml(x.where)}</p>
+          <p class="bio-kicker">${bioKicker(api, x, section, x.where)}</p>
           ${title}
           <p class="bio-look">${escapeHtml(note)}</p>
         </div>
@@ -8389,11 +8396,11 @@ function bioCardHtml(api, x) {
   }
   return `<article class="bio-card" data-bioid="${escapeHtml(x.id)}" role="button" tabindex="0">
         <div class="bio-pic">
-          <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+          <span class="bio-mark" aria-hidden="true">${api.lifeIcon(x.group, 30)}</span>
           <img class="bio-shot" alt="" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         </div>
         <div class="bio-body">
-          <p class="bio-kicker">${escapeHtml(section?.label || x.group)} · ${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
+          <p class="bio-kicker">${bioKicker(api, x, section, api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
           <h3>${escapeHtml(x.it)}</h3>
           <p class="bio-la">${escapeHtml(x.la)}</p>
           <p class="bio-look">${escapeHtml(x.look)}</p>
@@ -8407,7 +8414,7 @@ function renderBiology() {
   frag.append(topbar("Biologia Marina"));
   const sec = document.createElement("section");
   sec.className = "card bio-page";
-  const sections = [["all", "Tutti", ""], ...(api.LIFE_SECTIONS || []).map((s) => [s.id, s.label, s.emoji])];
+  const sections = [["all", "Tutti", ""], ...(api.LIFE_SECTIONS || []).map((s) => [s.id, s.short || s.label, s.id])];
   const seas = [
     ["all", "Tutti i mari"],
     ["med", "Mediterraneo"],
@@ -8416,9 +8423,10 @@ function renderBiology() {
   ];
   sec.innerHTML = `
     <header class="bio-head">
-      <p class="bio-kicker">Guida da immersione</p>
-      <h2 class="serif">Biologia Marina</h2>
-      <p class="bio-lead">Flora e fauna marina del Mediterraneo e del mondo, divise per tipo.</p>
+      <p class="bio-kicker">Guida di identificazione</p>
+      <h2 class="serif">Biologia marina</h2>
+      <p class="bio-lead">Specie del Mediterraneo e dei mari del mondo, ordinate per gruppo.</p>
+      <div class="bio-stats" data-biostats></div>
     </header>
     <div class="bio-search">
       <input class="search" type="search" enterkeyhint="search" placeholder="Cerca per nome italiano o latino" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
@@ -8450,6 +8458,15 @@ function renderBiology() {
   const blurb = sec.querySelector("[data-bioblurb]");
   const groupChips = sec.querySelector("[data-biofilters]");
   const whereChips = sec.querySelector("[data-biowheres]");
+  const stats = sec.querySelector("[data-biostats]");
+  const paintBioStats = () => {
+    const all = api.filterMarineLife("", "all", "all").length;
+    const med = api.filterMarineLife("", "all", "med").length;
+    const full = (api.MARINE_LIFE || []).length;
+    stats.innerHTML = [[all, "specie"], [med, "Mediterraneo"], [full, "schede complete"]]
+      .map(([n, label]) => `<div><b>${fmtCount(n)}</b><small>${label}</small></div>`)
+      .join("");
+  };
   const paint = () => {
     const q = input.value;
     view.bioQuery = q;
@@ -8477,6 +8494,8 @@ function renderBiology() {
     const section = group === "all" ? null : api.lifeSection(group);
     blurb.textContent = photo ? "" : (section?.blurb || "");
     const extCount = rows.filter((x) => x.ext).length;
+    paintBioStats();
+    count.hidden = !photo && !q.trim() && group === "all" && where === "all";
     if (photo?.pending) {
       count.textContent = "Riconoscimento…";
     } else {
@@ -8502,7 +8521,7 @@ function renderBiology() {
           const more = items.length > perSection
             ? `<button class="btn ghost bio-more" type="button" data-bioopen="${escapeHtml(s.id)}">Mostra tutte le ${fmtCount(items.length)} specie di ${escapeHtml(s.label)}</button>`
             : "";
-          return `<h3 class="bio-sec"><i>${s.emoji}</i><span>${escapeHtml(s.label)}</span><em>${fmtCount(items.length)}</em></h3>${items.slice(0, perSection).map((x) => bioCardHtml(api, x)).join("")}${more}`;
+          return `<h3 class="bio-sec"><i>${api.lifeIcon(s.id)}</i><span>${escapeHtml(s.label)}${s.sci ? `<small>${escapeHtml(s.sci)}</small>` : ""}</span><em>${fmtCount(items.length)}</em></h3>${items.slice(0, perSection).map((x) => bioCardHtml(api, x)).join("")}${more}`;
         })
         .join("");
     } else {
@@ -8538,6 +8557,9 @@ function renderBiology() {
       if (sec.isConnected) paint();
     });
   }
+  api.loadMarineTaxonomy?.(APP_VERSION).then((ok) => {
+    if (ok && sec.isConnected && !document.querySelector(".bio-fam")) paint();
+  });
   let worldTimer = 0;
   let worldToken = 0;
   const showWorld = () => {
@@ -8599,12 +8621,12 @@ function renderBiology() {
     e.preventDefault();
     openFromList(card.dataset.bioid);
   };
-  sections.forEach(([id, label, emoji]) => {
+  sections.forEach(([id, label, icon]) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = `chip bio-chip${bioGroupOn() === id ? " on" : ""}`;
     b.dataset.group = id;
-    b.innerHTML = `${emoji ? `<span class="bio-emoji">${emoji}</span>` : ""}${escapeHtml(label)}`;
+    b.innerHTML = `${icon ? `<span class="bio-emoji">${api.lifeIcon(icon, 18)}</span>` : ""}${escapeHtml(label)}`;
     b.onclick = () => {
       view.bioFilter = id;
       view.bioShow = BIO_PAGE;
@@ -8798,10 +8820,10 @@ function renderBioGuide() {
       <button class="bio-back" type="button" data-bioback>Elenco</button>
       ${fromPhoto}
       <div class="bio-hero">
-        <span class="bio-mark" aria-hidden="true">${api.lifeEmoji(x)}</span>
+        <span class="bio-mark" aria-hidden="true">${api.lifeIcon(x.group, 44)}</span>
         <img class="bio-hero-shot" alt="${escapeHtml(x.it)}" data-bioimg data-la="${escapeHtml(x.la)}" data-it="${escapeHtml(x.it)}" />
         <div class="bio-hero-caption">
-          <p>${escapeHtml(section?.emoji || "")} ${escapeHtml(section?.label || "")} · ${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
+          <p>${escapeHtml(section?.label || "")} · ${escapeHtml(api.lifeWhereLabel ? api.lifeWhereLabel(x) : x.where)}</p>
           ${x.ext && !x.itKnown
             ? `<h2 class="serif bio-title-la" data-bioname>${escapeHtml(x.la)}</h2>`
             : `<h2 class="serif" data-bioname>${escapeHtml(x.it)}</h2>
@@ -8833,6 +8855,7 @@ function renderBioGuide() {
       <div class="bio-block"><h3>Come riconoscerlo</h3><p>${escapeHtml(x.look)}</p></div>
       <div class="bio-block"><h3>Vita</h3><p>${escapeHtml(x.life)}</p></div>
       <div class="bio-block"><h3>In immersione</h3><p>${escapeHtml(x.dive)}</p></div>`}
+      ${x.worms ? "" : `<div class="bio-block bio-tax" data-biotax hidden></div>`}
       <div class="bio-block" data-biowiki><p class="hint">Caricamento della scheda enciclopedica…</p></div>
       <div class="bio-actions">
         <a class="btn primary" href="${api.lifeWeb(`${x.it} ${x.la}`)}" target="_blank" rel="noopener noreferrer">Wikipedia</a>
@@ -8855,8 +8878,37 @@ function renderBioGuide() {
     }
   }
   if (x) bindBioGuide(sec, x);
+  const taxSlot = sec.querySelector("[data-biotax]");
+  if (x && taxSlot) {
+    const fill = () => {
+      const html = bioTaxonomyHtml(api.lifeTaxonomy?.(x.la), x);
+      if (!html) return;
+      taxSlot.innerHTML = html;
+      taxSlot.hidden = false;
+    };
+    fill();
+    if (taxSlot.hidden) api.loadMarineTaxonomy?.(APP_VERSION).then((ok) => ok && taxSlot.isConnected && fill());
+  }
   frag.append(sec);
   return frag;
+}
+
+// Classificazione dal regno alla specie, come nelle guide scientifiche (dati GBIF).
+function bioTaxonomyHtml(t, x) {
+  if (!t) return "";
+  const parts = String(x.la || "").trim().split(/\s+/);
+  const rows = [
+    ["Regno", t.kingdom],
+    ["Phylum", t.phylum],
+    ["Classe", t.klass],
+    ["Ordine", t.order],
+    ["Famiglia", t.family],
+    ["Genere", parts[0] || ""],
+    ["Specie", x.la],
+  ].filter(([, v]) => v);
+  return `<h3>Classificazione</h3>
+    <ol class="tax-list">${rows.map(([k, v], i) => `<li style="--d:${i}"><span>${k}</span><b${i >= 5 ? ' class="la"' : ""}>${escapeHtml(v)}</b></li>`).join("")}</ol>
+    <p class="hint">Fonte: GBIF Backbone Taxonomy.</p>`;
 }
 
 function showSpeciesPhoto(img, src, fallback) {

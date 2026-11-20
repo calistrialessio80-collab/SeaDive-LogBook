@@ -10,3 +10,7 @@ Serve Python 3.12 con: torch (CPU), open_clip_torch, onnx, onnxruntime, onnxscri
    e aumentare BIOCLIP_V in app.js, così i telefoni li riscaricano.
 
 Gli script usano la cartella C:\sdbio (percorso corto: Windows non gestisce i percorsi lunghi di torch).
+
+Classificazione scientifica della Biologia (marine-taxonomy.json):
+5. python check_groups.py      -> controlla che ogni specie sia nella sezione giusta (serve taxa.json del punto 1)
+6. python make_taxonomy.py     -> scrive marine-taxonomy.json (regno, phylum, classe, ordine, famiglia)
