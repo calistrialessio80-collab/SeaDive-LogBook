@@ -5,7 +5,6 @@ const COMPUTERS = [
     brand: "Suunto",
     models: "EON Core (priorità), EON Steel, D5, D4i Novo, Vyper, Zoop",
     how: "Carica il file FIT, UDDF, XML o JSON dall’app Suunto.",
-    ble: true,
   },
   {
     id: "shearwater",
@@ -3218,29 +3217,12 @@ function diveKey(d) {
   return `${d.date || ""}|${d.timeIn || ""}|${Number(d.maxDepth) || 0}|${Number(d.bottomTime) || 0}`;
 }
 
-async function scanSuuntoBluetooth() {
-  if (!navigator.bluetooth) {
-    throw new Error("Web Bluetooth non è disponibile qui. Su desktop usa Chrome o Edge, poi importa UDDF dall’app Suunto. L’EON Core non espone il log in GATT aperto: il file resta il canale ufficiale.");
-  }
-  const device = await navigator.bluetooth.requestDevice({
-    filters: [
-      { namePrefix: "EON" },
-      { namePrefix: "Suunto" },
-      { namePrefix: "D5" },
-      { namePrefix: "Steel" },
-    ],
-    optionalServices: ["battery_service", "device_information"],
-  });
-  return device.name || "Suunto";
-}
-
 window.SeaDiveComputers = {
   COMPUTERS,
   parseComputerFile,
   parseComputerBytes,
   parseEonSteelLog,
   diveKey,
-  scanSuuntoBluetooth,
   ascentFromPoints,
   fitAscentMmin,
   mergeSuuntoPair,

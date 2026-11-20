@@ -9603,7 +9603,6 @@ function computerFillHtml() {
       <div class="actions">
         <button class="btn primary" type="button" data-fillpick>Carica file</button>
         <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple data-fillfiles />
-        <button class="btn ghost" type="button" data-fillble>Bluetooth (EON)</button>
       </div>
       <p class="hint" data-fillhint ${view.computerHint ? "" : "hidden"}>${escapeHtml(view.computerHint || "")}</p>
     </div>
@@ -9621,29 +9620,6 @@ function bindComputerFill(root) {
     if (!base || !files.length) return;
     try {
       await fillExistingFromFound(base, await collectImported(files));
-    } catch (err) {
-      view.computerHint = err.message || String(err);
-      render();
-    }
-  };
-  root.querySelector("[data-fillble]").onclick = async () => {
-    const base = currentDiveBase();
-    if (!base) return;
-    const hint = root.querySelector("[data-fillhint]");
-    const say = (m) => {
-      view.computerHint = m;
-      if (hint) {
-        hint.hidden = !m;
-        hint.textContent = m;
-      }
-    };
-    try {
-      say("Apri il selettore Bluetooth…");
-      const { name, dives } = await window.SeaDiveBle.downloadEonDives(say);
-      await fillExistingFromFound(base, {
-        found: dives || [],
-        notes: [`${name}: ${(dives || []).length} immersioni`],
-      });
     } catch (err) {
       view.computerHint = err.message || String(err);
       render();

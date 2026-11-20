@@ -8,7 +8,6 @@ const ASSETS = [
   "./theme-abisso.css",
   "./app.js",
   "./computers.js",
-  "./ble-eon.js",
   "./sites.js",
   "./dive-sites.json",
   "./divelogs-sites.json",
