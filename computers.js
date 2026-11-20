@@ -4,7 +4,7 @@ const COMPUTERS = [
     id: "suunto-eon-core",
     brand: "Suunto",
     models: "EON Core (priorità), EON Steel, D5, D4i Novo, Vyper, Zoop",
-    how: "Carica il file FIT, UDDF, XML o JSON dall’app Suunto. Bluetooth sperimentale solo su Chrome Android.",
+    how: "Carica il file FIT, UDDF, XML o JSON dall’app Suunto.",
     ble: true,
   },
   {

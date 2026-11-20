@@ -4453,6 +4453,33 @@ const APP_VERSION = "226";
 const COFFEE_URL = "https://buymeacoffee.com/seadive";
 const COFFEE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>`;
 
+// Colori delle iniziali nell'elenco marche della pagina Computer.
+const BRAND_COLORS = {
+  "suunto-eon-core": "#2563eb, #22d3ee",
+  shearwater: "#0f766e, #2dd4bf",
+  garmin: "#334155, #64748b",
+  mares: "#dc2626, #f97316",
+  cressi: "#ca8a04, #facc15",
+  scubapro: "#7c3aed, #c084fc",
+  oceanic: "#0369a1, #38bdf8",
+  ratio: "#be185d, #f472b6",
+};
+
+// Orologio da sub disegnato nell'intestazione della pagina Computer.
+const COMPUTER_WATCH_SVG = `<svg class="computer-watch" viewBox="0 0 132 150" aria-hidden="true">
+  <defs><linearGradient id="cw-bezel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#67e8f9"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient>
+  <radialGradient id="cw-screen" cx=".5" cy=".35" r=".7"><stop offset="0" stop-color="#0b3a50"/><stop offset="1" stop-color="#03111b"/></radialGradient></defs>
+  <rect x="44" y="0" width="44" height="40" rx="8" fill="#13324a"/><rect x="44" y="110" width="44" height="40" rx="8" fill="#13324a"/>
+  <rect x="50" y="8" width="32" height="3" rx="1.5" fill="#1f4a66"/><rect x="50" y="16" width="32" height="3" rx="1.5" fill="#1f4a66"/>
+  <rect x="50" y="131" width="32" height="3" rx="1.5" fill="#1f4a66"/><rect x="50" y="139" width="32" height="3" rx="1.5" fill="#1f4a66"/>
+  <circle cx="66" cy="75" r="46" fill="url(#cw-bezel)"/><circle cx="66" cy="75" r="40" fill="url(#cw-screen)"/>
+  <rect x="110" y="62" width="7" height="10" rx="2" fill="#5ab4d6"/><rect x="110" y="80" width="7" height="10" rx="2" fill="#5ab4d6"/>
+  <text x="66" y="62" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">28,4<tspan font-size="9" fill="#a5f3fc"> m</tspan></text>
+  <path d="M38 76 L46 76 L50 92 L78 94 L82 82 L94 80" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="50" cy="92" r="2.6" fill="#3dcf6a"/>
+  <text x="66" y="108" text-anchor="middle" font-size="8" fill="rgba(255,255,255,.6)">47 min · 19°C</text>
+</svg>`;
+
 function pullFreshApp() {
   fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
     .then((res) => (res.ok ? res.text() : ""))
@@ -9119,50 +9146,49 @@ function renderComputer() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("computer subacqueo"));
   const hero = document.createElement("section");
-  hero.className = "card hero";
+  hero.className = "card hero computer-hero";
   hero.innerHTML = `
+    ${COMPUTER_WATCH_SVG}
     <h2>Dal polso al diario</h2>
-    <p class="tagline">Carica il file: le immersioni vanno <strong>subito nel diario</strong>, con profilo, luogo e mappa. Formati: UDDF, FIT, JSON, XML, CSV, GPX. Bluetooth sperimentale solo EON su Chrome Android.</p>
+    <p class="tagline">Carica il file del computer: le immersioni entrano subito nel diario con profilo, luogo e mappa.</p>
+    <div class="format-chips">${["UDDF", "FIT", "JSON", "XML", "CSV", "GPX"].map((f) => `<span>${f}</span>`).join("")}</div>
     <div class="actions">
       <label class="btn primary">Carica file
         <input type="file" accept="${COMPUTER_FILE_ACCEPT}" multiple hidden data-files />
       </label>
-      <button class="btn ghost" type="button" data-ble>Prova Bluetooth (EON)</button>
     </div>
-    <p class="hint" data-hint>${escapeHtml(view.computerHint || "Scegli uno o più file dal telefono o dal computer. Se un formato non si apre, esporta UDDF o JSON dall’app del produttore.")}</p>
+    <p class="hint" data-hint ${view.computerHint ? "" : "hidden"}>${escapeHtml(view.computerHint || "")}</p>
+    <ol class="import-steps">
+      <li><b>1</b>Esporta dall’app della tua marca</li>
+      <li><b>2</b>Tocca “Carica file”</li>
+      <li><b>3</b>Trovi tutto nel Diario</li>
+    </ol>
   `;
   hero.querySelector("[data-files]").onchange = (e) => ingestFiles(e.target.files);
-  hero.querySelector("[data-ble]").onclick = async () => {
-    try {
-      view.computerHint = "Apri il selettore Bluetooth…";
-      const hint = hero.querySelector("[data-hint]");
-      if (hint) hint.textContent = view.computerHint;
-      const { name, dives } = await window.SeaDiveBle.downloadEonDives((m) => {
-        view.computerHint = m;
-        if (hint) hint.textContent = m;
-      });
-      const { added } = await mergeImported(dives);
-      view.name = added ? "log" : "computer";
-      view.computerHint = `${name}: ${added} immersioni sincronizzate nel diario.`;
-    } catch (err) {
-      view.computerHint = err.message || String(err);
-    }
-    render();
-  };
   frag.append(hero);
 
   const brands = document.createElement("section");
   brands.className = "section";
-  brands.innerHTML = `<div class="section-head"><h3>Come importare (file, non Bluetooth)</h3></div>`;
-  const grid = document.createElement("div");
-  grid.className = "brand-grid";
-  api.COMPUTERS.forEach((c) => {
-    const card = document.createElement("article");
-    card.className = `brand-card${c.id === "suunto-eon-core" ? " featured" : ""}`;
-    card.innerHTML = `<h4>${escapeHtml(c.brand)}</h4><p class="meta">${escapeHtml(c.models)}</p><p class="hint">${escapeHtml(c.how)}</p>`;
-    grid.append(card);
+  brands.innerHTML = `<div class="section-head"><h3>La tua marca</h3></div>
+    <p class="brand-sub">Tocca la marca per vedere come esportare il file.</p>`;
+  const list = document.createElement("div");
+  list.className = "brand-list";
+  api.COMPUTERS.forEach((c, i) => {
+    const formats = [...new Set(c.how.match(/UDDF|FIT|JSON|XML|CSV|GPX/g) || [])];
+    const item = document.createElement("details");
+    item.className = "brand-row";
+    item.style.setProperty("--brand", BRAND_COLORS[c.id] || "#0369a1, #38bdf8");
+    if (i === 0) item.open = true;
+    item.innerHTML = `<summary>
+        <span class="brand-mono" aria-hidden="true">${escapeHtml(c.brand.charAt(0))}</span>
+        <span class="brand-txt"><b>${escapeHtml(c.brand)}</b><small>${escapeHtml(c.models)}</small>
+          <span class="brand-fmt">${formats.map((f) => `<i>${f}</i>`).join("")}</span></span>
+        <span class="brand-chev" aria-hidden="true">›</span>
+      </summary>
+      <p class="brand-how">${escapeHtml(c.how)}</p>`;
+    list.append(item);
   });
-  brands.append(grid);
+  brands.append(list);
   frag.append(brands);
   return frag;
 }

@@ -1363,6 +1363,51 @@ canvas.thermo-detail {
 }
 .brand-card.featured { border-color: rgba(42, 212, 201, 0.45); background: rgba(42, 212, 201, 0.1); }
 .brand-card h4 { margin: 0 0 4px; }
+/* Pagina Computer: intestazione con orologio, passi ed elenco marche a scomparsa */
+.computer-hero h2 { max-width: 62%; font-size: 27px; }
+.computer-hero .tagline { max-width: 64%; margin-bottom: 12px; font-size: 14px; line-height: 1.45; }
+.computer-watch {
+  position: absolute; right: -6px; top: 10px; width: 132px; height: 150px; pointer-events: none;
+  filter: drop-shadow(0 10px 24px rgba(34, 211, 238, 0.25));
+}
+.format-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.format-chips span {
+  padding: 4px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  color: #a5f3fc; background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.28);
+}
+.computer-hero .hint { margin: 10px 0 0; }
+.import-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 14px 0 2px; padding: 0; list-style: none; }
+.import-steps li {
+  padding: 10px 8px; border-radius: 14px; font-size: 11.5px; line-height: 1.3; color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(103, 232, 249, 0.12);
+}
+.import-steps b {
+  display: grid; place-items: center; width: 22px; height: 22px; margin-bottom: 6px; border-radius: 50%;
+  font-size: 12px; color: #032230; background: linear-gradient(135deg, #67e8f9, #22d3ee);
+}
+.brand-sub { margin: -4px 0 12px; font-size: 13px; color: rgba(255, 255, 255, 0.6); }
+.brand-list { border-radius: 20px; overflow: hidden; border: 1px solid rgba(103, 232, 249, 0.14); background: rgba(8, 28, 40, 0.6); }
+.brand-row + .brand-row { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.brand-row summary { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; list-style: none; }
+.brand-row summary::-webkit-details-marker { display: none; }
+.brand-row[open] { background: rgba(34, 211, 238, 0.06); }
+.brand-mono {
+  flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px;
+  font-size: 15px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--brand));
+}
+.brand-txt { flex: 1; min-width: 0; }
+.brand-txt b { display: block; font-size: 15px; color: #fff; }
+.brand-txt small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: rgba(255, 255, 255, 0.55); }
+.brand-row[open] .brand-txt small { white-space: normal; }
+.brand-fmt { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.brand-fmt i {
+  padding: 2px 6px; border-radius: 6px; font-size: 9.5px; font-style: normal; font-weight: 700; letter-spacing: 0.04em;
+  color: #a5f3fc; background: rgba(34, 211, 238, 0.1);
+}
+.brand-chev { flex: none; font-size: 18px; color: rgba(255, 255, 255, 0.4); transition: transform 0.2s; }
+.brand-row[open] .brand-chev { transform: rotate(90deg); color: #67e8f9; }
+.brand-how { margin: 0; padding: 0 14px 14px 64px; font-size: 12.5px; line-height: 1.45; color: rgba(255, 255, 255, 0.75); }
+
 body.page-app.page-map {
   background: #061018;
 }
