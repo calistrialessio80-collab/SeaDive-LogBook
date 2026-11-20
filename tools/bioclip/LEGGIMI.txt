@@ -1,0 +1,12 @@
+Riconoscimento delle specie da foto (BioCLIP, imageomics/bioclip, licenza MIT).
+
+Si rigenera solo quando cambia l'elenco delle specie della guida.
+Serve Python 3.12 con: torch (CPU), open_clip_torch, onnx, onnxruntime, onnxscript, huggingface_hub, pillow.
+
+1. python taxa.py              -> classificazione delle specie da GBIF (taxa.json, names.json)
+2. python export.py            -> encoder delle immagini in ONNX, compresso int8 (circa 85 MB)
+3. python embed.py [foto.jpg]  -> impronte dei nomi delle specie, e prova facoltativa su una foto
+4. copiare out/bioclip-visual-q8.onnx, out/bioclip-species.bin, out/bioclip-species.json in models/
+   e aumentare BIOCLIP_V in app.js, così i telefoni li riscaricano.
+
+Gli script usano la cartella C:\sdbio (percorso corto: Windows non gestisce i percorsi lunghi di torch).

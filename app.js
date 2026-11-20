@@ -7857,10 +7857,10 @@ function subjectPhotoCanvas(bitmap, signals) {
 }
 
 function bioPhotoHint() {
-  return "Isolo il soggetto, senza lo sfondo, e lo confronto online.";
+  return "Riconosco la specie dalla foto…";
 }
 
-// I modelli del riconoscimento pesano circa 400 MB (CLIP 154 MB + SigLIP 218 MB + motore): si scaricano
+// Il riconoscimento delle specie (BioCLIP) pesa circa 90 MB: si scarica
 // solo dopo un sì esplicito, con un avviso in più se il telefono è su rete mobile o in risparmio dati.
 const AI_OK_KEY = "seadive-ai-ok";
 let aiConsentAsk = null;
@@ -7882,7 +7882,7 @@ async function ensureAiConsent() {
     aiConsentAsk = askConfirm({
       title: "Scaricare il riconoscimento?",
       message: (mobile ? "Sembri su rete mobile o in risparmio dati. " : "") +
-        "Per riconoscere la specie dalla foto il telefono scarica una volta sola circa 400 MB. Meglio con il Wi-Fi. Puoi sempre cercare la specie per nome.",
+        "Per riconoscere la specie dalla foto il telefono scarica una volta sola circa 90 MB. Poi funziona anche senza rete. Meglio con il Wi-Fi. Puoi sempre cercare la specie per nome.",
       ok: "Scarica",
       cancel: "Non ora",
     }).finally(() => { aiConsentAsk = null; });
@@ -7898,205 +7898,6 @@ async function ensureAiConsent() {
   } catch {
     /* si chiedera di nuovo la prossima volta */
   }
-}
-
-let lifeClipPromise = null;
-let lifeClipStatus = () => {};
-
-function loadLifeClip() {
-  if (!lifeClipPromise) {
-    lifeClipPromise = ensureAiConsent()
-      .then(() => import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
-      .then(({ pipeline }) => pipeline("zero-shot-image-classification", "Xenova/clip-vit-base-patch32", {
-        dtype: "q8",
-        progress_callback: (data) => {
-          if (!data) return;
-          if (data.status === "progress" && data.total) {
-            lifeClipStatus(`Scarico il riconoscimento del soggetto… ${Math.min(100, Math.round((100 * data.loaded) / data.total))}%`);
-          } else if (data.status === "initiate") {
-            lifeClipStatus("Scarico il riconoscimento del soggetto. La prima volta può volerci un po'.");
-          }
-        },
-      })))
-      .catch((err) => {
-        lifeClipPromise = null;
-        throw err;
-      });
-  }
-  return lifeClipPromise;
-}
-
-let lifeEmbedPromise = null;
-const fishEmbedCache = new Map();
-
-function loadLifeEmbed() {
-  if (!lifeEmbedPromise) {
-    lifeEmbedPromise = ensureAiConsent()
-      .then(() => import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1")
-      .then(({ pipeline }) => pipeline("image-feature-extraction", "Xenova/siglip-base-patch16-224", {
-        dtype: "q4",
-        progress_callback: (data) => {
-          if (!data) return;
-          if (data.status === "progress" && data.total) {
-            lifeClipStatus(`Scarico il confronto del soggetto… ${Math.min(100, Math.round((100 * data.loaded) / data.total))}%`);
-          } else if (data.status === "initiate") {
-            lifeClipStatus("Scarico il confronto del soggetto. La prima volta può volerci un po'.");
-          }
-        },
-      })))
-      .catch((err) => {
-        lifeEmbedPromise = null;
-        throw err;
-      });
-  }
-  return lifeEmbedPromise;
-}
-
-let lifeEmbedTail = Promise.resolve();
-
-function withLifeEmbed(task) {
-  const run = lifeEmbedTail.then(task, task);
-  lifeEmbedTail = run.then(() => {}, () => {});
-  return run;
-}
-
-function embedVector(out) {
-  const data = out?.data;
-  if (!data?.length) return null;
-  const dims = out.dims || [];
-  let seq = 0;
-  let hidden = 0;
-  if (dims.length === 3) {
-    seq = dims[1];
-    hidden = dims[2];
-  } else if (dims.length === 2 && dims[0] > 1) {
-    seq = dims[0];
-    hidden = dims[1];
-  }
-  if (!(seq > 1 && hidden > 32 && data.length === seq * hidden)) return Array.from(data);
-  const acc = new Array(hidden).fill(0);
-  for (let i = 0; i < seq; i += 1) {
-    const base = i * hidden;
-    for (let j = 0; j < hidden; j += 1) acc[j] += data[base + j];
-  }
-  const scale = 1 / seq;
-  for (let j = 0; j < hidden; j += 1) acc[j] *= scale;
-  return acc;
-}
-
-function cosineVec(a, b) {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  if (na < 1e-8 || nb < 1e-8) return 0;
-  return dot / Math.sqrt(na * nb);
-}
-
-async function embedImageSource(extractor, src) {
-  try {
-    const direct = embedVector(await withLifeEmbed(() => extractor(src)));
-    if (direct) return direct;
-  } catch {
-    /* l'indirizzo diretto può essere bloccato: riprovo dal file scaricato */
-  }
-  const res = await fetch(src);
-  if (!res.ok) return null;
-  const blob = await res.blob();
-  const local = URL.createObjectURL(blob);
-  try {
-    return embedVector(await withLifeEmbed(() => extractor(local)));
-  } finally {
-    URL.revokeObjectURL(local);
-  }
-}
-
-async function speciesEmbed(extractor, species) {
-  if (fishEmbedCache.has(species.id)) return fishEmbedCache.get(species.id);
-  let src = "";
-  try {
-    src = await guideThumbUrl(species);
-  } catch {
-    return null;
-  }
-  if (!src) return null;
-  try {
-    const vec = await embedImageSource(extractor, src);
-    if (!vec) return null;
-    fishEmbedCache.set(species.id, vec);
-    return vec;
-  } catch {
-    return null;
-  }
-}
-
-async function rankSubjectByPhotos(image, species, token) {
-  const list = (species || []).filter((row) => row?.id);
-  if (!list.length) return null;
-  lifeClipStatus("Carico il confronto del soggetto…");
-  const extractor = await loadLifeEmbed();
-  if (token !== bioPhotoToken) return null;
-  const query = embedVector(await withLifeEmbed(() => extractor(image)));
-  if (!query) return null;
-  const scored = [];
-  let cursor = 0;
-  const step = async () => {
-    while (cursor < list.length) {
-      const index = cursor;
-      cursor += 1;
-      if (token !== bioPhotoToken) return;
-      if (index % 4 === 0) lifeClipStatus(`Confronto il soggetto online… ${Math.min(list.length, index + 1)}/${list.length}`);
-      const vec = await speciesEmbed(extractor, list[index]);
-      if (!vec) continue;
-      scored.push({ species: list[index], score: cosineVec(query, vec) });
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(3, list.length) }, () => step()));
-  if (token !== bioPhotoToken || !scored.length) return null;
-  scored.sort((a, b) => b.score - a.score || a.species.it.localeCompare(b.species.it, "it"));
-  const best = scored[0];
-  const gap = best.score - (scored[1]?.score || 0);
-  const near = scored.filter((row, index) => index === 0 || best.score - row.score <= 0.025).slice(0, 4);
-  const rows = near.map((row) => row.species);
-  const hint = `Sembra ${best.species.it}, ${best.species.la}.`;
-  return { rows, hint, bestScore: best.score, gap, scored: scored.slice(0, 8) };
-}
-
-function speciesInPhotoClass(chosen) {
-  const life = window.SeaDiveBiology.MARINE_LIFE || [];
-  if (chosen?.id === "pesce") return life.filter((row) => row.group === "pesci");
-  const rows = [];
-  const seen = new Set();
-  (chosen?.kinds || []).forEach((kind) => {
-    (window.SeaDiveBiology.speciesForPhotoKind(kind) || []).forEach((row) => {
-      if (seen.has(row.id)) return;
-      seen.add(row.id);
-      rows.push(row);
-    });
-  });
-  return rows;
-}
-
-function photoMatchSure(ranked) {
-  return !!ranked && ranked.bestScore >= 0.905 && ranked.gap >= 0.03;
-}
-
-function genusOf(species) {
-  const genus = String(species?.la || "").trim().split(/\s+/)[0] || "";
-  return genus.length >= 4 ? genus : "";
-}
-
-function subjectPhrase(species, sure) {
-  const it = String(species?.it || "").trim();
-  const la = String(species?.la || "").trim();
-  const same = it.toLocaleLowerCase("it") === la.toLocaleLowerCase("it");
-  const who = !it || same ? la || it : `${it}, ${la}`;
-  if (sure) return `Il soggetto è ${who}.`;
-  return `Ho confrontato il soggetto con immagini simili. La soluzione più vicina è ${who}.`;
 }
 
 const commonsPhotoCache = new Map();
@@ -8133,212 +7934,200 @@ async function commonsSpeciesPhoto(la) {
   return src;
 }
 
-async function confirmSubjectImage(image, ranked, token) {
-  const fallback = ranked?.rows?.[0];
-  if (!fallback) return ranked;
-  const list = (ranked.scored || []).slice(0, 6);
-  if (!list.length || token !== bioPhotoToken) return { ...ranked, photo: "" };
-  lifeClipStatus("Cerco la foto del soggetto…");
-  const extractor = await loadLifeEmbed();
-  if (token !== bioPhotoToken) return null;
-  const query = embedVector(await withLifeEmbed(() => extractor(image)));
-  if (!query) return { ...ranked, photo: "" };
-  let best = fallback;
-  let bestScore = -1;
-  let ownScore = -1;
-  const photos = new Map();
-  for (const row of list) {
-    if (token !== bioPhotoToken) return null;
-    let src = "";
-    try {
-      src = await commonsSpeciesPhoto(row.species.la);
-    } catch {
-      src = "";
-    }
-    if (!src) {
-      try {
-        src = await guideThumbUrl(row.species);
-      } catch {
-        src = "";
-      }
-    }
-    if (!src) continue;
-    photos.set(row.species.id, src);
-    let score = 0;
-    try {
-      const vec = embedVector(await withLifeEmbed(() => extractor(src)));
-      score = vec ? cosineVec(query, vec) : 0;
-    } catch {
-      score = 0;
-    }
-    if (row.species.id === fallback.id) ownScore = score;
-    if (score > bestScore) {
-      bestScore = score;
-      best = row.species;
+// Riconoscimento delle specie con BioCLIP: un modello addestrato su milioni di foto di animali e piante
+// (imageomics/bioclip, licenza MIT). Il telefono calcola l'"impronta" della foto e la confronta con
+// quella dei nomi di tutte le specie della guida, già calcolata una volta (models/bioclip-species.*).
+const BIOCLIP_V = "1";
+const BIOCLIP_ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/";
+const BIOCLIP_MEAN = [0.48145466, 0.4578275, 0.40821073];
+const BIOCLIP_STD = [0.26862954, 0.26130258, 0.27577711];
+let bioclipPromise = null;
+let lifeClipStatus = () => {};
+
+async function fetchModelBytes(url, label) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Riconoscimento non disponibile adesso.");
+  const total = Number(res.headers.get("content-length")) || 0;
+  if (!res.body || !total) return new Uint8Array(await res.arrayBuffer());
+  const reader = res.body.getReader();
+  const out = new Uint8Array(total);
+  let got = 0;
+  let shown = -1;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (got + value.length > out.length) return new Uint8Array(await new Blob([out.subarray(0, got), value]).arrayBuffer());
+    out.set(value, got);
+    got += value.length;
+    const pct = Math.min(100, Math.round((100 * got) / total));
+    if (pct !== shown) {
+      shown = pct;
+      lifeClipStatus(`${label} ${pct}%`);
     }
   }
-  if (best.id !== fallback.id && !(bestScore >= ownScore + 0.02)) best = fallback;
-  const sure = bestScore >= 0.9 || (photoMatchSure(ranked) && best.id === fallback.id);
-  return {
-    rows: [best],
-    hint: subjectPhrase(best, sure),
-    photo: photos.get(best.id) || "",
-  };
+  return got === out.length ? out : out.subarray(0, got);
 }
 
-async function settlePhotoMatch(image, ranked, runnerClass, token) {
-  const first = ranked.rows?.[0];
-  if (!first) return ranked;
-  if (photoMatchSure(ranked)) return confirmSubjectImage(image, ranked, token);
-  if (token !== bioPhotoToken) return null;
-  lifeClipStatus("Il riscontro non è netto. Confronto immagini simili…");
-  const seen = new Set((ranked.scored || []).map((row) => row.species.id));
-  const more = [];
-  const push = (species) => {
-    if (!species?.id || seen.has(species.id) || more.length >= 24) return;
-    seen.add(species.id);
-    more.push(species);
-  };
-  samplePhotoClass(runnerClass, 12).forEach(push);
-  const genera = [];
-  (ranked.scored || []).slice(0, 2).forEach((row) => {
-    const genus = genusOf(row.species);
-    if (genus && !genera.includes(genus)) genera.push(genus);
-  });
-  for (const genus of genera) {
-    if (token !== bioPhotoToken) return null;
-    let world = [];
-    try {
-      world = await window.SeaDiveBiology.searchWorldLife(genus);
-    } catch {
-      world = [];
-    }
-    world.slice(0, 12).forEach(push);
+function loadBioclip() {
+  if (!bioclipPromise) {
+    bioclipPromise = ensureAiConsent()
+      .then(async () => {
+        lifeClipStatus("Preparo il riconoscimento delle specie…");
+        const ort = await import(`${BIOCLIP_ORT}ort.wasm.min.mjs`);
+        ort.env.wasm.wasmPaths = BIOCLIP_ORT;
+        ort.env.wasm.numThreads = 1;
+        const [model, names, vecs] = await Promise.all([
+          fetchModelBytes(`./models/bioclip-visual-q8.onnx?v=${BIOCLIP_V}`, "Scarico il riconoscimento delle specie…"),
+          fetch(`./models/bioclip-species.json?v=${BIOCLIP_V}`).then((res) => {
+            if (!res.ok) throw new Error("Elenco delle specie non disponibile.");
+            return res.json();
+          }),
+          fetch(`./models/bioclip-species.bin?v=${BIOCLIP_V}`).then((res) => {
+            if (!res.ok) throw new Error("Elenco delle specie non disponibile.");
+            return res.arrayBuffer();
+          }),
+        ]);
+        lifeClipStatus("Avvio il riconoscimento…");
+        const session = await ort.InferenceSession.create(model, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+        const head = new DataView(vecs);
+        const count = head.getUint32(0, true);
+        const dim = head.getUint32(4, true);
+        const scales = new Float32Array(vecs, 8, count);
+        const codes = new Int8Array(vecs, 8 + 4 * count, count * dim);
+        if (!Array.isArray(names) || names.length !== count) throw new Error("Elenco delle specie non valido.");
+        return { ort, session, names, count, dim, scales, codes };
+      })
+      .catch((err) => {
+        bioclipPromise = null;
+        throw err;
+      });
   }
-  if (!more.length) return confirmSubjectImage(image, ranked, token);
-  const pool = [...(ranked.scored || []).slice(0, 4).map((row) => row.species), ...more];
-  const again = await rankSubjectByPhotos(image, pool, token);
-  if (!again?.rows?.[0]) return confirmSubjectImage(image, ranked, token);
-  return confirmSubjectImage(image, again, token);
+  return bioclipPromise;
 }
 
-function samplePhotoClass(chosen, limit) {
-  const pool = speciesInPhotoClass(chosen);
-  if (pool.length <= limit) return pool;
-  const step = Math.ceil(pool.length / limit);
-  return pool.filter((_, index) => index % step === 0).slice(0, limit);
+// Come in BioCLIP: lato corto a 224 px, ritaglio centrale, colori normalizzati.
+function bioclipPixels(source) {
+  const size = 224;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  // Rimpicciolire a metà per volta evita i dettagli "seghettati" che confondono il modello.
+  let src = source;
+  while (Math.min(src.width, src.height) >= size * 2) {
+    const half = document.createElement("canvas");
+    half.width = Math.max(1, Math.round(src.width / 2));
+    half.height = Math.max(1, Math.round(src.height / 2));
+    const hctx = half.getContext("2d");
+    hctx.imageSmoothingEnabled = true;
+    hctx.imageSmoothingQuality = "high";
+    hctx.drawImage(src, 0, 0, half.width, half.height);
+    src = half;
+  }
+  const w = src.width || 1;
+  const h = src.height || 1;
+  const s = size / Math.min(w, h);
+  ctx.drawImage(src, (size - w * s) / 2, (size - h * s) / 2, w * s, h * s);
+  const px = ctx.getImageData(0, 0, size, size).data;
+  const area = size * size;
+  const out = new Float32Array(3 * area);
+  for (let i = 0; i < area; i += 1) {
+    for (let c = 0; c < 3; c += 1) out[c * area + i] = (px[i * 4 + c] / 255 - BIOCLIP_MEAN[c]) / BIOCLIP_STD[c];
+  }
+  return out;
 }
 
-async function clipBest(classifier, image, items, labelOf) {
-  const labels = items.map(labelOf);
-  const ranked = await classifier(image, labels);
-  const score = new Map((Array.isArray(ranked) ? ranked : []).map((row) => [row.label, Number(row.score) || 0]));
-  let best = items[0];
-  let bestScore = -1;
-  items.forEach((item) => {
-    const value = score.get(labelOf(item)) || 0;
-    if (value > bestScore) {
-      best = item;
-      bestScore = value;
-    }
-  });
-  return { best, score: bestScore, scores: score };
+async function bioclipEmbed(model, source) {
+  const input = new model.ort.Tensor("float32", bioclipPixels(source), [1, 3, 224, 224]);
+  const out = await model.session.run({ pixel_values: input });
+  return out.embeds.data;
 }
 
-async function recognizePhotoSubject(image, signals, token, focusImage) {
+function bioclipRank(model, vec) {
+  const { count, dim, scales, codes } = model;
+  const sims = new Float32Array(count);
+  let best = -Infinity;
+  for (let i = 0; i < count; i += 1) {
+    let dot = 0;
+    const base = i * dim;
+    for (let j = 0; j < dim; j += 1) dot += codes[base + j] * vec[j];
+    sims[i] = dot * scales[i];
+    if (sims[i] > best) best = sims[i];
+  }
+  let sum = 0;
+  const prob = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    prob[i] = Math.exp(100 * (sims[i] - best));
+    sum += prob[i];
+  }
+  const order = Array.from({ length: count }, (_, i) => i).sort((a, b) => prob[b] - prob[a]).slice(0, 8);
+  return order.map((i) => ({ la: model.names[i], p: prob[i] / sum }));
+}
+
+async function recognizePhotoSubject(frame, subject, token) {
   lifeClipStatus = (text) => {
     if (token !== bioPhotoToken || !bioPhotoSearch) return;
     bioPhotoSearch.hint = text;
     const hint = document.querySelector("[data-biophotohint]");
     if (hint) hint.textContent = text;
   };
-  lifeClipStatus("Preparo il riconoscimento del soggetto…");
-  const classifier = await loadLifeClip();
+  const api = window.SeaDiveBiology;
+  const catalog = api.loadMarineCatalog && !api.catalogReady?.() ? api.loadMarineCatalog(APP_VERSION) : null;
+  const model = await loadBioclip();
   if (token !== bioPhotoToken) return null;
-  const classes = window.SeaDiveBiology.LIFE_PHOTO_CLASSES || [];
-  const fishClass = classes.find((row) => row.id === "pesce");
-  const shots = [focusImage || image, !focusImage && signals?.framed ? signals.preview : ""].filter(Boolean);
-  const background = new Set(["corallo", "spugna", "pianta", "verme", "conchiglia", "echinoderma"]);
-  let topClass = classes[0];
-  let topScore = -1;
-  let topImage = image;
-  let topScores = null;
-  let fishScore = -1;
-  let fishImage = image;
-  lifeClipStatus("Guardo che soggetto c’è nella foto…");
-  for (const shot of shots) {
+  lifeClipStatus("Guardo la foto…");
+  // Foto intera e soggetto ritagliato: le due impronte insieme reggono meglio inquadrature diverse.
+  const views = [frame, subject].filter(Boolean);
+  const acc = new Float32Array(model.dim);
+  for (const view of views) {
+    const vec = await bioclipEmbed(model, view);
+    for (let j = 0; j < model.dim; j += 1) acc[j] += vec[j];
     if (token !== bioPhotoToken) return null;
-    const picked = await clipBest(classifier, shot, classes, (item) => item.prompt || item.label);
-    const fish = fishClass ? picked.scores.get(fishClass.prompt || fishClass.label) || 0 : 0;
-    if (fish > fishScore) {
-      fishScore = fish;
-      fishImage = shot;
-    }
-    if (picked.score > topScore) {
-      topScore = picked.score;
-      topClass = picked.best;
-      topImage = shot;
-      topScores = picked.scores;
-    }
   }
-  let chosen = topClass;
-  let chosenImage = topImage;
-  if (fishClass && chosen?.id !== "pesce" && background.has(chosen?.id) && fishScore >= topScore * 0.86) {
-    chosen = fishClass;
-    chosenImage = fishImage;
-  }
-  if (chosen?.id === "pesce") chosenImage = fishImage;
-  const kinds = chosen?.kinds || [];
-  if (!kinds.length) return null;
-  const photoPool = speciesInPhotoClass(chosen);
-  if (photoPool.length) {
-    try {
-      const ranked = await rankSubjectByPhotos(chosenImage, photoPool, token);
-      if (ranked) {
-        let runner = null;
-        if (topScores) {
-          let runnerScore = -1;
-          classes.forEach((item) => {
-            if (item.id === chosen?.id) return;
-            const value = topScores.get(item.prompt || item.label) || 0;
-            if (value > runnerScore) {
-              runner = item;
-              runnerScore = value;
-            }
-          });
-        }
-        return await settlePhotoMatch(chosenImage, ranked, runner, token);
-      }
-    } catch {
-      /* se il confronto foto non riesce, resta il riconoscimento per tipo */
-    }
-  }
-  const kindPick = await clipBest(classifier, chosenImage, kinds, (item) => item.label);
-  const kind = kindPick.best;
-  if (token !== bioPhotoToken || !kind) return null;
-  let pool = window.SeaDiveBiology.speciesForPhotoKind(kind);
-  if (!pool.length) return { rows: [], hint: `Sembra ${kind.phrase}, ma questo soggetto non è nella guida.` };
-  const focus = {
-    colors: (signals?.colors || []).slice(0, 1),
-    patterns: signals?.patterns || [],
-    shape: signals?.shape || [],
-  };
-  const traits = new Map((window.SeaDiveBiology.scoreMarineLifeByPhoto(focus) || []).map((row) => [row.x.id, row.score]));
-  const norm = (value) => String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const plain = norm(kind.phrase).replace(/^(un|una|uno|il|lo|la)\s+/, "");
-  pool = pool.slice().sort((a, b) => {
-    const scoreA = (traits.get(a.id) || 0) + (norm(a.it) === plain ? 2 : 0);
-    const scoreB = (traits.get(b.id) || 0) + (norm(b.it) === plain ? 2 : 0);
-    return scoreB - scoreA || a.it.localeCompare(b.it, "it");
+  let norm = 0;
+  for (let j = 0; j < model.dim; j += 1) norm += acc[j] * acc[j];
+  norm = Math.sqrt(norm) || 1;
+  for (let j = 0; j < model.dim; j += 1) acc[j] /= norm;
+  const ranked = bioclipRank(model, acc);
+  if (catalog) await catalog.catch(() => {});
+  const rows = [];
+  ranked.forEach((row) => {
+    const species = api.findMarineLife(lifeId(row.la));
+    if (species && !rows.some((x) => x.species.id === species.id)) rows.push({ species, p: row.p });
   });
-  const rows = pool.length <= 8 ? pool : pool.slice(0, 6);
+  if (!rows.length) return { rows: [], hint: "Non ho riconosciuto questo soggetto nella guida.", sure: false };
   const first = rows[0];
-  const hint = rows.length === 1
-    ? `Sembra ${kind.phrase}: ${first.it}.`
-    : `Sembra ${kind.phrase}. Per primo, ${first.it}.`;
-  return { rows, hint };
+  const second = rows[1]?.p || 0;
+  const sure = first.p >= 0.85 && first.p >= second * 4;
+  const who = (x) => (x.it && x.it !== x.la ? `${x.it}, ${x.la}` : x.la);
+  if (sure) return { rows: [first.species], hint: `Il soggetto è ${who(first.species)}.`, sure: true };
+  let cum = 0;
+  const shown = rows.filter((row, index) => {
+    if (index === 0) {
+      cum += row.p;
+      return true;
+    }
+    if (cum >= 0.9 || index >= 5 || row.p < 0.03) return false;
+    cum += row.p;
+    return true;
+  });
+  return {
+    rows: shown.map((row) => row.species),
+    hint: `Le specie più simili, dalla più probabile: ${shown.map((row) => who(row.species)).join(" · ")}.`,
+    sure: false,
+  };
 }
 
+function lifeId(la) {
+  return String(la || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
 function cosineSlice(a, b, from, to) {
   let dot = 0;
   let na = 0;
@@ -8917,6 +8706,14 @@ function renderBiology() {
       const clipImage = frame.toDataURL("image/jpeg", 0.86);
       const subject = subjectPhotoCanvas(bitmap, signals);
       const focusImage = subject ? subject.toDataURL("image/jpeg", 0.9) : "";
+      // Copia più grande per il riconoscimento: viene rimpicciolita con cura a 224 px.
+      const sight = document.createElement("canvas");
+      const sightFit = Math.min(1, 896 / Math.max(bitmap.width, bitmap.height, 1));
+      sight.width = Math.max(1, Math.round(bitmap.width * sightFit));
+      sight.height = Math.max(1, Math.round(bitmap.height * sightFit));
+      const sightCtx = sight.getContext("2d");
+      sightCtx.imageSmoothingQuality = "high";
+      sightCtx.drawImage(bitmap, 0, 0, sight.width, sight.height);
       bitmap.close?.();
       bioPhotoSearch = {
         signals,
@@ -8930,13 +8727,14 @@ function renderBiology() {
       photoButton.disabled = false;
       photoButton.textContent = "Cerca con foto";
       try {
-        const found = await recognizePhotoSubject(focusImage || clipImage, signals, token, focusImage);
+        const found = await recognizePhotoSubject(sight, subject, token);
         if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
         bioPhotoSearch.rows = found.rows;
         bioPhotoSearch.hint = found.hint;
         bioPhotoSearch.pending = false;
         const first = found.rows?.[0];
-        if (first?.id) {
+        // Scheda aperta subito solo se il riconoscimento è sicuro; altrimenti si vedono le specie più simili.
+        if (found.sure && first?.id) {
           view.bioFromPhoto = focusImage || clipImage;
           view.bioPhotoName = first.it;
           view.bioPhotoNote = found.hint || "";
@@ -8988,7 +8786,7 @@ function renderBioGuide() {
     const fromPhoto = view.bioFromPhoto
       ? `<div class="bio-block">
           <h3>Soggetto della foto</h3>
-          <p>${escapeHtml(view.bioPhotoNote || "Ho isolato il soggetto, senza lo sfondo, e l’ho confrontato con le foto online della guida. Questa è la scheda più vicina.")}</p>
+          <p>${escapeHtml(view.bioPhotoNote || "Riconosciuto dalla foto.")}</p>
           <img class="bio-subject" alt="" src="${escapeHtml(view.bioFromPhoto)}" />
           <div class="bio-actions">
             <button class="btn primary" type="button" data-lens>Confronta su Google</button>
