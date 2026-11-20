@@ -5338,14 +5338,102 @@ function topbar(subtitle, mode) {
   return wrap;
 }
 
+// Icone della barra in basso: disegni a colori, uguali su ogni telefono (le emoji cambiano da iPhone ad Android).
+const NAV_ICONS = {
+  computer: `<svg viewBox="2 0 48 48" aria-hidden="true">
+    <defs>
+      <linearGradient id="ni-steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f1f5f9"/><stop offset=".45" stop-color="#94a3b8"/><stop offset=".7" stop-color="#e2e8f0"/><stop offset="1" stop-color="#475569"/></linearGradient>
+      <radialGradient id="ni-scr" cx=".45" cy=".35" r=".7"><stop offset="0" stop-color="#0e3a52"/><stop offset="1" stop-color="#020c14"/></radialGradient>
+    </defs>
+    <rect x="16" y="2" width="16" height="12" rx="3" fill="#1e293b"/><rect x="16" y="34" width="16" height="12" rx="3" fill="#1e293b"/>
+    <rect x="18" y="5" width="12" height="1.6" rx=".8" fill="#334155"/><rect x="18" y="40" width="12" height="1.6" rx=".8" fill="#334155"/>
+    <rect x="40" y="20" width="4" height="8" rx="1.6" fill="url(#ni-steel)"/>
+    <circle cx="24" cy="24" r="16" fill="url(#ni-steel)"/>
+    <circle cx="24" cy="24" r="15.2" fill="none" stroke="#334155" stroke-width="1.4" stroke-dasharray="1 1.4" opacity=".6"/>
+    <circle cx="24" cy="24" r="12.2" fill="url(#ni-scr)"/>
+    <path d="M24 13.5a10.5 10.5 0 0 1 10.3 8.5" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"/>
+    <text x="24" y="27.5" text-anchor="middle" font-size="9.5" font-weight="800" font-family="Arial, sans-serif" fill="#fff">28</text>
+    <path d="M17 30.5l2.5-2 3 1.5 3-.5 3.5-2" fill="none" stroke="#4ade80" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 17a12 12 0 0 1 9-5" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="1.4" stroke-linecap="round"/>
+  </svg>`,
+  log: `<svg viewBox="0 0 48 48" aria-hidden="true">
+    <defs>
+      <linearGradient id="ni-cover" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0ea5b7"/><stop offset=".55" stop-color="#0b5f7a"/><stop offset="1" stop-color="#083a52"/></linearGradient>
+    </defs>
+    <rect x="11" y="6" width="28" height="37" rx="3.5" fill="#e2e8f0"/>
+    <rect x="12.5" y="7.5" width="27" height="34" rx="2.5" fill="#f8fafc"/>
+    <rect x="8" y="4" width="28" height="38" rx="4" fill="url(#ni-cover)"/>
+    <rect x="8" y="4" width="5" height="38" rx="2.5" fill="#062c40" opacity=".55"/>
+    <rect x="17" y="12" width="15" height="11" rx="1.5" fill="#dc2626"/>
+    <path d="M17 12l15 11" stroke="#fff" stroke-width="2.6"/>
+    <rect x="17" y="27" width="13" height="2" rx="1" fill="#a5f3fc" opacity=".7"/>
+    <rect x="17" y="31.5" width="9" height="2" rx="1" fill="#a5f3fc" opacity=".5"/>
+    <path d="M30 4v12l3-2.4 3 2.4V4z" fill="#fbbf24"/>
+    <path d="M10.5 6.5h22" stroke="#fff" stroke-opacity=".35" stroke-width="1.2" stroke-linecap="round"/>
+  </svg>`,
+  bio: `<svg viewBox="2.8 2.8 48 48" aria-hidden="true">
+    <defs>
+      <linearGradient id="na-coral" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fda4af"/><stop offset="1" stop-color="#e11d48"/></linearGradient>
+      <linearGradient id="na-tang" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient>
+    </defs>
+    <path d="M16 45V33M16 33c-5-1-7-5-7-10M9 23v-6M16 33c0-6 2-9 2-14M18 19v-7M18 19c3 0 5-2 5-6M16 38c5 0 8-3 9-8M25 30v-5M25 30c3-1 5-3 5-7" fill="none" stroke="url(#na-coral)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="9" cy="16" r="2.4" fill="#fda4af"/><circle cx="18" cy="11" r="2.4" fill="#fda4af"/><circle cx="23" cy="12" r="2.2" fill="#fda4af"/><circle cx="25" cy="24" r="2.2" fill="#fda4af"/><circle cx="30" cy="22" r="2.2" fill="#fda4af"/>
+    <path d="M10 45h22" stroke="#a16207" stroke-width="3" stroke-linecap="round" opacity=".6"/>
+    <path d="M44 14l3-4v9z" fill="#facc15"/>
+    <ellipse cx="37" cy="14.5" rx="7.5" ry="5.5" fill="url(#na-tang)" stroke="#1e3a8a" stroke-width=".9"/>
+    <path d="M33 11c2 2 4 2 7 1" stroke="#0f172a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+    <circle cx="32.5" cy="13.5" r="1.2" fill="#fff"/><circle cx="32.4" cy="13.5" r=".6" fill="#0f172a"/>
+  </svg>`,
+  home: `<svg viewBox="0 0 48 48" aria-hidden="true">
+    <defs>
+      <linearGradient id="ni-sea" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#67e8f9"/><stop offset=".5" stop-color="#2563eb"/><stop offset="1" stop-color="#4c1d95"/></linearGradient>
+      <linearGradient id="ni-foam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#bae6fd"/></linearGradient>
+    </defs>
+    <rect x="3" y="3" width="42" height="42" rx="13" fill="url(#ni-sea)"/>
+    <path d="M6 33c5-1 7-6 12-13 5-7 14-7 16-1 1.5 4.5-3 7-6 5 4-.5 3-6-1.5-5-4.5 1-5.5 9-2 13 2.5 3 7 3 12 1v8H6z" fill="url(#ni-foam)"/>
+    <path d="M6 39c6-3 12 2 18-1s12 2 18-1" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+    <circle cx="35" cy="11" r="2.2" fill="none" stroke="#fff" stroke-width="1.3"/><circle cx="39.5" cy="16" r="1.4" fill="none" stroke="#fff" stroke-width="1.1"/>
+    <path d="M9 9c4-3 10-4 15-3" stroke="#fff" stroke-opacity=".4" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  </svg>`,
+  people: `<svg viewBox="0 1.3 48 48" aria-hidden="true">
+    <defs>
+      <linearGradient id="ni-glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bae6fd"/><stop offset="1" stop-color="#0369a1"/></linearGradient>
+    </defs>
+    <path d="M1 22c4-2 6-2 8-2M47 28c-4-2-6-2-8-2" stroke="#1e293b" stroke-width="2.4" stroke-linecap="round"/>
+    <g transform="translate(-1 -3)">
+      <path d="M5 18c0-3 2-4.5 5-4.5h12c3 0 5 1.5 5 4.5v4c0 3-2 5-5 5-2.5 0-3.5-2.6-6-2.6S12.5 27 10 27c-3 0-5-2-5-5z" fill="#ec4899" stroke="#9d174d" stroke-width="1"/>
+      <path d="M7.5 18.5c0-1.7 1-2.6 3-2.6h4.6v8.5c-1.6 0-2.8 1.6-4.8 1.6-1.8 0-2.8-1-2.8-2.6zM24.5 18.5c0-1.7-1-2.6-3-2.6h-4.6v8.5c1.6 0 2.8 1.6 4.8 1.6 1.8 0 2.8-1 2.8-2.6z" fill="url(#ni-glass)"/>
+      <path d="M9 18l3-1.4" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity=".8"/>
+    </g>
+    <g transform="translate(17 13)">
+      <path d="M5 18c0-3 2-4.5 5-4.5h12c3 0 5 1.5 5 4.5v4c0 3-2 5-5 5-2.5 0-3.5-2.6-6-2.6S12.5 27 10 27c-3 0-5-2-5-5z" fill="#06b6d4" stroke="#155e75" stroke-width="1"/>
+      <path d="M7.5 18.5c0-1.7 1-2.6 3-2.6h4.6v8.5c-1.6 0-2.8 1.6-4.8 1.6-1.8 0-2.8-1-2.8-2.6zM24.5 18.5c0-1.7-1-2.6-3-2.6h-4.6v8.5c1.6 0 2.8 1.6 4.8 1.6 1.8 0 2.8-1 2.8-2.6z" fill="url(#ni-glass)"/>
+      <path d="M9 18l3-1.4" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity=".8"/>
+    </g>
+  </svg>`,
+  map: `<svg viewBox="1.3 -0.5 48 48" aria-hidden="true">
+    <defs>
+      <radialGradient id="na-globe" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#7dd3fc"/><stop offset=".55" stop-color="#0284c7"/><stop offset="1" stop-color="#0c4a6e"/></radialGradient>
+    </defs>
+    <circle cx="22" cy="26" r="18" fill="url(#na-globe)"/>
+    <path d="M10 17c4-2 7 0 7 3s-4 3-5 6-3 3-4 1c-1-4 0-8 2-10zM24 12c4-1 8 1 9 4s-2 4-4 3-3 2-5 1-3-7 0-8zM25 30c4-2 9 0 9 4s-4 6-7 5-5-7-2-9z" fill="#4ade80" stroke="#15803d" stroke-width=".8"/>
+    <ellipse cx="22" cy="26" rx="18" ry="6" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width=".9"/>
+    <ellipse cx="22" cy="26" rx="7" ry="18" fill="none" stroke="#fff" stroke-opacity=".25" stroke-width=".9"/>
+    <path d="M9 18a17 17 0 0 1 12-9" stroke="#fff" stroke-opacity=".55" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <path d="M36 3v24" stroke="#e2e8f0" stroke-width="1.8" stroke-linecap="round"/>
+    <rect x="36.5" y="3.5" width="10" height="7.5" rx=".8" fill="#dc2626"/>
+    <path d="M36.5 3.5l10 7.5" stroke="#fff" stroke-width="2"/>
+  </svg>`,
+};
+
 const NAV_SECTIONS = [
-  ["computer", "⌚", "Computer"],
-  ["log", "📒", "Diario"],
-  ["bio", "🌿", "Biologia"],
-  ["home", "🌊", "SeaDive Home"],
+  ["computer", NAV_ICONS.computer, "Computer"],
+  ["log", NAV_ICONS.log, "Diario"],
+  ["bio", NAV_ICONS.bio, "Biologia"],
+  ["home", NAV_ICONS.home, "SeaDive Home"],
   ["profile", `<img src="./nav-diver.png?v=170" alt="" draggable="false" />`, "Profilo"],
-  ["people", "🤿🤿", "Community"],
-  ["map", "🗺️", "Mappa"],
+  ["people", NAV_ICONS.people, "Community"],
+  ["map", NAV_ICONS.map, "Mappa"],
 ];
 
 function sectionOfView() {
@@ -5540,7 +5628,7 @@ function renderNav() {
     if (id === "home") b.classList.add("nav-home");
     if (id === "people") b.dataset.chatnav = "1";
     const badge = id === "people" && chatUnreadTotal() > 0 ? " " + chatUnreadTotal() : "";
-    const spanClass = id === "people" ? "nav-divers" : id === "profile" ? "nav-diver" : "";
+    const spanClass = id === "profile" ? "nav-diver" : "nav-art";
     b.innerHTML = `<span${spanClass ? ` class="${spanClass}"` : ""}>${icon}</span><small>${label}${badge}</small>`;
     b.onclick = () => openNavSection(id);
     nav.append(b);

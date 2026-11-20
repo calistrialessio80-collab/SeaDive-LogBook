@@ -668,7 +668,7 @@ body.page-home .vault-home { color: rgba(255, 255, 255, 0.92); text-shadow: 0 1p
 }
 .nav button.active {
   color: #2f8fff;
-  transform: scale(1.22);
+  transform: scale(1.14);
   z-index: 2;
 }
 .nav button span {
@@ -696,6 +696,15 @@ body.page-home .vault-home { color: rgba(255, 255, 255, 0.92); text-shadow: 0 1p
 }
 .nav button span.nav-diver {
   font-size: 0;
+}
+/* Icone disegnate della barra: stessa misura, centrate, con una leggera ombra. */
+.nav button span.nav-art { font-size: 0; }
+.nav button span.nav-art svg {
+  width: 32px;
+  height: 32px;
+  display: block;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+  pointer-events: none;
 }
 .nav button span.nav-diver img {
   width: 34px;
