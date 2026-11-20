@@ -507,3 +507,104 @@ body.page-home .app-rate.rate-coffee .rate-coffee-row p {
 }
 .coffee-pill svg { display: block; width: 16px; height: 16px; }
 .coffee-pill:active { background: rgba(251, 191, 36, 0.24); }
+
+/* ---------- Community: intestazione con foto, chat, titoli e pulsanti con icone ---------- */
+.ui-ico { display: grid; place-items: center; flex: none; }
+body.abisso .community-page { background: transparent; box-shadow: none; border: 0; padding: 0; }
+body.abisso .community-hero {
+  position: relative; overflow: hidden; isolation: isolate;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  min-height: 200px; margin: 0 0 12px; padding: 24px 16px 14px;
+  border-radius: 22px; border: 1px solid var(--ab-line);
+  background: #061a28 url("./sub-dolina.jpg") 60% 50% / cover no-repeat;
+}
+body.abisso .community-hero::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(180deg, rgba(14, 24, 56, 0.1) 0%, rgba(14, 24, 56, 0.55) 45%, rgba(8, 16, 38, 0.94) 100%);
+}
+body.abisso .community-hero small { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ab-cyan); }
+body.abisso .community-hero h2 { margin: 2px 0 4px; font-family: var(--ab-display); font-size: 32px; letter-spacing: -0.03em; color: #fff; }
+body.abisso .community-hero p { margin: 0 0 12px; font-size: 13px; line-height: 1.4; color: rgba(255, 255, 255, 0.82); }
+body.abisso .community-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+body.abisso .community-stats div {
+  padding: 7px 9px; border-radius: 12px;
+  background: rgba(8, 16, 38, 0.55); border: 1px solid rgba(167, 139, 250, 0.28);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+body.abisso .community-stats b { display: block; font-family: var(--ab-display); font-size: 16px; color: #fff; }
+body.abisso .community-stats small { display: block; font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; color: rgba(255, 255, 255, 0.65); }
+body.abisso .community-page .chat-entry {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 18px; text-align: left; color: #fff;
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.22), rgba(34, 211, 238, 0.14));
+  border: 1px solid rgba(167, 139, 250, 0.35);
+}
+body.abisso .community-page .chat-entry + .chat-entry { margin-top: 8px; }
+body.abisso .community-page .chat-entry .ui-ico { width: 36px; height: 36px; border-radius: 11px; color: #c4b5fd; background: rgba(8, 16, 38, 0.45); }
+body.abisso .community-page .chat-entry::after { content: "\203A"; margin-left: auto; font-size: 20px; color: rgba(255, 255, 255, 0.5); }
+body.abisso .community-page h3.people-block {
+  display: flex; align-items: center; gap: 10px; margin: 20px 0 8px; padding-bottom: 8px;
+  border-bottom: 1px solid rgba(167, 139, 250, 0.18); font-family: var(--ab-display);
+}
+body.abisso .community-page h3.people-block .ui-ico,
+body.abisso .profile-block h3 .ui-ico,
+body.abisso .certs-fold summary .ui-ico {
+  width: 34px; height: 34px; border-radius: 11px; color: #c4b5fd;
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.2), rgba(34, 211, 238, 0.12));
+  border: 1px solid rgba(167, 139, 250, 0.3);
+}
+body.abisso .community-page .sea-strip,
+body.abisso .community-page .people-list { padding: 12px; border-radius: 18px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--ab-line); }
+body.abisso .community-page .sea-photo { box-shadow: 0 0 0 2px #0b1430, 0 0 0 4px rgba(167, 139, 250, 0.55); }
+body.abisso .community-page .contact-photo { box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.45); }
+body.abisso .people-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+body.abisso .people-actions .btn {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 84px; padding: 12px 6px;
+  border-radius: 16px; font-size: 12.5px; line-height: 1.2; text-align: center; white-space: normal;
+}
+body.abisso .people-actions .btn.ghost { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--ab-line); }
+body.abisso .people-actions .btn .ui-ico { width: 34px; height: 34px; border-radius: 11px; background: rgba(8, 16, 38, 0.35); }
+
+/* ---------- Profilo: tessera Diver ID, sezioni con icone, caffè leggibile ---------- */
+body.abisso .profile-form { background: transparent; box-shadow: none; border: 0; padding: 0; }
+body.abisso .profile-hero {
+  margin: 0 0 14px; padding: 18px 16px 16px; border-radius: 22px;
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  background:
+    radial-gradient(90% 80% at 100% 0%, rgba(34, 211, 238, 0.22), transparent 60%),
+    radial-gradient(80% 80% at 0% 100%, rgba(167, 139, 250, 0.25), transparent 60%),
+    linear-gradient(160deg, #13204a, #0a1430 60%, #071025);
+}
+body.abisso .profile-hero::after { display: none; }
+body.abisso .profile-wave { position: absolute; inset: auto 0 0 0; width: 100%; height: 70px; opacity: 0.35; pointer-events: none; }
+body.abisso .profile-idtop {
+  position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.55);
+}
+body.abisso .profile-idtop b { color: var(--ab-cyan); }
+body.abisso .profile-id { gap: 16px; }
+body.abisso .profile-photo { background: linear-gradient(135deg, #1e3a6e, #0f2550); box-shadow: 0 0 0 3px #0b1430, 0 0 0 5px rgba(103, 232, 249, 0.7), 0 10px 24px rgba(0, 0, 0, 0.4); }
+body.abisso .profile-kicker { color: var(--ab-cyan); }
+body.abisso .profile-title { font-family: var(--ab-display); letter-spacing: -0.03em; }
+body.abisso .profile-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+body.abisso .profile-tags span { padding: 4px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; color: #fde68a; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.35); }
+body.abisso .profile-tags span.dives { color: #a5f3fc; background: rgba(34, 211, 238, 0.1); border-color: rgba(34, 211, 238, 0.3); }
+body.abisso .profile-block { border-radius: 20px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--ab-line); }
+body.abisso .profile-block h3 {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding-bottom: 10px;
+  border-bottom: 1px solid rgba(167, 139, 250, 0.16);
+  font-family: var(--ab-display); font-size: 16px; font-weight: 700; letter-spacing: -0.01em; text-transform: none; color: #fff;
+}
+body.abisso .profile-block h3::before { display: none; }
+body.abisso .certs-fold summary { display: flex; align-items: center; gap: 10px; }
+body.abisso .profile-account { padding: 0 6px; }
+body.abisso .profile-coffee {
+  border-radius: 22px; text-align: left;
+  background: radial-gradient(90% 70% at 100% 110%, rgba(251, 191, 36, 0.13), transparent 60%), rgba(8, 28, 40, 0.72);
+  border: 1px solid rgba(103, 232, 249, 0.16);
+}
+body.abisso .profile-coffee h3 { display: flex; align-items: center; gap: 10px; font-family: var(--ab-display); font-size: 16px; letter-spacing: -0.01em; text-transform: none; color: #fff; }
+body.abisso .profile-coffee h3::before { display: none; }
+body.abisso .profile-coffee h3 .ui-ico { width: 34px; height: 34px; border-radius: 11px; color: #fde68a; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.35); }
+body.abisso .profile-coffee p { color: rgba(255, 255, 255, 0.72); opacity: 1; }
+body.abisso .profile-coffee .coffee-btn,
+body.abisso .profile-coffee a.btn.coffee-btn { background: rgba(251, 191, 36, 0.14); color: #fde68a; border: 1px solid rgba(251, 191, 36, 0.42); box-shadow: none; border-radius: 99px; }

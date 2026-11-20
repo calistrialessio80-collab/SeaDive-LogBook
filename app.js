@@ -3685,7 +3685,7 @@ function paintCommunityChats(card) {
       button.type = "button";
       button.className = "chat-entry";
       const pending = key ? chatPending.get(key) || 0 : chatUnreadTotal();
-      button.textContent = pending ? title + " · " + pending : title;
+      button.innerHTML = `${uiIcon("chat")}<span>${escapeHtml(pending ? title + " · " + pending : title)}</span>`;
       button.onclick = () => {
         askChatNotice();
         openMainChat(key || "");
@@ -7164,7 +7164,7 @@ function coffeeCard() {
   const el = document.createElement("section");
   el.className = "card coffee-card profile-coffee";
   el.innerHTML = `
-    <h3 class="serif">Sostieni SeaDive</h3>
+    <h3 class="serif">${uiIcon("cup", 18)}Sostieni SeaDive</h3>
     <p>Se il diario ti è utile, puoi offrire un caffè.</p>
     <a class="btn coffee-btn" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">
       ${COFFEE_ICON}
@@ -9578,6 +9578,29 @@ function renderStats() {
   return frag;
 }
 
+// Icone a linea per Community e Profilo, nello stile di quelle della Biologia.
+const UI_ICONS = {
+  chat: '<path d="M4 5h16v10H9l-5 4z"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14c2.8 0 5 2.2 5 5"/>',
+  book: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
+  add: '<circle cx="10" cy="8" r="3.5"/><path d="M3 20c0-3.6 3.1-6.5 7-6.5 1.4 0 2.6.3 3.7.9M18 14v6M15 17h6"/>',
+  card: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="9" cy="11" r="2.2"/><path d="M5.5 16c.6-1.6 2-2.5 3.5-2.5s2.9.9 3.5 2.5M14.5 10h4M14.5 13.5h3"/>',
+  dive: '<path d="M3 12c3-4.5 8-5.5 12-3.5l4-3v13l-4-3c-4 2-9 1-12-3.5z"/><path d="M12 3v3"/>',
+  person: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c0-4 3.4-7 7.5-7s7.5 3 7.5 7"/>',
+  sign: '<path d="M3 17c3-1 4-8 6-8s0 8 3 8 3-5 5-5 2 3 4 3"/><path d="M3 21h18"/>',
+  medic: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/>',
+  phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/>',
+  tank: '<rect x="8" y="3" width="8" height="15" rx="4"/><path d="M12 3V1.5M10 21h4M12 18v3"/>',
+  found: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><circle cx="12" cy="11" r="2.5"/><path d="M14 13l2.5 2.5"/>',
+  cloud: '<path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-1 8.5z"/><path d="M12 15V10M9.5 12.5 12 10l2.5 2.5"/>',
+  medal: '<path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M9 20h6M12 15v5"/>',
+  cup: '<path d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/>',
+};
+
+function uiIcon(name, size = 20) {
+  return `<span class="ui-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${UI_ICONS[name] || ""}</svg></span>`;
+}
+
 function renderPeople() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("Community"));
@@ -9593,23 +9616,30 @@ function renderPeople() {
       if (ao !== bo) return ao - bo;
       return roleLabel(a.role).localeCompare(roleLabel(b.role), "it") || a.name.localeCompare(b.name, "it");
     });
+  const others = (state.people || []).filter((x) => !samePersonName(x.name, state.profile?.name));
+  const countOf = (...roles) => others.filter((x) => roles.includes(x.role)).length;
+  const stat = (n, label) => `<div><b>${fmtCount(n)}</b><small>${label}</small></div>`;
   card.innerHTML = `
-    <h2 class="serif" style="margin:0 0 6px">Community</h2>
-    <p class="hint">Qui si vedono nome e cognome. Brevetto e firma stanno nel contatto, dopo che lo segui.</p>
+    <header class="community-hero">
+      <small>Chi si immerge con te</small>
+      <h2>Community</h2>
+      <p>Qui si vedono nome e cognome. Brevetto e firma stanno nel contatto, dopo che lo segui.</p>
+      <div class="community-stats">${stat(others.length, "contatti")}${stat(countOf("buddy"), "buddy")}${stat(countOf("guide", "center"), "istruttori e diving")}</div>
+    </header>
     <div class="chat-list" data-chatlist>
-      <button class="chat-entry" type="button" data-openchat>Chat di chi si segue</button>
+      <button class="chat-entry" type="button" data-openchat>${uiIcon("chat")}<span>Chat di chi si segue</span></button>
     </div>
     <input class="search" data-find placeholder="Cerca chi usa SeaDive" value="${escapeHtml(view.peopleQuery || "")}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" inputmode="search" />
     <p class="hint" data-peoplehint ${view.peopleHint ? "" : "hidden"}>${escapeHtml(view.peopleHint || "")}</p>
-    <h3 class="serif people-block">Chi usa SeaDive</h3>
+    <h3 class="serif people-block">${uiIcon("users", 18)}Chi usa SeaDive</h3>
     <div class="sea-strip" data-sea></div>
-    <h3 class="serif people-block">I tuoi contatti</h3>
+    <h3 class="serif people-block">${uiIcon("book", 18)}I tuoi contatti</h3>
     <div class="chips" data-roles></div>
     <div class="people-list" data-list></div>
-    <div class="actions">
-      <button class="btn primary" type="button" data-addperson>Aggiungi persona</button>
-      <button class="btn ghost" type="button" data-receivecontact>Ricevi contatto</button>
-      <button class="btn ghost" type="button" data-receive>Ricevi immersione</button>
+    <div class="actions people-actions">
+      <button class="btn primary" type="button" data-addperson>${uiIcon("add")}Aggiungi persona</button>
+      <button class="btn ghost" type="button" data-receivecontact>${uiIcon("card")}Ricevi contatto</button>
+      <button class="btn ghost" type="button" data-receive>${uiIcon("dive")}Ricevi immersione</button>
       <input type="file" data-receivefile />
       <input type="file" data-receivecontactfile />
     </div>
@@ -10526,6 +10556,8 @@ function renderProfile() {
   let portrait = profilePortraitImage();
   form.innerHTML = `
     <div class="profile-hero">
+      <div class="profile-idtop"><span>SeaDive · Logbook</span><b>Diver ID</b></div>
+      <svg class="profile-wave" viewBox="0 0 400 70" preserveAspectRatio="none" aria-hidden="true"><path d="M0 40 C60 20 120 60 200 38 S330 18 400 36" fill="none" stroke="#67e8f9" stroke-width="1.2"/><path d="M0 52 C70 34 140 70 210 50 S340 32 400 48" fill="none" stroke="#a78bfa" stroke-width="1"/></svg>
       <div class="profile-id">
         <button class="profile-photo" type="button" data-pickphoto aria-label="Foto accanto al nome">
           ${portrait ? `<img alt="" src="${escapeHtml(portrait)}" />` : `<span>Foto</span>`}
@@ -10533,13 +10565,14 @@ function renderProfile() {
         <div>
           <p class="profile-kicker">In acqua</p>
           <h2 class="serif profile-title">${escapeHtml(p.name || loadSession()?.name || "Il tuo profilo")}</h2>
+          <div class="profile-tags">${p.certLevel ? `<span>${escapeHtml(p.certLevel)}${p.certNumber ? ` · ${escapeHtml(p.certNumber)}` : ""}</span>` : ""}<span class="dives">${fmtCount((state.dives || []).length)} ${(state.dives || []).length === 1 ? "immersione" : "immersioni"}</span></div>
           <button class="btn ghost profile-photo-clear" type="button" data-clearphoto ${portrait ? "" : "hidden"}>Togli foto</button>
         </div>
       </div>
     </div>
     <input type="file" accept="image/*" data-photofile hidden />
     <section class="profile-block">
-      <h3>Anagrafica</h3>
+      <h3>${uiIcon("person", 18)}Anagrafica</h3>
       <p class="hint" data-communityline>${p.communityOff ? "Non sei in Community: nessuno vede il tuo profilo e non ricevi messaggi. Il diario resta sul telefono e su Drive." : profileOnlineStatus === "online" ? "Profilo online. In Community gli altri vedono nome, cognome e foto. Brevetto, numero e firma si scambiano cifrati solo se vi seguite entrambi." : profileOnlineStatus === "short" ? "Servono nome e cognome: solo così il profilo va online." : "In Community gli altri vedono nome, cognome e foto. Brevetto, numero e firma si scambiano cifrati solo se vi seguite entrambi. Il diario resta sul telefono."}</p>
       ${p.communityOff
         ? `<button class="btn ghost" type="button" data-community-join>Rientra in Community</button>`
@@ -10549,7 +10582,7 @@ function renderProfile() {
       </div>
     </section>
     <section class="profile-block">
-      <h3>Brevetto principale</h3>
+      <h3>${uiIcon("card", 18)}Brevetto principale</h3>
       <div class="form-grid">
         ${field("certLevel", "Didattica / livello", p.certLevel, true)}
         ${field("certNumber", "N° brevetto", p.certNumber, true)}
@@ -10558,26 +10591,26 @@ function renderProfile() {
     </section>
     <section class="profile-block certs-box">
       <details class="certs-fold">
-        <summary>Altri brevetti${(p.certs || []).filter((c) => c.name || c.number).length ? `<em>${(p.certs || []).filter((c) => c.name || c.number).length}</em>` : ""}</summary>
+        <summary>${uiIcon("medal", 18)}Altri brevetti${(p.certs || []).filter((c) => c.name || c.number).length ? `<em>${(p.certs || []).filter((c) => c.name || c.number).length}</em>` : ""}</summary>
         <p class="hint">Rescue, Nitrox, Deep… con numero. In nuova immersione sono già selezionabili.</p>
         <div data-certs>${(p.certs || []).map((c) => certRowHtml(c)).join("") || certRowHtml()}</div>
         <button class="btn ghost btn-block" type="button" data-addcert>+ Aggiungi brevetto</button>
       </details>
     </section>
     <section class="profile-block">
-      <h3>La tua firma</h3>
+      <h3>${uiIcon("sign", 18)}La tua firma</h3>
       <p class="hint">Firma qui una volta. Nome e cognome si vedono in Community. Brevetto, numero e questa firma si scambiano solo con chi ti segue e che segui. Nella nuova immersione la firma entra nello spazio del buddy.</p>
       ${signPad("ownerSign", "Firma del subacqueo", p.name || "La tua firma", false)}
     </section>
     <section class="profile-block">
-      <h3>Medico e assicurazione</h3>
+      <h3>${uiIcon("medic", 18)}Medico e assicurazione</h3>
       <div class="form-grid">
         ${field("medicalExpiry", "Certificato medico scadenza", p.medicalExpiry, true, "date")}
         ${field("insurance", "Assicurazione", p.insurance, true)}
       </div>
     </section>
     <section class="profile-block">
-      <h3>Emergenza</h3>
+      <h3>${uiIcon("phone", 18)}Emergenza</h3>
       <div class="form-grid">
         <div class="form-pair">
           ${field("emergencyName", "Contatto", p.emergencyName)}
@@ -10586,14 +10619,14 @@ function renderProfile() {
       </div>
     </section>
     <section class="profile-block">
-      <h3>Attrezzatura e note</h3>
+      <h3>${uiIcon("tank", 18)}Attrezzatura e note</h3>
       <div class="form-grid">
         ${field("specialties", "Specialità", p.specialties, true)}
         ${field("equipment", "Attrezzatura personale", p.equipment, true, "textarea")}
       </div>
     </section>
     <section class="profile-block">
-      <h3>Se trovi il diario</h3>
+      <h3>${uiIcon("found", 18)}Se trovi il diario</h3>
       <div class="form-grid">
         <div class="form-pair">
           ${field("recoverPhone", "Telefono", p.recoverPhone, false, "tel")}
@@ -10602,7 +10635,7 @@ function renderProfile() {
       </div>
     </section>
     <section class="profile-block vault-box">
-      <h3>Copia di sicurezza</h3>
+      <h3>${uiIcon("cloud", 18)}Copia di sicurezza</h3>
       <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
       <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. La copia su Drive si aggiorna da sola dopo ogni modifica; se Google chiede di nuovo l’accesso compare un avviso. Esci salva su Drive e poi toglie il diario da questo telefono.</p>
       ${homeScreenHint() ? `<p class="hint home-screen-hint">${escapeHtml(homeScreenHint())}</p>` : ""}
