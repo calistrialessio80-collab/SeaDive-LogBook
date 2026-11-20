@@ -5778,7 +5778,7 @@ function flagIcon(kind, zoom) {
 }
 
 // Versione dei dati della mappa: cambia quando tools/mappa-siti.ps1 rigenera i file.
-const MAP_DATA_V = "20261120";
+const MAP_DATA_V = "20261120b";
 const PLACE_SOURCES = { o: "OpenStreetMap", w: "Wikidata", s: "Catalogo SeaDive" };
 
 function mapPointOk(lat, lng) {
@@ -6260,6 +6260,9 @@ function renderWorldMap() {
     const gen = worldMapGen;
     const el = mapWrap;
     const status = legend.querySelector("[data-mapstatus]");
+    // I punti si scaricano subito, insieme alla libreria della mappa, non dopo le immagini satellitari.
+    loadDivelogsGeo();
+    loadDivePlaces();
     loadMapLibre()
       .then(() => {
         if (gen !== worldMapGen || !el?.isConnected || view.name !== "map" || !window.maplibregl) return;
@@ -6684,8 +6687,12 @@ function renderWorldMap() {
         } catch {
           /* proiezione impostata dallo stile */
         }
+        // Le bandierine partono appena lo stile è pronto: non serve aspettare tutte le immagini ("load").
         if (map.isStyleLoaded()) armGlobe();
-        else map.on("load", armGlobe);
+        else {
+          map.once("style.load", armGlobe);
+          map.on("load", armGlobe);
+        }
         map.on("idle", armGlobe);
       })
       .catch((err) => {
