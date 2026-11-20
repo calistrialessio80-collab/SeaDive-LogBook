@@ -4466,18 +4466,64 @@ const BRAND_COLORS = {
 };
 
 // Orologio da sub disegnato nell'intestazione della pagina Computer.
-const COMPUTER_WATCH_SVG = `<svg class="computer-watch" viewBox="0 0 132 150" aria-hidden="true">
-  <defs><linearGradient id="cw-bezel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#67e8f9"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient>
-  <radialGradient id="cw-screen" cx=".5" cy=".35" r=".7"><stop offset="0" stop-color="#0b3a50"/><stop offset="1" stop-color="#03111b"/></radialGradient></defs>
-  <rect x="44" y="0" width="44" height="40" rx="8" fill="#13324a"/><rect x="44" y="110" width="44" height="40" rx="8" fill="#13324a"/>
-  <rect x="50" y="8" width="32" height="3" rx="1.5" fill="#1f4a66"/><rect x="50" y="16" width="32" height="3" rx="1.5" fill="#1f4a66"/>
-  <rect x="50" y="131" width="32" height="3" rx="1.5" fill="#1f4a66"/><rect x="50" y="139" width="32" height="3" rx="1.5" fill="#1f4a66"/>
-  <circle cx="66" cy="75" r="46" fill="url(#cw-bezel)"/><circle cx="66" cy="75" r="40" fill="url(#cw-screen)"/>
-  <rect x="110" y="62" width="7" height="10" rx="2" fill="#5ab4d6"/><rect x="110" y="80" width="7" height="10" rx="2" fill="#5ab4d6"/>
-  <text x="66" y="62" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">28,4<tspan font-size="9" fill="#a5f3fc"> m</tspan></text>
-  <path d="M38 76 L46 76 L50 92 L78 94 L82 82 L94 80" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
-  <circle cx="50" cy="92" r="2.6" fill="#3dcf6a"/>
-  <text x="66" y="108" text-anchor="middle" font-size="8" fill="rgba(255,255,255,.6)">47 min · 19°C</text>
+const COMPUTER_WATCH_SVG = `<svg class="computer-watch" viewBox="0 0 160 200" aria-hidden="true">
+<defs>
+ <linearGradient id="rw-strap" x1="0" x2="1"><stop offset="0" stop-color="#0b0f14"/><stop offset=".18" stop-color="#232a33"/><stop offset=".5" stop-color="#2d3540"/><stop offset=".82" stop-color="#1c222a"/><stop offset="1" stop-color="#07090c"/></linearGradient>
+ <linearGradient id="rw-steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f7fa"/><stop offset=".22" stop-color="#9aa6b2"/><stop offset=".45" stop-color="#e6ebf0"/><stop offset=".62" stop-color="#6d7884"/><stop offset=".8" stop-color="#c9d1d9"/><stop offset="1" stop-color="#4b545e"/></linearGradient>
+ <linearGradient id="rw-steel2" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a646f"/><stop offset=".5" stop-color="#cfd6dd"/><stop offset="1" stop-color="#3a424b"/></linearGradient>
+ <linearGradient id="rw-case" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b4450"/><stop offset=".5" stop-color="#151a20"/><stop offset="1" stop-color="#05070a"/></linearGradient>
+ <linearGradient id="rw-btn" x1="0" x2="1"><stop offset="0" stop-color="#5e6873"/><stop offset=".45" stop-color="#e9eef2"/><stop offset="1" stop-color="#4a535d"/></linearGradient>
+ <radialGradient id="rw-screen" cx=".45" cy=".35" r=".75"><stop offset="0" stop-color="#0d1a24"/><stop offset=".7" stop-color="#050b11"/><stop offset="1" stop-color="#010305"/></radialGradient>
+ <linearGradient id="rw-glare" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".55" stop-color="#fff" stop-opacity=".06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+ <radialGradient id="rw-shadow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+ <linearGradient id="rw-profile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22d3ee" stop-opacity=".45"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></linearGradient>
+ <linearGradient id="rw-fade" x1="0" y1="0" x2="0" y2="200" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".2" stop-color="#fff" stop-opacity="1"/><stop offset=".8" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+ <mask id="rw-strapmask" maskUnits="userSpaceOnUse" x="0" y="0" width="160" height="200"><rect width="160" height="200" fill="url(#rw-fade)"/></mask>
+</defs>
+<g mask="url(#rw-strapmask)">
+<path d="M57 0 H103 L106 52 H54 Z" fill="url(#rw-strap)"/>
+<path d="M54 148 H106 L103 200 H57 Z" fill="url(#rw-strap)"/>
+<g fill="none" stroke="#000" stroke-opacity=".45" stroke-width="1.2"><path d="M58 12 H102 M57.5 24 H102.5 M57 36 H103"/><path d="M57 164 H103 M57.5 176 H102.5 M58 188 H102"/></g>
+<g fill="none" stroke="#fff" stroke-opacity=".07" stroke-width="1"><path d="M58 13.3 H102 M57.5 25.3 H102.5 M57 37.3 H103"/><path d="M57 165.3 H103 M57.5 177.3 H102.5 M58 189.3 H102"/></g>
+</g>
+<ellipse cx="82" cy="104" rx="66" ry="64" fill="url(#rw-shadow)"/>
+<path d="M48 46 Q80 34 112 46 L116 62 H44 Z" fill="url(#rw-case)"/>
+<path d="M44 138 H116 L112 154 Q80 166 48 154 Z" fill="url(#rw-case)"/>
+<rect x="132" y="70" width="12" height="13" rx="3" fill="url(#rw-btn)" transform="rotate(-28 138 76)"/>
+<rect x="132" y="117" width="12" height="13" rx="3" fill="url(#rw-btn)" transform="rotate(28 138 123)"/>
+<rect x="16" y="70" width="12" height="13" rx="3" fill="url(#rw-btn)" transform="rotate(28 22 76)"/>
+<rect x="16" y="117" width="12" height="13" rx="3" fill="url(#rw-btn)" transform="rotate(-28 22 123)"/>
+<circle cx="80" cy="100" r="60" fill="url(#rw-case)"/>
+<circle cx="80" cy="100" r="57" fill="url(#rw-steel)"/>
+<circle cx="80" cy="100" r="56.2" fill="none" stroke="#3a424b" stroke-width="2.4" stroke-dasharray="1.1 1.6" opacity=".75"/>
+<circle cx="80" cy="100" r="52" fill="url(#rw-steel2)"/>
+<circle cx="80" cy="100" r="52" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width=".6"/>
+<g fill="#1a2027" font-size="5.2" font-weight="800" text-anchor="middle" font-family="Arial, sans-serif">
+ <text x="80" y="54">N</text><text x="127" y="102">E</text><text x="80" y="150.5">S</text><text x="33" y="102">W</text>
+ <text x="113.5" y="70" transform="rotate(45 113.5 68)">NE</text><text x="113.5" y="135" transform="rotate(-45 113.5 133)">SE</text>
+ <text x="46.5" y="135" transform="rotate(45 46.5 133)">SW</text><text x="46.5" y="70" transform="rotate(-45 46.5 68)">NW</text>
+</g>
+<circle cx="80" cy="100" r="49.5" fill="none" stroke="#1a2027" stroke-width="1.6" stroke-dasharray=".5 4.68" opacity=".8"/>
+<circle cx="80" cy="100" r="45.5" fill="#06090c"/>
+<circle cx="80" cy="100" r="42" fill="url(#rw-screen)"/>
+<path d="M80 60 A40 40 0 0 1 119 92" fill="none" stroke="#22d3ee" stroke-width="2.4" stroke-linecap="round"/>
+<path d="M119 92 A40 40 0 0 1 116 116" fill="none" stroke="#1e3a46" stroke-width="2.4" stroke-linecap="round"/>
+<g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+ <text x="80" y="73" font-size="5.5" fill="#7dd3fc" letter-spacing=".6">DIVE · AIR</text>
+ <text x="78" y="96" font-size="23" font-weight="700" fill="#ffffff" letter-spacing="-.6">28.4</text>
+ <text x="102" y="96" font-size="7" fill="#94a3b8" text-anchor="start">m</text>
+ <line x1="52" y1="101" x2="108" y2="101" stroke="#1f3340" stroke-width=".7"/>
+ <text x="64" y="111" font-size="9.5" font-weight="700" fill="#e2e8f0">47:12</text>
+ <text x="97" y="111" font-size="9.5" font-weight="700" fill="#4ade80">18</text>
+ <text x="64" y="117" font-size="4.3" fill="#64748b" letter-spacing=".4">TEMPO</text>
+ <text x="97" y="117" font-size="4.3" fill="#64748b" letter-spacing=".4">NDL</text>
+ <text x="80" y="138.5" font-size="4.5" fill="#fbbf24">19°C</text>
+</g>
+<path d="M60 131 L64 124 L70 128 L84 129 L94 125 L100 121 V132 H60 Z" fill="url(#rw-profile)"/>
+<path d="M60 131 L64 124 L70 128 L84 129 L94 125 L100 121" fill="none" stroke="#22d3ee" stroke-width="1.2" stroke-linejoin="round"/>
+<path d="M48 78 A42 42 0 0 1 108 64 Q86 72 68 92 Q56 104 50 118 A42 42 0 0 1 48 78 Z" fill="url(#rw-glare)"/>
+<circle cx="80" cy="100" r="42" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width=".8"/>
+<ellipse cx="62" cy="71" rx="7" ry="2.2" fill="#fff" opacity=".35" transform="rotate(-32 62 71)"/>
 </svg>`;
 
 function pullFreshApp() {
