@@ -482,7 +482,7 @@ function forgetDeletedDive(d) {
   state.deletedDiveAt = at;
 }
 
-function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel = "Annulla" } = {}) {
+function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel = "Annulla", tone = "danger" } = {}) {
   return new Promise((resolve) => {
     document.querySelector(".confirm-veil")?.remove();
     const veil = document.createElement("div");
@@ -493,7 +493,7 @@ function askConfirm({ title = "Conferma", message = "", ok = "Elimina", cancel =
         <p>${escapeHtml(message)}</p>
         <div class="confirm-actions">
           <button type="button" class="btn ghost" data-no>${escapeHtml(cancel)}</button>
-          <button type="button" class="btn danger" data-yes disabled>${escapeHtml(ok)}</button>
+          <button type="button" class="btn ${tone === "primary" ? "primary" : "danger"}" data-yes disabled>${escapeHtml(ok)}</button>
         </div>
       </div>
     `;
@@ -3194,7 +3194,9 @@ async function connectSeaPerson(cardHit, chat) {
         : publicDiverLabel(cardHit.owner).name;
     view.peopleHint = res.error
       ? `Segui ${label}. Il collegamento riprova tra poco: il profilo resta in Community.`
-      : `Segui ${label}. Nome, cognome, brevetto e firma sono nel contatto, non in questa lista.`;
+      : mutual
+        ? `Vi seguite con ${label}: foto, brevetto e firma arrivano nel contatto e la chat è aperta.`
+        : `Segui ${label}. Quando ricambierà, vi scambierete brevetto e firma e si aprirà la chat.`;
     silentDrivePush();
     render();
   } catch {
@@ -3204,6 +3206,30 @@ async function connectSeaPerson(cardHit, chat) {
   } finally {
     setTimeout(() => { followSaveBusy = false; }, 800);
   }
+}
+
+// Seguire è un consenso: prima si spiega cosa si condivide e solo con un sì si procede.
+async function followWithConsent(cardHit) {
+  const me = personNames({ name: state.profile?.name || "" });
+  if (!me.firstName || !me.lastName) {
+    view.peopleHint = "Scrivi nome e cognome nel Profilo, poi potrai seguire chi usa SeaDive.";
+    render();
+    return false;
+  }
+  const who = [cardHit.firstName, cardHit.lastName].filter(Boolean).join(" ") || cardHit.name || "questa persona";
+  const already = Boolean((state.people || []).find((p) => cardHit.owner && p.remoteOwner === cardHit.owner)?.followIn);
+  const ok = await askConfirm({
+    title: `Seguire ${who}?`,
+    message: already
+      ? `${who} ti segue già. Seguendo anche tu vi scambiate foto, brevetto principale e firma, cifrati e visibili solo a voi due, e si apre la chat tra voi. Puoi smettere quando vuoi.`
+      : `Quando anche ${who} ti seguirà, vi scambierete foto, brevetto principale e firma, cifrati e visibili solo a voi due, e si aprirà la chat tra voi. Puoi smettere quando vuoi.`,
+    ok: "Segui",
+    cancel: "Annulla",
+    tone: "primary",
+  });
+  if (!ok) return false;
+  await connectSeaPerson(cardHit, false);
+  return true;
 }
 
 async function disconnectSeaPerson(cardHit) {
@@ -3239,7 +3265,7 @@ async function disconnectSeaPerson(cardHit) {
     save(state);
     await silentDrivePush();
     view.personId = null;
-    view.peopleHint = `${who} non è più tra i contatti. Lo ritrovi con Cerca chi usa SeaDive.`;
+    view.peopleHint = `${who} non è più tra i contatti. Puoi ritrovare il profilo con Cerca chi usa SeaDive.`;
     render();
   } catch {
     view.peopleHint = "Non sono riuscito a togliere il seguito. Riprova tra poco.";
@@ -3615,6 +3641,48 @@ function messageInRoom(row, room, rooms) {
   return homes.length === 1 && homes[0].key === room.key;
 }
 
+/* ---------- Messaggi cifrati ----------
+   Il registro Community è pubblico: il testo non ci va mai in chiaro. Per ogni persona della chat
+   (mittente compreso, per rileggere i propri messaggi) si chiude una busta con la chiave che solo
+   mittente e destinatario possono ricavare. I messaggi vecchi in chiaro si leggono ancora. */
+const chatTextCache = new Map();
+
+async function sealChatText(text, members, msgId) {
+  const keys = await myCommKeys(true);
+  if (!keys) return null;
+  const mine = await profileOwnerKey();
+  const boxes = {};
+  for (const id of [...members].slice(0, 16)) {
+    const pub = id === mine ? keys.pub : remotePubKey(id);
+    if (!pub) continue;
+    const box = await sealLinkBox(pub, { text }, msgId).catch(() => null);
+    if (box) boxes[id] = { iv: box.iv, ct: box.ct };
+  }
+  return Object.keys(boxes).length ? boxes : null;
+}
+
+async function chatText(row, mine) {
+  if (!row) return "";
+  if (!row.boxes) return String(row.text || "");
+  const id = String(row._id || "");
+  if (chatTextCache.has(id)) return chatTextCache.get(id);
+  const box = row.boxes[mine];
+  const keys = await myCommKeys(false);
+  if (!box || !keys) return "";
+  const from = String(row.from || "");
+  const pub = from === mine ? keys.pub : remotePubKey(from);
+  if (!pub) return "";
+  const data = await openLinkBox(pub, box, id);
+  const text = String(data?.text || "").slice(0, 400);
+  if (text) chatTextCache.set(id, text);
+  return text;
+}
+
+async function readableChatRows(rows, mine) {
+  if (!communityBoardCache.data) await loadCommunityBoard().catch(() => null);
+  return Promise.all((rows || []).map(async (row) => ({ ...row, text: await chatText(row, mine).catch(() => "") })));
+}
+
 function chatInitials(name) {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
   return ((parts[0] || "?").slice(0, 1) + (parts[1] || "").slice(0, 1)).toUpperCase();
@@ -3749,7 +3817,7 @@ async function watchChatNotices() {
     const id = String(row._id || "");
     if (!id || chatSeen.has(id)) continue;
     chatSeen.add(id);
-    const text = String(row.text || "").trim();
+    const text = String(await chatText(row, mine).catch(() => "")).trim();
     const from = String(row.from || "");
     const at = String(row.at || "");
     const room = rooms.find((item) => messageInRoom(row, item, rooms));
@@ -4207,8 +4275,9 @@ function renderChat() {
           : "Ancora fuori. Appena tu e un’altra persona vi seguite, la chat si apre. Se seguite le stesse persone, entrano anche loro.";
         return;
       }
-      const rows = all
-        .filter((row) => messageInRoom(row, active, knownRooms) && String(row.text || "").trim())
+      const readable = await readableChatRows(all.filter((row) => messageInRoom(row, active, knownRooms)), owner);
+      const rows = readable
+        .filter((row) => String(row.text || "").trim())
         .map((row) => {
           if (row._id) chatSeen.add(String(row._id));
           return {
@@ -4240,15 +4309,21 @@ function renderChat() {
         await pull();
       } else {
         const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
+        const msgId = uid().replace(/-/g, "");
+        if (!communityBoardCache.data) await loadCommunityBoard(0);
+        const boxes = await sealChatText(text, active.members, msgId);
+        if (!boxes) throw new Error("seal");
         const msg = {
-          _id: uid().replace(/-/g, ""),
+          _id: msgId,
+          v: 2,
           thread: active.key,
           with: active.key,
           from: owner,
           name: sender.slice(0, 80),
-          text,
+          boxes,
           at: new Date().toISOString(),
         };
+        chatTextCache.set(msgId, text);
         await cloudSet(`m-${msg._id}`, msg);
         input.value = "";
         stick = true;
@@ -9724,7 +9799,7 @@ function renderPeople() {
     <h3 class="serif people-block">${uiIcon("book", 18)}I tuoi contatti</h3>
     <div class="chips" data-roles></div>
     <div class="people-list" data-list></div>
-    <div class="actions people-actions">
+    <div class="actions people-tools">
       <button class="btn primary" type="button" data-addperson>${uiIcon("add")}Aggiungi persona</button>
       <button class="btn ghost" type="button" data-receivecontact>${uiIcon("card")}Ricevi contatto</button>
       <button class="btn ghost" type="button" data-receive>${uiIcon("dive")}Ricevi immersione</button>
@@ -9822,7 +9897,10 @@ function renderPeople() {
       const button = e.currentTarget;
       button.disabled = true;
       button.textContent = "Salvo…";
-      await connectSeaPerson(cardHit, false);
+      if (!(await followWithConsent(cardHit))) {
+        button.disabled = false;
+        button.textContent = cardHit && localSeaPerson(cardHit)?.followIn ? "Segui anche tu" : "Segui";
+      }
     });
     row.querySelector("[data-unfollow]")?.addEventListener("click", async (e) => {
       e.preventDefault();
@@ -10401,7 +10479,7 @@ function renderPerson() {
       level: current.level,
       portrait: current.portrait,
     };
-    await connectSeaPerson(card, false);
+    await followWithConsent(card);
   });
   form.querySelector("[data-unfollow]")?.addEventListener("click", async () => {
     if (current.remoteOwner) {
