@@ -5778,7 +5778,7 @@ function flagIcon(kind, zoom) {
 }
 
 // Versione dei dati della mappa: cambia quando tools/mappa-siti.ps1 rigenera i file.
-const MAP_DATA_V = "20261119";
+const MAP_DATA_V = "20261120";
 const PLACE_SOURCES = { o: "OpenStreetMap", w: "Wikidata", s: "Catalogo SeaDive" };
 
 function mapPointOk(lat, lng) {
