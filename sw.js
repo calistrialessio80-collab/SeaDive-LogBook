@@ -21,6 +21,7 @@ const ASSETS = [
   "./splash.jpg",
   "./terra.jpg",
   "./gorgonie.jpg",
+  "./sub-dolina.jpg",
   "./nav-diver.png",
   "./register.jpg",
   "./privacy.html",

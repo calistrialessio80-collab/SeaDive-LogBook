@@ -6788,99 +6788,6 @@ function homeBioPreview() {
   return { chips, rows, line };
 }
 
-/* Sfondo del collegamento Community: tre sub in controluce sotto i raggi di luce, con bolle e un po' di reef.
-   Disegno vettoriale fatto qui (niente immagini esterne); colori dello stile Abisso. */
-const COMMUNITY_DIVER_KITS = [
-  "--fin:#facc15;--tank:#38bdf8;--rim:#fde68a;--belt:#a16207",
-  "--fin:#f472b6;--tank:#a78bfa;--rim:#f0abfc;--belt:#9d174d",
-  "--fin:#22d3ee;--tank:#fbbf24;--rim:#67e8f9;--belt:#0e7490",
-];
-
-function communityGateArt() {
-  const diver = (x, y, w, rot, kit, flip = false) =>
-    `<g transform="translate(${x} ${y}) rotate(${rot})${flip ? " scale(-1 1)" : ""}"><use href="#cg-diver" x="${-w / 2}" y="${-w * 0.175}" width="${w}" height="${w * 0.35}" style="color:#0a0f2c;${COMMUNITY_DIVER_KITS[kit]}"/></g>`;
-  const bubbles = [[252, 52, 2.2], [256, 38, 2.8], [252, 24, 2], [300, 72, 2.4], [296, 58, 2], [300, 44, 3], [290, 104, 2.6], [294, 90, 2]]
-    .map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="#cffafe" stroke-opacity="0.75" stroke-width="1.1"/>`)
-    .join("");
-  const x0 = 250;
-  return `<svg class="gate-art" viewBox="0 0 360 200" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
-    <defs>
-      <symbol id="cg-diver" viewBox="0 0 200 70">
-        <g stroke-linecap="round" stroke-linejoin="round">
-          <g opacity="0.78">
-            <path d="M104 30 Q88 23 72 22" stroke="currentColor" stroke-width="10" fill="none"/>
-            <path d="M72 22 Q58 17 47 16" stroke="currentColor" stroke-width="6.5" fill="none"/>
-            <path d="M50 12 C36 8 18 3 3 2 C9 9 24 17 50 21 Z" fill="var(--fin)"/>
-            <path d="M50 12 C36 8 18 3 3 2" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" fill="none"/>
-          </g>
-          <path d="M150 28 Q158 21 170 20 L181 22" stroke="currentColor" stroke-width="5.5" fill="none" opacity="0.8"/>
-          <rect x="100" y="9" width="56" height="14" rx="7" fill="var(--tank)"/>
-          <rect x="108" y="11" width="40" height="3" rx="1.5" fill="#fff" opacity="0.4"/>
-          <rect x="155" y="11" width="6" height="7" rx="1.5" fill="currentColor"/>
-          <circle cx="162" cy="14.5" r="3.2" fill="currentColor"/>
-          <path d="M98 27 C110 19 140 18 158 22 C167 24 170 32 165 38 C150 45 120 45 101 41 C94 38 93 31 98 27 Z" fill="currentColor"/>
-          <path d="M100 26 C115 20 140 19 158 22" stroke="var(--rim)" stroke-width="1.6" fill="none" opacity="0.95"/>
-          <path d="M108 25 L108 42" stroke="var(--belt)" stroke-width="3.5"/>
-          <path d="M103 37 Q86 43 71 40" stroke="currentColor" stroke-width="11" fill="none"/>
-          <path d="M71 40 Q56 36 44 31" stroke="currentColor" stroke-width="7" fill="none"/>
-          <path d="M47 27 C32 23 14 18 0 20 C6 27 20 33 46 37 Z" fill="var(--fin)"/>
-          <path d="M47 27 C32 23 14 18 0 20" stroke="#fff" stroke-opacity="0.35" stroke-width="1.2" fill="none"/>
-          <ellipse cx="173" cy="30" rx="10" ry="9.5" fill="currentColor"/>
-          <path d="M162 14.5 C176 6 192 20 183 37" stroke="currentColor" stroke-width="2" fill="none"/>
-          <rect x="177" y="24" width="9" height="9" rx="3" fill="#a5f3fc"/>
-          <rect x="178.5" y="25.5" width="3" height="3" rx="1" fill="#fff" opacity="0.8"/>
-          <circle cx="182" cy="37.5" r="3.6" fill="currentColor"/>
-          <path d="M155 35 Q160 47 169 48" stroke="currentColor" stroke-width="7" fill="none"/>
-          <path d="M169 48 L184 46" stroke="currentColor" stroke-width="6" fill="none"/>
-          <ellipse cx="187" cy="45.5" rx="4.5" ry="3.2" fill="currentColor"/>
-          <rect x="160" y="44" width="7" height="5" rx="1.5" fill="var(--rim)" opacity="0.7"/>
-        </g>
-        <circle cx="181" cy="28.5" r="9" fill="#67e8f9" opacity="0.25"/>
-      </symbol>
-      <linearGradient id="cg-ray" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#e9d5ff" stop-opacity="0.5"/>
-        <stop offset="0.5" stop-color="#a78bfa" stop-opacity="0.2"/>
-        <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
-      </linearGradient>
-      <linearGradient id="cg-rayc" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#cffafe" stop-opacity="0.5"/>
-        <stop offset="0.5" stop-color="#22d3ee" stop-opacity="0.2"/>
-        <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
-      </linearGradient>
-      <radialGradient id="cg-sun" cx="0.5" cy="0.5" r="0.5">
-        <stop offset="0" stop-color="#f3f0ff" stop-opacity="0.95"/>
-        <stop offset="0.35" stop-color="#c4b5fd" stop-opacity="0.55"/>
-        <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
-      </radialGradient>
-      <radialGradient id="cg-bloom" cx="0.5" cy="0.5" r="0.5">
-        <stop offset="0" stop-color="#22d3ee" stop-opacity="0.38"/>
-        <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
-      </radialGradient>
-      <linearGradient id="cg-reef" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0" stop-color="#f472b6"/>
-        <stop offset="1" stop-color="#fb923c"/>
-      </linearGradient>
-    </defs>
-    <circle cx="280" cy="110" r="110" fill="url(#cg-bloom)"/>
-    <polygon points="240,0 262,0 150,200 96,200" fill="url(#cg-ray)"/>
-    <polygon points="270,0 284,0 250,200 206,200" fill="url(#cg-rayc)"/>
-    <polygon points="292,0 308,0 350,200 300,200" fill="url(#cg-ray)"/>
-    <polygon points="316,0 334,0 420,200 370,200" fill="url(#cg-rayc)"/>
-    <ellipse cx="282" cy="-8" rx="120" ry="52" fill="url(#cg-sun)"/>
-    ${diver(228, 68, 76, 18, 0)}
-    ${diver(326, 96, 84, -16, 1, true)}
-    ${diver(268, 128, 96, -20, 2)}
-    ${bubbles}
-    <path d="M${x0} 200 Q${x0 + 20} 176 ${x0 + 44} 184 Q${x0 + 60} 166 ${x0 + 86} 180 Q${x0 + 110} 170 ${x0 + 140} 200 Z" fill="#0a0f2c" opacity="0.9"/>
-    <g stroke="url(#cg-reef)" stroke-width="3" stroke-linecap="round" fill="none">
-      <path d="M${x0 + 30} 190 L${x0 + 30} 172 M${x0 + 30} 180 L${x0 + 22} 170 M${x0 + 30} 178 L${x0 + 38} 168"/>
-      <path d="M${x0 + 96} 190 L${x0 + 98} 166 M${x0 + 98} 176 L${x0 + 88} 164 M${x0 + 98} 172 L${x0 + 108} 160"/>
-    </g>
-    <circle cx="${x0 + 64}" cy="182" r="7" fill="#fb923c" opacity="0.8"/>
-    <circle cx="${x0 + 122}" cy="186" r="5" fill="#f472b6" opacity="0.8"/>
-  </svg>`;
-}
-
 function homeFace(photo, initials, name) {
   const mark = photo
     ? `<img alt="" src="${escapeHtml(photo)}" />`
@@ -7135,7 +7042,7 @@ function renderHome() {
     </button>
     <button class="home-gate gate-people" type="button" data-port="people">
       <span class="home-gate-scene" aria-hidden="true">
-        ${communityGateArt()}
+        <span class="gate-photo"><img src="./sub-dolina.jpg" alt="" width="720" height="540" decoding="async" loading="lazy" title="Sub verso una dolina sul reef di Guam (David Burdick, NOAA, pubblico dominio)" /></span>
         <span class="gate-bubbles"></span>
         <span class="gate-crew" data-homecrew>${crew.html}</span>
       </span>
