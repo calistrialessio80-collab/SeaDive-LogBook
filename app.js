@@ -5456,6 +5456,74 @@ function bindSectionSwipe() {
 }
 bindSectionSwipe();
 
+// File di filtri che scorrono di lato (.chips): col dito scorrono da sole, col mouse no.
+// Qui si possono trascinare col mouse e scorrere con la rotella; dopo un trascinamento il clic non parte.
+function bindChipScroll() {
+  if (bindChipScroll.done) return;
+  bindChipScroll.done = true;
+  const rowOf = (el) => {
+    const row = el?.closest?.(".chips");
+    return row && row.scrollWidth > row.clientWidth + 4 ? row : null;
+  };
+  let drag = null;
+  let swallow = false;
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "touch" || e.button !== 0) return;
+    const row = rowOf(e.target);
+    if (!row) return;
+    drag = { row, x: e.clientX, left: row.scrollLeft, moved: false, id: e.pointerId };
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x;
+    if (!drag.moved && Math.abs(dx) < 6) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      drag.row.classList.add("dragging");
+    }
+    drag.row.scrollLeft = drag.left - dx;
+  });
+  const end = () => {
+    if (!drag) return;
+    if (drag.moved) {
+      swallow = true;
+      setTimeout(() => { swallow = false; }, 0);
+      drag.row.classList.remove("dragging");
+    }
+    drag = null;
+  };
+  document.addEventListener("pointerup", end);
+  document.addEventListener("pointercancel", end);
+  document.addEventListener("click", (e) => {
+    if (!swallow) return;
+    swallow = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  document.addEventListener("wheel", (e) => {
+    if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const row = rowOf(e.target);
+    if (!row) return;
+    const max = row.scrollWidth - row.clientWidth;
+    // Alla fine della fila la rotella torna a scorrere la pagina.
+    if ((e.deltaY > 0 && row.scrollLeft >= max - 1) || (e.deltaY < 0 && row.scrollLeft <= 0)) return;
+    e.preventDefault();
+    row.scrollLeft += e.deltaY;
+  }, { passive: false });
+  // Sfumatura sul lato dove la fila continua.
+  const shade = (row) => {
+    const max = row.scrollWidth - row.clientWidth;
+    row.classList.toggle("more-right", max > 4 && row.scrollLeft < max - 4);
+    row.classList.toggle("more-left", max > 4 && row.scrollLeft > 4);
+  };
+  document.addEventListener("scroll", (e) => {
+    if (e.target?.classList?.contains("chips")) shade(e.target);
+  }, true);
+  new MutationObserver(() => document.querySelectorAll(".bio-filters .chips").forEach(shade))
+    .observe(document.getElementById("app") || document.body, { childList: true, subtree: true });
+}
+bindChipScroll();
+
 function renderNav() {
   const wrap = document.createDocumentFragment();
   const dock = document.createElement("div");

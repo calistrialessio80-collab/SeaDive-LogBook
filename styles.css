@@ -2482,6 +2482,13 @@ body.page-people .community-page {
   scrollbar-width: none;
 }
 .bio-filters .chips::-webkit-scrollbar { display: none; }
+.bio-filters .chips { cursor: grab; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.bio-filters .chips.dragging { cursor: grabbing; user-select: none; }
+.bio-filters .chips.dragging .chip { pointer-events: none; }
+/* Sfumatura sul lato dove la fila continua: si capisce che si può scorrere. */
+.bio-filters .chips.more-right { -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent); mask-image: linear-gradient(90deg, #000 82%, transparent); }
+.bio-filters .chips.more-left { -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%); mask-image: linear-gradient(90deg, transparent, #000 18%); }
+.bio-filters .chips.more-left.more-right { -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent); }
 .bio-chip, .bio-sea { flex: none; display: inline-flex; align-items: center; gap: 6px; }
 .bio-emoji { font-size: 15px; line-height: 1; }
 .bio-page [data-bioblurb]:empty { display: none; }
