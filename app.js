@@ -6196,6 +6196,12 @@ function renderWorldMap() {
   grab.className = "dock-grab";
   grab.setAttribute("aria-hidden", "true");
   summary.prepend(grab);
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "dock-close";
+  closeBtn.setAttribute("aria-label", "Chiudi");
+  closeBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+  dock.prepend(closeBtn);
   let dockDrag = null;
   const parkDock = () => {
     dock.classList.remove("pulling");
@@ -6211,17 +6217,22 @@ function renderWorldMap() {
       if (input) input.value = "";
     });
   };
+  closeBtn.onclick = dismissDock;
   dock.addEventListener("pointerdown", (e) => {
     if (!dock.open || (e.button != null && e.button !== 0)) return;
     if (e.target.closest("input, textarea, button, a, select")) return;
     dockDrag = { y: e.clientY, dy: 0, id: e.pointerId };
-    try { dock.setPointerCapture(e.pointerId); } catch { /* il dito resta sul pannello */ }
   });
   dock.addEventListener("pointermove", (e) => {
     if (!dockDrag || e.pointerId !== dockDrag.id) return;
     const dy = Math.max(0, e.clientY - dockDrag.y);
     dockDrag.dy = dy;
     if (dy < 6) return;
+    // Il dito si "aggancia" al pannello solo quando trascina davvero: un tocco semplice
+    // deve arrivare al titolo, che apre e chiude il pannello.
+    if (!dock.hasPointerCapture?.(e.pointerId)) {
+      try { dock.setPointerCapture(e.pointerId); } catch { /* il dito resta sul pannello */ }
+    }
     dock.classList.add("pulling");
     dock.style.transform = `translateX(-50%) translateY(${dy}px)`;
   });

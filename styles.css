@@ -1558,6 +1558,13 @@ body.page-map .nav-dock { background: transparent; }
   background: #8d97a3;
 }
 .add-site-dock.pulling { transition: none; }
+.add-site-dock .dock-close {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  display: grid; place-items: center; width: 36px; height: 36px; padding: 0;
+  border: 0; border-radius: 50%; cursor: pointer;
+  color: inherit; background: rgba(127, 140, 155, 0.18);
+}
+.add-site-dock .dock-close:active { background: rgba(127, 140, 155, 0.32); }
 .add-site-dock summary::-webkit-details-marker { display: none; }
 .add-site-dock form { margin-top: 8px; }
 .add-site-dock .hint { margin-top: 4px; }
