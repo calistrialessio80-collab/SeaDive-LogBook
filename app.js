@@ -4547,7 +4547,7 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
           .map((reg) => reg.unregister())
       );
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
-      // La pagina si ricarica solo se l'utente ha toccato "Aggiorna": mai a metà di una scheda.
+      // La pagina si ricarica solo per un aggiornamento chiesto o fatto da solo fuori dalle schede: mai a metà di una scheda.
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         if (!swUpdateRequested) return;
         swUpdateRequested = false;
@@ -4556,18 +4556,64 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
       const watchWorker = (worker) => {
         if (!worker) return;
         worker.addEventListener("statechange", () => {
-          if (worker.state === "installed" && navigator.serviceWorker.controller) showUpdateBanner(reg);
+          if (worker.state === "installed" && navigator.serviceWorker.controller) applyUpdateQuietly(reg);
         });
       };
-      if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+      if (reg.waiting && navigator.serviceWorker.controller) applyUpdateQuietly(reg);
       watchWorker(reg.installing);
       reg.addEventListener("updatefound", () => watchWorker(reg.installing));
       await reg.update();
+      // Riaperta dopo un po' in secondo piano (sul telefono spesso l'app non si chiude davvero):
+      // si cerca una versione nuova e, se non si sta scrivendo, si aggiorna da sola.
+      let hiddenAt = 0;
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible") {
+          hiddenAt = Date.now();
+          return;
+        }
+        if (!hiddenAt || Date.now() - hiddenAt < 60 * 1000) return;
+        hiddenAt = 0;
+        reg.update().catch(() => {});
+        pullFreshApp();
+      });
     } catch (_) {}
   })();
 }
 
 let swUpdateRequested = false;
+
+// Pagine dove si sta scrivendo qualcosa: lì l'aggiornamento non parte da solo, si chiede con "Aggiorna".
+function appBusyEditing() {
+  if (typeof view === "undefined" || !view) return false;
+  if (view.name === "edit" || view.name === "profile") return true;
+  if (view.name === "people" && view.personId) return true;
+  return Boolean(document.querySelector("dialog[open], .confirm-veil"));
+}
+
+async function latestVersion() {
+  try {
+    const res = await fetch("./version.txt?t=" + Date.now(), { cache: "no-store" });
+    return res.ok ? String(await res.text()).trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+// Nuova versione pronta: fuori dalle schede si attiva da sola. Si ricarica la pagina solo se
+// il codice aperto è ancora quello vecchio (spesso all'apertura è già arrivato quello nuovo).
+async function applyUpdateQuietly(reg) {
+  if (!reg?.waiting) return;
+  if (appBusyEditing()) {
+    showUpdateBanner(reg);
+    return;
+  }
+  const remote = await latestVersion();
+  if (!reg.waiting) return;
+  const reloadNeeded = Boolean(remote && remote !== APP_VERSION);
+  swUpdateRequested = reloadNeeded;
+  reg.waiting.postMessage({ type: "seadive-skip-waiting" });
+  if (reloadNeeded) setTimeout(() => location.reload(), 4000);
+}
 
 function showUpdateBanner(reg) {
   if (!reg?.waiting || document.querySelector(".update-banner")) return;
@@ -4678,11 +4724,10 @@ const COMPUTER_WATCH_SVG = `<svg class="computer-watch" viewBox="0 0 160 200" ar
 </svg>`;
 
 function pullFreshApp() {
-  fetch("./version.txt?t=" + Date.now(), { cache: "no-store" })
-    .then((res) => (res.ok ? res.text() : ""))
-    .then((text) => {
-      const remote = String(text || "").trim();
+  latestVersion()
+    .then((remote) => {
       if (!remote || remote === APP_VERSION) return;
+      if (appBusyEditing()) return;
       if (sessionStorage.getItem("seadive-refresh") === remote) return;
       sessionStorage.setItem("seadive-refresh", remote);
       location.replace("./aggiorna.html?t=" + Date.now());
