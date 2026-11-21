@@ -1703,43 +1703,62 @@ async function shareOneDive(d) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-const PDF_WIN = {
-  "à": "\\340", "è": "\\350", "é": "\\351", "ì": "\\354", "ò": "\\362", "ù": "\\371",
-  "À": "\\300", "È": "\\310", "É": "\\311", "Ì": "\\314", "Ò": "\\322", "Ù": "\\331",
-  "á": "\\341", "í": "\\355", "ó": "\\363", "ú": "\\372",
-  "°": "\\260", "·": "\\267", "ç": "\\347",
-  "’": "\\222", "‘": "\\221",
-};
+/* ---------------------------------------------------------------------------
+   PDF della scheda immersione: A4, più pagine se serve, con firme, foto e grafico.
+   Scritto a mano (nessuna libreria): testo Helvetica WinAnsi, immagini JPEG.
+   --------------------------------------------------------------------------- */
+
+const PDF_EXTRA = { "–": "\\226", "—": "\\227", "…": "\\205", "’": "\\222", "‘": "\\221", "“": "\\223", "”": "\\224", "•": "\\225", "€": "\\200", "›": "\\233", "‹": "\\213" };
 
 function pdfLiteral(text) {
   let out = "";
   for (const ch of String(text ?? "")) {
-    if (PDF_WIN[ch]) {
-      out += PDF_WIN[ch];
-      continue;
-    }
-    if (ch === "\\" ) out += "\\\\";
+    const code = ch.codePointAt(0);
+    if (PDF_EXTRA[ch]) out += PDF_EXTRA[ch];
+    else if (ch === "\\") out += "\\\\";
     else if (ch === "(") out += "\\(";
     else if (ch === ")") out += "\\)";
     else if (ch === "\n" || ch === "\r" || ch === "\t") out += " ";
-    else if (ch.charCodeAt(0) >= 32 && ch.charCodeAt(0) <= 126) out += ch;
+    else if (code >= 32 && code <= 126) out += ch;
+    // Latino-1 (accenti, °, ·, ²…) coincide con WinAnsi: si scrive il codice in ottale.
+    else if (code >= 160 && code <= 255) out += "\\" + code.toString(8).padStart(3, "0");
+    else if (ch === "→") out += "->";
+    else if (ch === "★") out += "*";
     else out += " ";
   }
   return out.replace(/ {2,}/g, " ").trim();
 }
 
-function pdfWrap(text, max) {
-  const words = String(text || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+// Larghezza approssimata di Helvetica (in unità di 1 pt di corpo): basta per andare a capo e allineare.
+function pdfTextWidth(text, size, bold) {
+  let w = 0;
+  for (const ch of String(text || "")) {
+    if (" ".includes(ch)) w += 0.278;
+    else if ("iljI.,:;'|!".includes(ch)) w += 0.25;
+    else if ("ftr()[]-/".includes(ch)) w += 0.34;
+    else if ("mwMW".includes(ch)) w += 0.85;
+    else if (/[A-Z]/.test(ch)) w += 0.68;
+    else if (/[0-9]/.test(ch)) w += 0.556;
+    else w += 0.53;
+  }
+  return w * size * (bold ? 1.06 : 1);
+}
+
+function pdfWrapWidth(text, size, maxW, bold) {
   const rows = [];
-  let line = "";
-  words.forEach((word) => {
-    const next = line ? `${line} ${word}` : word;
-    if (next.length > max && line) {
-      rows.push(line);
-      line = word.slice(0, max);
-    } else line = next.slice(0, max);
+  String(text || "").split(/\r?\n/).forEach((para) => {
+    const words = para.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    let line = "";
+    words.forEach((word) => {
+      const next = line ? `${line} ${word}` : word;
+      if (pdfTextWidth(next, size, bold) > maxW && line) {
+        rows.push(line);
+        line = word;
+      } else line = next;
+    });
+    rows.push(line);
   });
-  if (line) rows.push(line);
+  while (rows.length && !rows[rows.length - 1]) rows.pop();
   return rows;
 }
 
@@ -1747,32 +1766,81 @@ function pdfNum(n) {
   return (Math.round(Number(n) * 10) / 10).toFixed(1);
 }
 
-function pdfFile(content) {
+// Immagine (data URL o file dell'app) → JPEG su fondo bianco, pronto per il PDF.
+function pdfImage(src, maxW = 900) {
+  return new Promise((resolve) => {
+    if (!src) return resolve(null);
+    const im = new Image();
+    im.onload = () => {
+      try {
+        const scale = Math.min(1, maxW / (im.naturalWidth || 1));
+        const w = Math.max(1, Math.round((im.naturalWidth || 1) * scale));
+        const h = Math.max(1, Math.round((im.naturalHeight || 1) * scale));
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(im, 0, 0, w, h);
+        const url = c.toDataURL("image/jpeg", 0.9);
+        const bin = atob(url.split(",")[1] || "");
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        resolve({ w, h, bytes });
+      } catch {
+        resolve(null);
+      }
+    };
+    im.onerror = () => resolve(null);
+    im.src = src;
+  });
+}
+
+function pdfDocument(pages, images) {
   const enc = new TextEncoder();
   const parts = [];
   let size = 0;
   const write = (s) => {
-    const bytes = enc.encode(s);
+    const bytes = typeof s === "string" ? enc.encode(s) : s;
     parts.push(bytes);
     size += bytes.length;
   };
-  write("%PDF-1.4\n");
-  const offsets = [0];
-  const obj = (n, body) => {
+  const offsets = [];
+  const obj = (n, body, binary) => {
     offsets[n] = size;
-    write(`${n} 0 obj\n${body}\nendobj\n`);
+    write(`${n} 0 obj\n`);
+    write(body);
+    if (binary) {
+      write(binary);
+      write("\nendstream");
+    }
+    write("\nendobj\n");
   };
-  const stream = content.endsWith("\n") ? content : `${content}\n`;
+  write("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+  // 1 catalogo, 2 pagine, 3-4 caratteri, poi immagini, poi pagine e contenuti.
+  const imgBase = 5;
+  const pageBase = imgBase + images.length;
+  const kids = pages.map((_, i) => `${pageBase + i * 2} 0 R`).join(" ");
   obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
-  obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>");
-  obj(4, `<< /Length ${enc.encode(stream).length} >>\nstream\n${stream}endstream`);
-  obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-  obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
+  obj(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  obj(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+  images.forEach((img, i) => {
+    obj(imgBase + i, `<< /Type /XObject /Subtype /Image /Width ${img.w} /Height ${img.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${img.bytes.length} >>\nstream\n`, img.bytes);
+  });
+  const xobjects = images.map((_, i) => `/Im${i} ${imgBase + i} 0 R`).join(" ");
+  pages.forEach((ops, i) => {
+    const n = pageBase + i * 2;
+    const content = enc.encode(ops.join("\n") + "\n");
+    obj(n, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${n + 1} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobjects ? ` /XObject << ${xobjects} >>` : ""} >> >>`);
+    obj(n + 1, `<< /Length ${content.length} >>\nstream\n`, content);
+  });
+  const total = pageBase + pages.length * 2;
   const xrefAt = size;
-  let xref = "xref\n0 7\n0000000000 65535 f \n";
-  for (let i = 1; i <= 6; i += 1) xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-  xref += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`;
+  let xref = `xref\n0 ${total}\n0000000000 65535 f \n`;
+  for (let i = 1; i < total; i++) xref += `${String(offsets[i] || 0).padStart(10, "0")} 00000 n \n`;
+  xref += `trailer\n<< /Size ${total} /Root 1 0 R /Info << /Producer (SeaDive LogBook) >> >>\nstartxref\n${xrefAt}\n%%EOF`;
   write(xref);
   return new Blob(parts, { type: "application/pdf" });
 }
@@ -1781,129 +1849,380 @@ function divePdfName(d) {
   return shareDiveFilename(d).replace(/\.json$/, ".pdf");
 }
 
-function buildDivePdf(d) {
-  const ops = [];
-  const txt = (font, size, x, y, str, rgb = "0.05 0.16 0.2") => {
+async function buildDivePdf(d) {
+  const W = 595;
+  const H = 842;
+  const M = 36;
+  const CW = W - M * 2;
+  const C = {
+    navy: "0.031 0.137 0.200",
+    teal: "0.031 0.478 0.541",
+    tealSoft: "0.902 0.965 0.973",
+    ink: "0.067 0.153 0.196",
+    mute: "0.400 0.478 0.518",
+    line: "0.835 0.886 0.906",
+    card: "0.965 0.980 0.984",
+    orange: "0.937 0.522 0.157",
+    white: "1 1 1",
+  };
+  const pages = [];
+  let ops = null;
+  let y = 0;
+  const images = [];
+  const imgIndex = new Map();
+  const addImage = async (src, maxW) => {
+    if (!src) return null;
+    if (imgIndex.has(src)) return imgIndex.get(src);
+    const img = await pdfImage(src, maxW);
+    if (!img) return null;
+    images.push(img);
+    const ref = { name: `Im${images.length - 1}`, w: img.w, h: img.h };
+    imgIndex.set(src, ref);
+    return ref;
+  };
+  const text = (str, x, yy, size = 10, opt = {}) => {
     const safe = pdfLiteral(str);
     if (!safe) return;
-    ops.push(`BT ${rgb} rg /F${font} ${size} Tf 1 0 0 1 ${pdfNum(x)} ${pdfNum(y)} Tm (${safe}) Tj ET`);
+    let xx = x;
+    if (opt.align === "right") xx = x - pdfTextWidth(str, size, opt.bold);
+    if (opt.align === "center") xx = x - pdfTextWidth(str, size, opt.bold) / 2;
+    ops.push(`BT ${opt.color || C.ink} rg /F${opt.bold ? 2 : 1} ${size} Tf 1 0 0 1 ${pdfNum(xx)} ${pdfNum(yy)} Tm (${safe}) Tj ET`);
   };
-  const fill = (rgb, x, y, w, h) => ops.push(`${rgb} rg ${pdfNum(x)} ${pdfNum(y)} ${pdfNum(w)} ${pdfNum(h)} re f`);
-  ops.push("0.031 0.220 0.282 rg 0 786 595 56 re f");
-  txt(2, 16, 36, 816, "SeaDive LogBook", "1 1 1");
-  txt(1, 9, 36, 800, "Libretto immersioni", "0.78 0.93 0.95");
-  txt(1, 10, 470, 808, d.number ? `N. ${d.number}` : "Scheda", "1 1 1");
-  let y = 758;
-  txt(2, 18, 36, y, d.site || "Senza nome");
-  y -= 16;
-  const when = [d.date, [d.timeIn, d.timeOut].filter(Boolean).join(" - ")].filter(Boolean).join("  ·  ");
-  if (when) {
-    txt(1, 10, 36, y, when, "0.27 0.36 0.4");
-    y -= 14;
-  }
-  const place = [d.location, geoText(d)].filter(Boolean).join("  ·  ");
-  if (place) {
-    txt(1, 10, 36, y, place, "0.27 0.36 0.4");
-    y -= 16;
-  }
-  y -= 8;
+  const rect = (x, yy, w, h, color) => ops.push(`${color} rg ${pdfNum(x)} ${pdfNum(yy)} ${pdfNum(w)} ${pdfNum(h)} re f`);
+  const box = (x, yy, w, h, color, width = 0.6) => ops.push(`${color} RG ${width} w ${pdfNum(x)} ${pdfNum(yy)} ${pdfNum(w)} ${pdfNum(h)} re S`);
+  const lineH = (x1, yy, x2, color = C.line, width = 0.6) => ops.push(`${color} RG ${width} w ${pdfNum(x1)} ${pdfNum(yy)} m ${pdfNum(x2)} ${pdfNum(yy)} l S`);
+  const image = (ref, x, yy, w, h) => ops.push(`q ${pdfNum(w)} 0 0 ${pdfNum(h)} ${pdfNum(x)} ${pdfNum(yy)} cm /${ref.name} Do Q`);
   const shown = (value, unit) => {
-    const text = String(value ?? "").trim();
-    if (!text || text === "—") return "";
-    return unit ? `${text} ${unit}` : text;
+    const t = String(value ?? "").trim();
+    if (!t || t === "—") return "";
+    return unit ? `${t.replace(".", ",")} ${unit}` : t;
   };
-  const cells = [];
-  const add = (label, value) => {
-    if (value) cells.push([label, value]);
-  };
-  add("Prof. max", shown(d.maxDepth, "m"));
-  add("Prof. media", shown(d.avgDepth || d.computerLog?.avgDepth, "m"));
-  add("Tempo di fondo", shown(d.bottomTime, "min"));
-  add("Tempo totale", shown(d.totalTime, "min"));
-  add("Sosta sicurezza", shown(d.safetyStop, "min"));
-  add("Visibilità", shown(d.visibility, "m"));
-  add("Acqua", shown(d.waterTemp, "°C"));
-  add("Aria", shown(d.airTemp, "°C"));
-  add("Muta", shown(d.wetsuit, "mm"));
-  add("Zavorra", shown(d.ballast, "kg"));
-  add("Bombola", shown(d.tank, "L"));
-  add("Miscela", shown(d.mix) ? `EAN ${d.mix}` : "");
-  add("Pressione", [shown(d.pressureStart), shown(d.pressureEnd)].filter(Boolean).join(" - ") + (shown(d.pressureStart) || shown(d.pressureEnd) ? " bar" : ""));
-  STAGE_SLOTS.forEach((slot) => add(slot.title, stageSummary(d, slot)));
-  add("SAC", shown(d.sac, "L/min"));
-  add("Corrente", shown(d.current));
-  add("Mare", shown(d.seaConditions));
-  add("Fuori curva", d.deco ? "Sì" : "No");
-  add("NDL", shown(d.ndl, "min"));
-  if (cells.length) {
-    txt(2, 11, 36, y, "Scheda", "0.04 0.42 0.45");
-    y -= 18;
-    for (let i = 0; i < cells.length && y > 210; i += 2) {
-      const right = cells[i + 1];
-      txt(1, 8, 36, y, cells[i][0], "0.42 0.5 0.54");
-      txt(2, 10, 36, y - 12, cells[i][1]);
-      if (right) {
-        txt(1, 8, 310, y, right[0], "0.42 0.5 0.54");
-        txt(2, 10, 310, y - 12, right[1]);
-      }
-      y -= 28;
+  const dateIt = (iso) => (/^\d{4}-\d{2}-\d{2}$/.test(String(iso || "")) ? String(iso).split("-").reverse().join("/") : String(iso || ""));
+  const logo = await addImage("./icon-192.png", 192);
+
+  const newPage = () => {
+    ops = [];
+    pages.push(ops);
+    const first = pages.length === 1;
+    if (first) {
+      rect(0, H - 92, W, 92, C.navy);
+      rect(0, H - 95, W, 3, C.teal);
+      if (logo) image(logo, M, H - 78, 50, 50);
+      text("SeaDive LogBook", M + 62, H - 46, 19, { bold: true, color: C.white });
+      text("Libretto immersioni digitale · L. 70/2026 art. 12 c. 8", M + 62, H - 62, 8.5, { color: "0.70 0.86 0.90" });
+      text("IMMERSIONE", W - M, H - 38, 8, { align: "right", color: "0.70 0.86 0.90", bold: true });
+      text(d.number ? `N° ${d.number}` : "Scheda", W - M, H - 62, 22, { align: "right", bold: true, color: C.white });
+      y = H - 120;
+    } else {
+      rect(0, H - 40, W, 40, C.navy);
+      if (logo) image(logo, M, H - 33, 26, 26);
+      text("SeaDive LogBook", M + 34, H - 25, 11, { bold: true, color: C.white });
+      text(`Immersione ${d.number ? "N° " + d.number : ""} · ${d.site || ""} · ${dateIt(d.date)}`, W - M, H - 25, 8.5, { align: "right", color: "0.70 0.86 0.90" });
+      y = H - 64;
     }
-    y -= 6;
-  }
-  const people = [];
-  const diver = String(state.profile?.name || "").trim();
-  if (diver) people.push(["Subacqueo", [diver, state.profile.certLevel, state.profile.certNumber].filter(Boolean).join(" · ")]);
-  if (String(d.buddyName || "").trim()) people.push(["Buddy", [d.buddyName, d.buddyCert].filter(Boolean).join(" · ")]);
-  if (String(d.guideName || "").trim()) people.push(["Guida", [d.guideName, d.guideCert].filter(Boolean).join(" · ")]);
-  if (String(d.centerName || "").trim()) people.push(["Diving", [d.centerName, d.centerLead].filter(Boolean).join(" · ")]);
-  if (people.length && y > 160) {
-    txt(2, 11, 36, y, "Persone", "0.04 0.42 0.45");
+  };
+  const need = (h) => {
+    if (y - h < 54) newPage();
+  };
+  const section = (title) => {
+    need(40);
+    text(title.toUpperCase(), M, y, 9, { bold: true, color: C.teal });
+    lineH(M + pdfTextWidth(title.toUpperCase(), 9, true) + 8, y + 3, W - M, C.line, 0.8);
     y -= 16;
-    people.forEach((row) => {
-      if (y < 150) return;
-      txt(1, 8, 36, y, row[0], "0.42 0.5 0.54");
-      txt(2, 10, 100, y, row[1]);
-      y -= 14;
-    });
-    y -= 8;
-  }
+  };
+
+  newPage();
+
+  // Titolo
+  text(d.site || "Immersione senza nome", M, y, 20, { bold: true });
+  y -= 17;
+  const when = [dateIt(d.date), [d.timeIn, d.timeOut].filter(Boolean).join(" – ")].filter(Boolean).join("   ·   ");
+  const place = [d.location, geoText(d)].filter(Boolean).join("   ·   ");
+  if (when) { text(when, M, y, 10, { color: C.mute }); y -= 13; }
+  if (place) { text(place, M, y, 10, { color: C.mute }); y -= 13; }
+  y -= 10;
+
+  // Quattro valori principali
+  const mixName = (o2, he) => {
+    const o = Number(o2);
+    if (!String(o2 || "").trim() || !Number.isFinite(o)) return "";
+    if (Number(he) > 0) return `Trimix ${o}/${Number(he)}`;
+    return o === 21 ? "Aria" : `EAN${o}`;
+  };
+  const kpis = [
+    ["Profondità max", shown(d.maxDepth, "m")],
+    ["Durata", shown(d.totalTime || d.bottomTime, "min")],
+    ["Temp. acqua", shown(d.waterTemp, "°C")],
+    ["Miscela", mixName(d.mix || "21", 0)],
+  ];
+  const kw = (CW - 3 * 8) / 4;
+  kpis.forEach(([label, value], i) => {
+    const x = M + i * (kw + 8);
+    rect(x, y - 46, kw, 46, C.tealSoft);
+    rect(x, y - 46, 3, 46, C.teal);
+    text(label.toUpperCase(), x + 11, y - 15, 7, { bold: true, color: C.mute });
+    text(value || "—", x + 11, y - 36, 16, { bold: true });
+  });
+  y -= 62;
+
+  // Grafico del profilo con temperatura
   let points = [];
-  try {
-    points = profileFor(d) || [];
-  } catch {
-    points = [];
-  }
-  if (points.length >= 2 && y > 150) {
-    txt(2, 11, 36, y, "Profilo", "0.04 0.42 0.45");
-    y -= 78;
-    const chartY = y;
-    const chartH = 64;
-    const chartW = 520;
-    fill("0.90 0.97 0.98", 36, chartY, chartW, chartH);
+  try { points = (profileFor(d) || []).filter((p) => Number.isFinite(Number(p.t)) && Number.isFinite(Number(p.d))); } catch { points = []; }
+  if (points.length >= 2) {
+    section("Profilo dell'immersione");
+    const ch = 150;
+    need(ch + 26);
+    const gx = M + 30;
+    const gw = CW - 30 - 30;
+    const gy = y - ch;
+    rect(gx, gy, gw, ch, C.card);
     const sorted = [...points].sort((a, b) => Number(a.t) - Number(b.t));
     const maxT = Math.max(1, ...sorted.map((p) => Number(p.t) || 0));
     const maxD = Math.max(1, ...sorted.map((p) => Number(p.d) || 0));
-    const path = sorted.map((p, index) => {
-      const x = 36 + ((Number(p.t) || 0) / maxT) * chartW;
-      const py = chartY + chartH - ((Number(p.d) || 0) / maxD) * (chartH - 8) - 4;
-      return `${pdfNum(x)} ${pdfNum(py)} ${index ? "l" : "m"}`;
-    });
-    ops.push(`0.03 0.45 0.5 RG 1.4 w ${path.join(" ")} S`);
-    txt(1, 8, 40, chartY + 4, `0–${Math.round(maxD)} m`, "0.35 0.48 0.52");
+    const stepD = maxD > 30 ? 10 : maxD > 12 ? 5 : 2;
+    const topD = Math.ceil(maxD / stepD) * stepD;
+    const px = (t) => gx + (Number(t) / maxT) * gw;
+    const py = (dd) => gy + ch - (Number(dd) / topD) * ch;
+    for (let v = 0; v <= topD; v += stepD) {
+      lineH(gx, py(v), gx + gw, C.line, 0.4);
+      text(`${v} m`, gx - 5, py(v) - 3, 7, { align: "right", color: C.mute });
+    }
+    const stepT = maxT > 60 ? 15 : maxT > 30 ? 10 : 5;
+    for (let t = 0; t <= maxT; t += stepT) text(`${t}'`, px(t), gy - 10, 7, { align: "center", color: C.mute });
+    // area sotto la curva
+    const path = sorted.map((p, i) => `${pdfNum(px(p.t))} ${pdfNum(py(p.d))} ${i ? "l" : "m"}`).join(" ");
+    ops.push(`0.776 0.910 0.929 rg ${pdfNum(px(sorted[0].t))} ${pdfNum(py(0))} m ${sorted.map((p) => `${pdfNum(px(p.t))} ${pdfNum(py(p.d))} l`).join(" ")} ${pdfNum(px(sorted[sorted.length - 1].t))} ${pdfNum(py(0))} l h f`);
+    ops.push(`${C.teal} RG 1.6 w 1 J 1 j ${path} S`);
+    // temperatura (scala a destra)
+    const temps = sorted.filter((p) => pointTemp(p) != null);
+    if (temps.length >= 3) {
+      const tv = temps.map(pointTemp);
+      const tMin = Math.floor(Math.min(...tv));
+      const tMax = Math.ceil(Math.max(...tv));
+      const span = Math.max(1, tMax - tMin);
+      const ty = (c) => gy + ((c - tMin) / span) * ch;
+      ops.push(`${C.orange} RG 1 w ${temps.map((p, i) => `${pdfNum(px(p.t))} ${pdfNum(ty(pointTemp(p)))} ${i ? "l" : "m"}`).join(" ")} S`);
+      text(`${tMax}°`, gx + gw + 5, gy + ch - 7, 7, { color: C.orange });
+      text(`${tMin}°`, gx + gw + 5, gy + 1, 7, { color: C.orange });
+    }
+    // punto più profondo
+    const deep = sorted.reduce((a, b) => (Number(b.d) > Number(a.d) ? b : a));
+    text(`max ${shown(deep.d, "m")}`, Math.min(px(deep.t) + 4, gx + gw - 50), py(deep.d) - 10, 7.5, { bold: true, color: C.teal });
+    y = gy - 22;
+    text("Profondità", M, y, 7.5, { color: C.teal, bold: true });
+    if (temps.length >= 3) text("Temperatura", M + 52, y, 7.5, { color: C.orange, bold: true });
+    text(d.deco ? "Fuori curva: sì" : "Fuori curva: no", W - M, y, 7.5, { align: "right", bold: true, color: d.deco ? C.orange : C.teal });
     y -= 16;
   }
-  const notes = String(d.notes || "").trim();
-  if (notes && y > 80) {
-    txt(2, 11, 36, y, "Note", "0.04 0.42 0.45");
-    y -= 14;
-    pdfWrap(notes, 92).slice(0, 4).forEach((line) => {
-      if (y < 48) return;
-      txt(1, 10, 36, y, line, "0.15 0.22 0.26");
-      y -= 13;
+
+  // Schede di dati a due colonne
+  const groups = [
+    ["Tempi e profondità", [
+      ["Ora ingresso", shown(d.timeIn)], ["Ora uscita", shown(d.timeOut)],
+      ["Prof. max", shown(d.maxDepth, "m")], ["Prof. media", shown(d.avgDepth || d.computerLog?.avgDepth, "m")],
+      ["Prof. programmata", shown(d.plannedDepth, "m")], ["Tempo di fondo", shown(d.bottomTime, "min")],
+      ["Durata totale", shown(d.totalTime, "min")], ["Sosta sicurezza", shown(d.safetyStop, "min")],
+      ["Intervallo superficie", shown(d.surfaceInterval || d.computerLog?.surfaceInterval, "min")],
+    ]],
+    ["Ambiente", [
+      ["Temp. acqua", shown(d.waterTemp, "°C")], ["Temp. fondo", shown(d.bottomTemp, "°C")],
+      ["Temp. aria", shown(d.airTemp, "°C")], ["Visibilità", shown(d.visibility, "m")],
+      ["Corrente", shown(d.current)], ["Mare / condizioni", shown(d.seaConditions)],
+    ]],
+    ["Gas e attrezzatura", [
+      ["Bombola", shown(d.tank, "L")], ["Miscela", mixName(d.mix || "21", 0)],
+      ["Pressione inizio", shown(d.pressureStart, "bar")], ["Pressione fine", shown(d.pressureEnd, "bar")],
+      ["SAC", shown(d.sac, "L/min")], ["Zavorra", shown(d.ballast, "kg")],
+      ["Muta", shown(d.wetsuit, "mm")], ["Autorespiratore", circuitLabel(d) === "—" ? "" : circuitLabel(d)],
+      ["Strumentazione", shown(d.instruments)],
+      ...STAGE_SLOTS.map((slot, i) => {
+        const o2 = String(d[slot.o2] ?? "").trim();
+        const he = String(d[slot.he] ?? "").trim();
+        const l = String(d[slot.l] ?? "").trim();
+        if (!o2 && !he && !l) return [`Stage ${i + 1}`, ""];
+        return [`Stage ${i + 1}`, [mixName(o2 || "21", he), l ? `${l.replace(".", ",")} L` : ""].filter(Boolean).join(" · ")];
+      }),
+    ]],
+    ["Dati del computer", [
+      ["CNS", shown(d.cns !== "" && d.cns != null ? d.cns : d.computerLog?.cns, "%")], ["OTU", shown(d.otu !== "" && d.otu != null ? d.otu : d.computerLog?.otu)],
+      ["GF", shown(d.gf || d.computerLog?.gf)], ["NDL residuo", shown(d.ndl, "min")],
+      ["Risalita media", shown(d.ascentRate, "m/min")], ["Risalita max", shown(d.ascentMax, "m/min")],
+      ["TSS", [shown(d.tss), d.tssLabel].filter(Boolean).join(" · ")], ["Fuori curva", d.deco ? "Sì" : "No"],
+      ["Modo", shown(d.computerLog?.mode)], ["Origine dati", shown(d.computerLog?.format)],
+      ["FC media", shown(d.computerLog?.hrAvg, "bpm")], ["FC max", shown(d.computerLog?.hrMax, "bpm")],
+    ]],
+  ].map(([title, rows]) => [title, rows.filter(([, v]) => v)]).filter(([, rows]) => rows.length);
+
+  const colW = (CW - 12) / 2;
+  const groupH = (rows) => 24 + rows.length * 15 + 6;
+  const drawGroup = (title, rows, x, top) => {
+    const h = groupH(rows);
+    rect(x, top - h, colW, h, C.card);
+    rect(x, top - 20, colW, 20, C.tealSoft);
+    text(title, x + 10, top - 14, 9.5, { bold: true, color: C.teal });
+    let ry = top - 36;
+    rows.forEach(([label, value], i) => {
+      text(label, x + 10, ry, 8.5, { color: C.mute });
+      const val = pdfWrapWidth(value, 9, colW - 120, true)[0] || "";
+      text(val, x + colW - 10, ry, 9, { bold: true, align: "right" });
+      if (i < rows.length - 1) lineH(x + 10, ry - 5, x + colW - 10, "0.906 0.929 0.937", 0.4);
+      ry -= 15;
     });
+    return h;
+  };
+  // Due colonne riempite a turno (va nella colonna più libera), così non restano buchi.
+  let cols = [y, y];
+  groups.forEach(([title, rows]) => {
+    const h = groupH(rows);
+    let c = cols[0] >= cols[1] ? 0 : 1;
+    if (cols[c] - h < 54) c = 1 - c;
+    if (cols[c] - h < 54) {
+      newPage();
+      cols = [y, y];
+      c = 0;
+    }
+    drawGroup(title, rows, M + c * (colW + 12), cols[c]);
+    cols[c] -= h + 12;
+  });
+  y = Math.min(cols[0], cols[1]) - 4;
+
+  // Tipo e valutazione
+  const types = Array.isArray(d.types) ? d.types : [];
+  if (types.length || d.feeling) {
+    section("Tipo e valutazione");
+    need(24);
+    let x = M;
+    types.forEach((t) => {
+      const w = pdfTextWidth(t, 9, true) + 18;
+      rect(x, y - 6, w, 18, C.tealSoft);
+      text(t, x + 9, y, 9, { bold: true, color: C.teal });
+      x += w + 6;
+    });
+    if (d.feeling) text(`Sensazioni: ${d.feeling}/5`, W - M, y, 9.5, { bold: true, align: "right" });
+    y -= 26;
   }
-  txt(1, 8, 36, 28, "SeaDive LogBook · scheda dell'immersione", "0.45 0.52 0.56");
-  return pdfFile(ops.join("\n"));
+
+  // Persone
+  const diver = String(state.profile?.name || "").trim();
+  const ownCert = [state.profile?.certLevel, state.profile?.certNumber].filter(Boolean).join(" · ") || String(d.certOnDive || "").trim();
+  const people = [
+    ["Subacqueo", diver, d.certOnDive || ownCert],
+    ["Buddy", d.buddyName, [d.buddyLevel, d.buddyCert].filter(Boolean).join(" · ")],
+    ["Guida / istruttore", d.guideName, [d.guideLevel, d.guideCert].filter(Boolean).join(" · ")],
+    ["Diving center", d.centerName, d.centerLead ? `Responsabile: ${d.centerLead}` : ""],
+  ].filter(([, name, extra]) => String(name || "").trim() || String(extra || "").trim());
+  if (people.length) {
+    section("Persone");
+    need(18 + people.length * 17);
+    rect(M, y - 4, CW, 16, C.tealSoft);
+    text("RUOLO", M + 8, y, 7, { bold: true, color: C.mute });
+    text("NOME", M + 130, y, 7, { bold: true, color: C.mute });
+    text("BREVETTO / DETTAGLI", M + 310, y, 7, { bold: true, color: C.mute });
+    y -= 18;
+    people.forEach(([role, name, extra]) => {
+      text(role, M + 8, y, 9, { color: C.mute });
+      text(name || "—", M + 130, y, 9.5, { bold: true });
+      text(pdfWrapWidth(extra || "—", 9, CW - 318)[0] || "", M + 310, y, 9);
+      lineH(M, y - 6, W - M, C.line, 0.4);
+      y -= 17;
+    });
+    y -= 8;
+  }
+
+  // Note (tutte, anche su più pagine)
+  const notes = String(d.notes || "").trim();
+  if (notes) {
+    need(44);
+    section("Note e sensazioni");
+    pdfWrapWidth(notes, 10, CW, false).forEach((row) => {
+      need(14);
+      text(row, M, y, 10, { color: C.ink });
+      y -= 13.5;
+    });
+    y -= 8;
+  }
+
+  // Foto dell'immersione
+  const photo = isSafeImage(d.photo) ? await addImage(d.photo, 1000) : null;
+  if (photo) {
+    section("Foto");
+    const pw = Math.min(CW, 300);
+    const ph = (photo.h / photo.w) * pw;
+    need(ph + 10);
+    image(photo, M, y - ph, pw, ph);
+    y -= ph + 16;
+  }
+
+  // Firme
+  const signs = [
+    ["Subacqueo", diver, ownCert, profileSignImage(), null],
+    ["Buddy", d.buddyName, [d.buddyLevel, d.buddyCert].filter(Boolean).join(" · "), d.buddySign, d.sigMeta?.buddy],
+    ["Guida / istruttore", d.guideName, [d.guideLevel, d.guideCert].filter(Boolean).join(" · "), d.guideSign, d.sigMeta?.guide],
+    ["Diving center", d.centerName, d.centerLead ? `Responsabile: ${d.centerLead}` : "", d.centerSign, d.sigMeta?.center],
+  ];
+  const signRefs = [];
+  for (const s of signs) signRefs.push(isSafeImage(s[3]) ? await addImage(s[3], 700) : null);
+  need(30 + 2 * 118);
+  section("Firme del libretto");
+  const sw = (CW - 12) / 2;
+  const sh = 108;
+  signs.forEach(([role, name, cert, , meta], i) => {
+    if (i % 2 === 0 && i) y -= sh + 12;
+    if (i % 2 === 0) need(sh + 12);
+    const x = M + (i % 2) * (sw + 12);
+    const top = y;
+    box(x, top - sh, sw, sh, C.line, 0.8);
+    text(role.toUpperCase(), x + 10, top - 14, 7.5, { bold: true, color: C.teal });
+    text(name || "—", x + 10, top - 27, 10, { bold: true });
+    if (cert) text(pdfWrapWidth(cert, 8, sw - 20)[0], x + 10, top - 38, 8, { color: C.mute });
+    const ref = signRefs[i];
+    const areaY = top - sh + 22;
+    const areaH = 44;
+    if (ref) {
+      const k = Math.min((sw - 20) / ref.w, areaH / ref.h);
+      const iw = ref.w * k;
+      const ih = ref.h * k;
+      image(ref, x + 10 + (sw - 20 - iw) / 2, areaY + (areaH - ih) / 2, iw, ih);
+    } else text("Non firmata", x + sw / 2, areaY + areaH / 2 - 3, 9, { align: "center", color: "0.70 0.74 0.76" });
+    lineH(x + 10, areaY - 2, x + sw - 10, C.line, 0.6);
+    const at = meta?.at ? new Date(meta.at).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "";
+    const foot = [at ? `Firmata il ${at}` : "", meta?.hash ? `Impronta ${String(meta.hash).slice(0, 16)}…` : ""].filter(Boolean).join(" · ");
+    if (foot) text(foot, x + 10, top - sh + 8, 6.5, { color: C.mute });
+  });
+  y -= sh + 16;
+  need(40);
+  pdfWrapWidth(LEGAL_L70, 7.5, CW, false).forEach((row) => {
+    text(row, M, y, 7.5, { color: C.mute });
+    y -= 10;
+  });
+  y -= 6;
+
+  // Tutti i dati letti dal file del computer
+  const all = d.computerLog?.all && typeof d.computerLog.all === "object" ? Object.entries(d.computerLog.all).filter(([, v]) => String(v ?? "").trim()) : [];
+  if (all.length) {
+    need(60);
+    section("Tutti i dati del file");
+    const cw3 = CW / 3;
+    for (let i = 0; i < all.length; i += 3) {
+      need(26);
+      all.slice(i, i + 3).forEach(([k, v], j) => {
+        const x = M + j * cw3;
+        text(String(k), x, y, 7, { color: C.mute });
+        text(pdfWrapWidth(String(v), 9, cw3 - 10, true)[0] || "", x, y - 11, 9, { bold: true });
+      });
+      y -= 26;
+    }
+  }
+
+  // Piè di pagina su ogni pagina
+  const made = new Date().toLocaleDateString("it-IT");
+  pages.forEach((p, i) => {
+    ops = p;
+    lineH(M, 40, W - M, C.line, 0.6);
+    text(`SeaDive LogBook · Immersione ${d.number ? "N° " + d.number : ""} · creato il ${made}`, M, 28, 7.5, { color: C.mute });
+    text(`Pagina ${i + 1} di ${pages.length}`, W - M, 28, 7.5, { align: "right", color: C.mute });
+  });
+  return pdfDocument(pages, images);
 }
 
 function saveBlobFile(blob, filename) {
@@ -1915,8 +2234,12 @@ function saveBlobFile(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-function downloadDivePdf(d) {
-  saveBlobFile(buildDivePdf(d), divePdfName(d));
+async function downloadDivePdf(d) {
+  try {
+    saveBlobFile(await buildDivePdf(d), divePdfName(d));
+  } catch (err) {
+    alert("Non sono riuscito a creare il PDF. Riprova.");
+  }
 }
 
 function parseSharedPayload(text) {
