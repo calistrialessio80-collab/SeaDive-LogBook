@@ -4700,25 +4700,6 @@ function nextNumber() {
   return state.dives.reduce((m, d) => Math.max(m, Number(d.number) || 0), 0) + 1;
 }
 
-function certLabel(c) {
-  if (!c) return "";
-  return [c.name, c.number ? `n° ${c.number}` : ""].filter(Boolean).join(" · ");
-}
-
-function profileCerts() {
-  const p = state.profile || {};
-  const out = [];
-  if (p.certLevel || p.certNumber) {
-    out.push({ id: "main", name: p.certLevel, number: p.certNumber, main: true });
-  }
-  (Array.isArray(p.certs) ? p.certs : []).forEach((c) => {
-    if (!c || !(c.name || c.number)) return;
-    if (out.some((x) => x.name === c.name && x.number === c.number)) return;
-    out.push(c);
-  });
-  return out;
-}
-
 function certRowHtml(c = {}) {
   return `<div class="cert-row" data-certrow>
     <input class="cert-name" name="certName" placeholder="Brevetto (es. Nitrox)" value="${escapeHtml(c.name || "")}" autocomplete="off" />
@@ -10237,6 +10218,8 @@ function renderPerson() {
   const privateRemote = !creating && Boolean(current.remoteOwner) && !sharesProfile(current);
   const shownCert = privateRemote ? "" : current.cert;
   const shownLevel = privateRemote ? "" : current.level || "";
+  // La firma di chi è su SeaDive arriva dal suo profilo: qui si vede soltanto, non si ridisegna.
+  const remoteSign = !creating && Boolean(current.remoteOwner) && current.role !== "center";
   form.innerHTML = `
     <div class="person-head">
         ${avatarHtml(personPortrait(current), names.name || current.name)}
@@ -10286,8 +10269,8 @@ function renderPerson() {
     </div>
     <p class="hint" data-followhint ${current.role === "center" ? "hidden" : ""}>${creating ? "Un contatto scritto qui è tuo: brevetto e firma che inserisci restano pronti in immersione." : current.remoteOwner && current.followOut && current.followIn ? "Vi seguite. Nome, cognome, numero di brevetto e firma entrano nella nuova immersione." : current.remoteOwner && current.followOut ? "Lo segui. Brevetto e firma entrano in immersione solo quando segue anche te." : current.remoteOwner && current.followIn ? "Ti segue. Segui anche tu per usare brevetto e firma in immersione." : "Per chi è su SeaDive, brevetto e firma entrano in immersione solo se vi seguite entrambi."}</p>
     <div data-personsign ${current.role === "center" ? "hidden" : ""}>
-      <p class="hint">${privateRemote ? "La firma digitale si vede qui dopo che lo segui." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
-      ${privateRemote ? "" : signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
+      <p class="hint">${privateRemote ? "La firma digitale si vede qui dopo che lo segui." : remoteSign ? "Firma di questa persona, dal suo profilo SeaDive: la può cambiare solo lei. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma." : "Firma di questa persona. Quando la inserisci come buddy o guida in una nuova immersione, va nello spazio firma."}</p>
+      ${privateRemote || remoteSign ? "" : signPad("personSign", "Firma", current.role === "guide" ? "Guida / istruttore" : "Buddy", false)}
       ${privateRemote ? "" : signPreviewHtml(personKnownSign(current))}
     </div>
     ${current.remoteOwner && current.followOut && current.followIn ? `<p class="hint">Vi seguite. Nome, cognome, brevetto e firma si aggiornano da questo profilo.</p>` : ""}
@@ -10476,7 +10459,7 @@ function renderPerson() {
       lead: fd.get("lead") || "",
       note: fd.get("note") || "",
       following: role === "center" ? false : current.following !== false,
-      sign: privateRemote ? current.sign || "" : personSign,
+      sign: privateRemote || (remoteSign && role !== "center") ? current.sign || "" : personSign,
       ...(role === "center"
         ? {
             address,
@@ -11366,8 +11349,7 @@ function renderEdit() {
     <div class="form-grid">
       ${field("certOnDive", "Il tuo brevetto (livello e n°)", d.certOnDive, true)}
     </div>
-    <div class="cert-picks" data-certpicks></div>
-    <p class="hint">Tocca un brevetto del profilo per inserirlo in scheda. Il principale è già proposto.</p>
+    <p class="hint">È il brevetto principale del Profilo, già inserito.</p>
     <p class="hint" style="margin-top:14px">TIPO</p>
     <div class="chips" data-chips></div>
     <p class="hint" style="margin-top:14px">Sensazioni</p>
@@ -11460,22 +11442,6 @@ function renderEdit() {
       const role = btn.getAttribute("data-dropcontact");
       if (form._dropContact) await form._dropContact(role);
     };
-  });
-  const certInput = form.querySelector("[name=certOnDive]");
-  const picks = form.querySelector("[data-certpicks]");
-  profileCerts().forEach((c) => {
-    const label = certLabel(c);
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `chip${label === (d.certOnDive || "") ? " on" : ""}`;
-    b.textContent = c.main ? `${label} · principale` : label;
-    b.onclick = () => {
-      d.certOnDive = label;
-      if (certInput) certInput.value = label;
-      picks.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
-      b.classList.add("on");
-    };
-    picks.append(b);
   });
   const chips = form.querySelector("[data-chips]");
   TYPES.forEach((t) => {
