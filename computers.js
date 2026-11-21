@@ -3179,6 +3179,780 @@ function collectFit(global, rec, bag, desc) {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Altri programmi di logbook (scritti dalle loro descrizioni pubbliche):
+   Subsurface (XML e CSV), MacDive (XML), Shearwater Desktop/Cloud (XML).
+   I lettori FIT, Ratio, UDDF e XML Suunto qui sopra non cambiano: questi
+   partono solo quando il file ha la "firma" del suo programma.
+   --------------------------------------------------------------------------- */
+
+// "32.4 m" → { v: 32.4, u: "m" }
+function unitVal(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  const m = s.match(/^(-?[\d.,]+)\s*([^\d\s].*)?$/);
+  if (!m) return { v: "", u: "" };
+  const v = num(m[1]);
+  return { v, u: String(m[2] || "").trim().toLowerCase() };
+}
+
+function round1x(n) {
+  return Math.round(Number(n) * 10) / 10;
+}
+
+function depthM(raw, imperial) {
+  const { v, u } = unitVal(raw);
+  if (v === "") return "";
+  return round1x(u.startsWith("ft") || (!u && imperial) ? v * 0.3048 : v);
+}
+
+function tempCx(raw, imperial) {
+  const { v, u } = unitVal(raw);
+  if (v === "") return "";
+  if (u === "k" || v > 200) return round1x(v - 273.15);
+  if (u === "f" || u === "°f" || (!u && imperial)) return round1x(((v - 32) * 5) / 9);
+  return round1x(v);
+}
+
+function barOf(raw, imperial) {
+  const { v, u } = unitVal(raw);
+  if (v === "" || v <= 0) return "";
+  if (u === "psi" || (!u && imperial)) return Math.round(v / 14.5038);
+  if (u === "mbar") return Math.round(v / 1000);
+  return Math.round(v);
+}
+
+function litersOf(raw, imperial, workBar) {
+  const { v, u } = unitVal(raw);
+  if (v === "" || v <= 0) return "";
+  if (u.startsWith("cuft") || u === "cf" || (!u && imperial)) {
+    // Le bombole in piedi cubi indicano il gas a pressione di lavoro: si torna al volume d'acqua.
+    const wp = Number(workBar) > 0 ? Number(workBar) : 207;
+    return round1x((v * 28.3168) / wp);
+  }
+  if (u === "ml") return round1x(v / 1000);
+  return round1x(v);
+}
+
+function kgOf(raw, imperial) {
+  const { v, u } = unitVal(raw);
+  if (v === "" || v <= 0) return "";
+  return round1x(u.startsWith("lb") || (!u && imperial) ? v * 0.453592 : v);
+}
+
+function pctOf(raw) {
+  const { v } = unitVal(raw);
+  if (v === "") return "";
+  return Math.round(v > 0 && v <= 1 ? v * 100 : v);
+}
+
+// "52:30 min", "1:02:30", "3120 s", "52" → minuti (con decimali)
+function minutesOf(raw, plainIsSeconds) {
+  const s = String(raw == null ? "" : raw).trim().replace(/\s*min$/i, "");
+  if (!s) return "";
+  const p = s.split(":");
+  if (p.length === 2) return Number(p[0]) + Number(p[1]) / 60;
+  if (p.length === 3) return Number(p[0]) * 60 + Number(p[1]) + Number(p[2]) / 60;
+  const { v, u } = unitVal(s);
+  if (v === "") return "";
+  if (u === "s" || u === "sec" || plainIsSeconds) return v / 60;
+  if (u === "h") return v * 60;
+  return v;
+}
+
+function hhmm(raw) {
+  const m = String(raw || "").match(/(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
+}
+
+// Date scritte in modi diversi → { date: "AAAA-MM-GG", time: "HH:MM" }
+function anyDateTime(raw) {
+  const s = String(raw || "").trim();
+  let m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2}))?/);
+  if (m) return { date: `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`, time: m[4] ? `${m[4].padStart(2, "0")}:${m[5]}` : "" };
+  // 6/1/2024 9:40:00 AM (stile americano dei programmi Shearwater)
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?)?/i);
+  if (m) {
+    let h = m[4] != null ? Number(m[4]) : null;
+    if (h != null && m[6]) h = (h % 12) + (/pm/i.test(m[6]) ? 12 : 0);
+    return { date: `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`, time: h != null ? `${String(h).padStart(2, "0")}:${m[5]}` : "" };
+  }
+  // 01.06.2024 09:40 (stile europeo)
+  m = s.match(/^(\d{1,2})[.](\d{1,2})[.](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (m) return { date: `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`, time: m[4] ? `${m[4].padStart(2, "0")}:${m[5]}` : "" };
+  return { date: "", time: "" };
+}
+
+// Tipi di immersione dalle etichette dei programmi (inglese o italiano).
+function typesFromTags(list) {
+  const out = [];
+  const add = (t) => { if (!out.includes(t)) out.push(t); };
+  (list || []).forEach((raw) => {
+    const t = String(raw || "").toLowerCase();
+    if (/boat|barca/.test(t)) add("Da barca");
+    if (/shore|beach|riva/.test(t)) add("Da riva");
+    if (/night|nott/.test(t)) add("Notturna");
+    if (/drift|current|corrente/.test(t)) add("Corrente");
+    if (/deep|profond/.test(t)) add("Profonda");
+    if (/wreck|relitt/.test(t)) add("Relitto");
+    if (/course|training|student|corso|didattic/.test(t)) add("Corso");
+  });
+  return out;
+}
+
+// Voto 1–5 della corrente → parola usata nella scheda.
+function currentWord(raw) {
+  const n = num(raw);
+  if (n === "") return String(raw || "").trim();
+  if (n <= 0) return "";
+  if (n <= 1) return "assente";
+  if (n <= 2) return "lieve";
+  if (n <= 3) return "moderata";
+  return "forte";
+}
+
+// Muta: nella scheda va lo spessore in mm; il nome completo resta tra i dati del file.
+function suitMm(raw) {
+  const m = String(raw || "").match(/(\d+(?:[.,]\d+)?)\s*(?:\/\s*\d+(?:[.,]\d+)?\s*)?mm/i);
+  return m ? String(num(m[1])) : "";
+}
+
+function gfFrom(text) {
+  const m = String(text || "").match(/GF\s*:?\s*(\d{1,3})\s*\/\s*(\d{1,3})/i) || String(text || "").match(/\b(\d{1,3})\s*\/\s*(\d{1,3})\b/);
+  return m ? `${m[1]}/${m[2]}` : "";
+}
+
+// Gas oltre al primo → slot "Decompressiva / Stage" della scheda (azoto, ossigeno, elio, litri).
+function putStages(dive, gases) {
+  gases.slice(0, 3).forEach((g, i) => {
+    const n = i + 1;
+    const o2 = g.o2 === "" || g.o2 == null ? 21 : Number(g.o2);
+    const he = g.he === "" || g.he == null ? 0 : Number(g.he);
+    dive[`stage${n}O2`] = String(o2);
+    dive[`stage${n}He`] = String(he);
+    dive[`stage${n}N2`] = String(Math.max(0, 100 - o2 - he));
+    dive[`stage${n}L`] = g.l === "" || g.l == null ? "" : String(g.l);
+  });
+}
+
+function mixLabel(o2, he) {
+  const o = Number(o2) || 21;
+  const h = Number(he) || 0;
+  if (h > 0) return `Trimix ${o}/${h}`;
+  return o === 21 ? "Aria" : `EAN${o}`;
+}
+
+// Dati comuni a tutti i lettori dopo aver letto profilo e gas.
+function finishExtraDive(p) {
+  const pts = p.points || [];
+  const deep = pts.filter((x) => x.d > 1);
+  const temps = deep.map((x) => x.c).filter((c) => c != null && c !== "");
+  const deepest = pts.length ? pts.reduce((a, b) => (b.d > a.d ? b : a)) : null;
+  const maxDepth = p.maxDepth !== "" && p.maxDepth != null ? p.maxDepth : deepest ? deepest.d : "";
+  let avgDepth = p.avgDepth;
+  if ((avgDepth === "" || avgDepth == null) && pts.length > 3) {
+    let area = 0;
+    for (let i = 1; i < pts.length; i++) area += ((pts[i].d + pts[i - 1].d) / 2) * (pts[i].t - pts[i - 1].t);
+    const span = pts[pts.length - 1].t - pts[0].t;
+    if (span > 0) avgDepth = round1x(area / span);
+  }
+  const lastT = pts.length ? pts[pts.length - 1].t : "";
+  const total = p.totalMin !== "" && p.totalMin != null ? p.totalMin : lastT;
+  const ascent = ascentFromPoints(pts);
+  const waterTemp = temps.length ? round1x(temps.reduce((a, b) => a + b, 0) / temps.length) : p.waterTemp;
+  const bottomTemp = deepest && deepest.c != null ? deepest.c : p.bottomTemp !== "" && p.bottomTemp != null ? p.bottomTemp : "";
+  const gases = p.gases || [];
+  const first = gases[0] || {};
+  const all = { ...(p.all || {}) };
+  if (first.o2 !== undefined || first.he) all.Miscela = mixLabel(first.o2, first.he);
+  gases.slice(1, 4).forEach((g, i) => { all[`Stage ${i + 1}`] = `${mixLabel(g.o2, g.he)}${g.l ? " · " + g.l + " L" : ""}`; });
+  if (p.ndlMin !== "" && p.ndlMin != null) all["NDL minimo"] = `${Math.round(p.ndlMin)} min`;
+  if (temps.length) {
+    all["Temp. min"] = `${Math.min(...temps)} °C`;
+    all["Temp. max"] = `${Math.max(...temps)} °C`;
+  }
+  all.Campioni = String(pts.length);
+  Object.keys(all).forEach((k) => { if (all[k] == null || all[k] === "" || all[k] === "undefined") delete all[k]; });
+  const deco = p.deco === true || p.ndlMin === 0;
+  const totalStr = total === "" ? "" : String(Math.round(Number(total)));
+  const dive = baseImported({
+    date: p.date || "",
+    timeIn: p.time || "",
+    timeOut: p.time && totalStr ? addMinutes(p.time, totalStr) : "",
+    site: p.site || "",
+    location: p.location || "",
+    lat: p.lat ?? "",
+    lng: p.lng ?? "",
+    maxDepth: maxDepth === "" ? "" : String(maxDepth),
+    avgDepth: avgDepth === "" || avgDepth == null ? "" : String(avgDepth),
+    bottomTime: p.bottomMin !== "" && p.bottomMin != null ? String(Math.round(p.bottomMin)) : totalStr,
+    totalTime: totalStr,
+    surfaceInterval: p.surfaceMin !== "" && p.surfaceMin != null ? String(Math.round(p.surfaceMin)) : "",
+    visibility: p.visibility ?? "",
+    waterTemp: waterTemp === "" || waterTemp == null ? "" : String(waterTemp),
+    bottomTemp: bottomTemp === "" ? "" : String(bottomTemp),
+    airTemp: p.airTemp === "" || p.airTemp == null ? "" : String(p.airTemp),
+    current: p.current || "",
+    seaConditions: p.seaConditions || "",
+    wetsuit: p.wetsuit || "",
+    ballast: p.ballast === "" || p.ballast == null ? "" : String(p.ballast),
+    tank: first.l === "" || first.l == null ? "" : String(first.l),
+    mix: first.o2 === "" || first.o2 == null ? "" : String(first.o2),
+    pressureStart: first.start === "" || first.start == null ? "" : String(first.start),
+    pressureEnd: first.end === "" || first.end == null ? "" : String(first.end),
+    sac: p.sac === "" || p.sac == null ? "" : String(p.sac),
+    cns: p.cns === "" || p.cns == null ? "" : String(p.cns),
+    otu: p.otu === "" || p.otu == null ? "" : String(p.otu),
+    gf: p.gf || "",
+    ndl: p.ndlLast === "" || p.ndlLast == null ? "" : String(Math.round(p.ndlLast)),
+    ascentRate: ascent.avg || "",
+    ascentMax: ascent.max || "",
+    deco,
+    noDeco: !deco,
+    circuitOpen: !p.closed,
+    circuitClosed: Boolean(p.closed),
+    buddyName: p.buddy || "",
+    guideName: p.guide || "",
+    centerName: p.center || "",
+    notes: p.notes || "",
+    instruments: p.instrument || "",
+    ...(p.rating >= 1 && p.rating <= 5 ? { feeling: Math.round(p.rating) } : {}),
+    sourceComputer: p.source,
+    profilePoints: pts,
+    computerLog: {
+      format: p.format,
+      avgDepth: avgDepth === "" || avgDepth == null ? "" : String(avgDepth),
+      cns: p.cns === "" || p.cns == null ? "" : String(p.cns),
+      otu: p.otu === "" || p.otu == null ? "" : String(p.otu),
+      gf: p.gf || "",
+      ndl: p.ndlLast === "" || p.ndlLast == null ? "" : String(Math.round(p.ndlLast)),
+      mode: p.mode || (p.closed ? "Circuito chiuso" : "Circuito aperto"),
+      samples: pts.length,
+      all,
+    },
+  });
+  // Senza dati della bombola nel file non si inventano bar e litri.
+  if (!gases.length || first.l === "" || first.l == null) dive.tank = first.l ? dive.tank : "";
+  if (!gases.length || first.start === "" || first.start == null) dive.pressureStart = "";
+  // Sosta di sicurezza: tempo passato tra 2,5 e 6,5 m nella risalita finale (dopo l'ultimo punto oltre 8 m).
+  let lastDeep = -1;
+  pts.forEach((x, i) => { if (x.d > 8) lastDeep = i; });
+  let stopMin = 0;
+  if (lastDeep >= 0) {
+    for (let i = lastDeep + 1; i < pts.length; i++) {
+      if (pts[i].d >= 2.5 && pts[i].d <= 6.5 && pts[i - 1].d >= 2.5 && pts[i - 1].d <= 6.5) stopMin += pts[i].t - pts[i - 1].t;
+    }
+  }
+  if (pts.length >= 3) dive.safetyStop = stopMin >= 0.6 ? String(Math.round(stopMin)) : "";
+  putStages(dive, gases.slice(1));
+  const tags = typesFromTags(p.tags || []);
+  dive.types = [...new Set([...(dive.types || []), ...tags])];
+  return dive;
+}
+
+/* ---------- Subsurface (.ssrf / .xml) ---------- */
+
+function looksSubsurface(xml) {
+  const root = xml.documentElement;
+  if (!root || localName(root) !== "divelog") return false;
+  if (/subsurface/i.test(root.getAttribute("program") || "")) return true;
+  return Boolean(findAll(xml, "divecomputer").length && findAll(xml, "dive").length);
+}
+
+function kids(el, name) {
+  return [...(el?.children || [])].filter((c) => localName(c) === name);
+}
+
+function parseSubsurfaceXml(xml) {
+  const sites = new Map();
+  findAll(xml, "site").forEach((s) => {
+    const id = String(s.getAttribute("uuid") || "").trim().toLowerCase();
+    if (!id) return;
+    const geo = kids(s, "geo").map((g) => ({ cat: Number(g.getAttribute("cat")), value: g.getAttribute("value") || "" })).filter((g) => g.value);
+    const country = geo.find((g) => g.cat === 2)?.value || "";
+    const place = geo.filter((g) => g.cat >= 5).map((g) => g.value)[0] || geo.filter((g) => g.cat === 3 || g.cat === 4).map((g) => g.value)[0] || "";
+    const gps = String(s.getAttribute("gps") || "").trim().split(/\s+/).map(Number);
+    sites.set(id.replace(/^0+/, ""), {
+      name: s.getAttribute("name") || "",
+      location: [place, country].filter(Boolean).join(", "),
+      lat: Number.isFinite(gps[0]) && gps.length === 2 ? gps[0] : "",
+      lng: Number.isFinite(gps[1]) && gps.length === 2 ? gps[1] : "",
+      notes: kids(s, "notes")[0]?.textContent.trim() || "",
+    });
+  });
+  return findAll(xml, "dive")
+    .filter((dv) => kids(dv, "divecomputer").length || dv.getAttribute("date"))
+    .map((dv) => {
+      const at = (n) => dv.getAttribute(n) || "";
+      const site = sites.get(String(at("divesiteid")).trim().toLowerCase().replace(/^0+/, "")) || {};
+      const oldLoc = kids(dv, "location")[0];
+      const oldGps = String(oldLoc?.getAttribute("gps") || "").trim().split(/\s+/).map(Number);
+      const trip = dv.parentElement && localName(dv.parentElement) === "trip" ? dv.parentElement : null;
+      const dc = kids(dv, "divecomputer")[0] || dv;
+      const all = {};
+      // Bombole
+      const gases = kids(dv, "cylinder").map((c) => {
+        const wp = barOf(c.getAttribute("workpressure"));
+        return {
+          l: litersOf(c.getAttribute("size"), false, wp),
+          o2: c.getAttribute("o2") ? pctOf(c.getAttribute("o2")) : 21,
+          he: c.getAttribute("he") ? pctOf(c.getAttribute("he")) : 0,
+          start: barOf(c.getAttribute("start")),
+          end: barOf(c.getAttribute("end")),
+          name: c.getAttribute("description") || "",
+        };
+      });
+      // Profilo: Subsurface scrive la temperatura solo quando cambia → si porta avanti l'ultima.
+      const points = [];
+      let lastC = null;
+      let deco = false;
+      let ndlMin = "";
+      let ndlLast = "";
+      let cnsLast = "";
+      let p0 = "";
+      let p1 = "";
+      kids(dc, "sample").forEach((s) => {
+        const t = minutesOf(s.getAttribute("time"));
+        const d = depthM(s.getAttribute("depth"));
+        if (t === "" || d === "" || !Number.isFinite(t)) return;
+        const c = s.getAttribute("temp") ? tempCx(s.getAttribute("temp")) : "";
+        if (c !== "") lastC = c;
+        const pt = { t: Math.round(t * 100) / 100, d };
+        if (lastC != null) pt.c = lastC;
+        points.push(pt);
+        if (s.getAttribute("in_deco") === "1") deco = true;
+        const ndl = s.getAttribute("ndl") ? minutesOf(s.getAttribute("ndl")) : "";
+        if (ndl !== "" && Number.isFinite(ndl) && d > 1) {
+          ndlLast = ndl;
+          ndlMin = ndlMin === "" ? ndl : Math.min(ndlMin, ndl);
+        }
+        if (s.getAttribute("cns")) cnsLast = pctOf(s.getAttribute("cns"));
+        const pr = s.getAttribute("pressure") ? barOf(s.getAttribute("pressure")) : "";
+        if (pr !== "") { if (p0 === "") p0 = pr; p1 = pr; }
+      });
+      if (gases[0]) {
+        if (gases[0].start === "" && p0 !== "") gases[0].start = p0;
+        if (gases[0].end === "" && p1 !== "") gases[0].end = p1;
+      } else if (p0 !== "") gases.push({ l: "", o2: 21, he: 0, start: p0, end: p1 });
+      // Valori della sezione computer
+      const depthEl = kids(dc, "depth")[0];
+      const tempEl = kids(dc, "temperature")[0] || kids(dv, "divetemperature")[0];
+      const diveTemp = kids(dv, "divetemperature")[0];
+      const extra = kids(dc, "extradata").map((e) => [e.getAttribute("key") || "", e.getAttribute("value") || ""]);
+      extra.forEach(([k, v]) => { if (k && v && Object.keys(all).length < 40) all[k] = v; });
+      const gf = gfFrom(extra.map(([k, v]) => (/deco|gf|gradient/i.test(k) ? v : "")).join(" "));
+      const dcType = String(dc.getAttribute("dctype") || "").toUpperCase();
+      const closed = dcType === "CCR" || dcType === "PSCR";
+      const weights = kids(dv, "weightsystem").map((w) => kgOf(w.getAttribute("weight"))).filter((v) => v !== "");
+      const suit = kids(dv, "suit")[0]?.textContent.trim() || "";
+      const tags = String(at("tags")).split(",").map((t) => t.trim()).filter(Boolean);
+      const visR = num(at("visibility"));
+      if (suit) all.Muta = suit;
+      if (visR !== "" && visR > 0) all["Visibilità (voto)"] = `${visR}/5`;
+      if (at("wavesize")) all["Onde (voto)"] = `${at("wavesize")}/5`;
+      if (at("surge")) all["Risacca (voto)"] = `${at("surge")}/5`;
+      if (tags.length) all.Etichette = tags.join(", ");
+      if (dc.getAttribute("model")) all.Computer = dc.getAttribute("model");
+      if (dcType) all.Modo = dcType;
+      if (gases[0]?.name) all.Bombola = gases[0].name;
+      const dt = anyDateTime(`${at("date")} ${at("time")}`);
+      return finishExtraDive({
+        format: "Subsurface",
+        source: "subsurface",
+        date: dt.date,
+        time: dt.time || hhmm(at("time")),
+        site: site.name || oldLoc?.textContent.trim() || "",
+        location: site.location || trip?.getAttribute("location") || "",
+        lat: site.lat !== undefined && site.lat !== "" ? site.lat : Number.isFinite(oldGps[0]) && oldGps.length === 2 ? oldGps[0] : "",
+        lng: site.lng !== undefined && site.lng !== "" ? site.lng : Number.isFinite(oldGps[1]) && oldGps.length === 2 ? oldGps[1] : "",
+        points,
+        gases,
+        maxDepth: depthEl ? depthM(depthEl.getAttribute("max")) : "",
+        avgDepth: depthEl ? depthM(depthEl.getAttribute("mean")) : "",
+        totalMin: minutesOf(at("duration")),
+        waterTemp: tempEl ? tempCx(tempEl.getAttribute("water")) : "",
+        bottomTemp: tempEl ? tempCx(tempEl.getAttribute("water")) : "",
+        airTemp: tempCx((diveTemp || tempEl)?.getAttribute("air")),
+        sac: unitVal(at("sac")).v,
+        cns: at("cns") ? pctOf(at("cns")) : cnsLast,
+        otu: at("otu") ? num(at("otu")) : "",
+        gf,
+        ndlMin,
+        ndlLast,
+        deco,
+        closed,
+        mode: dcType && dcType !== "OC" ? dcType : "",
+        current: currentWord(at("current")),
+        wetsuit: suitMm(suit),
+        ballast: weights.length ? round1x(weights.reduce((a, b) => a + b, 0)) : "",
+        buddy: kids(dv, "buddy")[0]?.textContent.trim() || "",
+        guide: kids(dv, "divemaster")[0]?.textContent.trim() || "",
+        notes: kids(dv, "notes")[0]?.textContent.trim() || "",
+        rating: num(at("rating")),
+        tags,
+        instrument: dc.getAttribute("model") || "",
+        all,
+      });
+    })
+    .filter((d) => d.date || d.maxDepth || (d.profilePoints || []).length >= 3);
+}
+
+/* ---------- MacDive (.xml) ---------- */
+
+function looksMacDive(xml) {
+  const root = xml.documentElement;
+  if (!root || localName(root) !== "dives") return false;
+  return Boolean(kids(root, "schema").length || kids(root, "units").length || findAll(xml, "tempair").length || findAll(xml, "divenumber").length);
+}
+
+function parseMacDiveXml(xml) {
+  const root = xml.documentElement;
+  const imperial = /imperial/i.test(kids(root, "units")[0]?.textContent || "");
+  const t = (el, n) => kids(el, n.toLowerCase())[0]?.textContent.trim() || "";
+  return kids(root, "dive")
+    .map((dv) => {
+      const siteEl = kids(dv, "site")[0];
+      const all = {};
+      const gases = kids(kids(dv, "gases")[0], "gas").map((g) => {
+        const wp = barOf(t(g, "workingPressure"), imperial);
+        return {
+          l: litersOf(t(g, "tankSize"), imperial, wp),
+          o2: t(g, "oxygen") !== "" ? pctOf(t(g, "oxygen")) : 21,
+          he: t(g, "helium") !== "" ? pctOf(t(g, "helium")) : 0,
+          start: barOf(t(g, "pressureStart"), imperial),
+          end: barOf(t(g, "pressureEnd"), imperial),
+          supply: t(g, "supplyType"),
+          name: t(g, "tankName"),
+        };
+      });
+      const points = [];
+      let lastC = null;
+      let ndlMin = "";
+      let ndlLast = "";
+      let deco = false;
+      kids(kids(dv, "samples")[0], "sample").forEach((s) => {
+        const sec = num(t(s, "time"));
+        const d = depthM(t(s, "depth"), imperial);
+        if (sec === "" || d === "") return;
+        const c = t(s, "temperature") !== "" ? tempCx(t(s, "temperature"), imperial) : "";
+        if (c !== "") lastC = c;
+        const pt = { t: Math.round((sec / 60) * 100) / 100, d };
+        if (lastC != null) pt.c = lastC;
+        points.push(pt);
+        const ndt = t(s, "ndt");
+        if (ndt !== "" && d > 1) {
+          const m = minutesOf(ndt);
+          if (Number.isFinite(m)) { ndlLast = m; ndlMin = ndlMin === "" ? m : Math.min(ndlMin, m); }
+        }
+        if (t(s, "deco") === "1" || /deco/i.test(t(s, "alarm"))) deco = true;
+      });
+      const buddies = kids(kids(dv, "buddies")[0], "buddy").map((b) => b.textContent.trim()).filter(Boolean);
+      const tags = [...kids(kids(dv, "tags")[0], "tag"), ...kids(kids(dv, "types")[0], "type")].map((x) => x.textContent.trim()).filter(Boolean);
+      const entry = t(dv, "entryType");
+      if (entry) tags.push(entry);
+      const closed = gases.some((g) => /closed|ccr|rebreather/i.test(g.supply || ""));
+      const decoModel = t(dv, "decoModel");
+      const visRaw = t(dv, "visibility");
+      const visNum = unitVal(visRaw);
+      Object.entries({ computer: "Computer", serial: "N° di serie", decoModel: "Modello deco", gasModel: "Modello gas", diver: "Sub", boat: "Barca", skipper: "Skipper", weather: "Meteo", surfaceConditions: "Superficie", entryType: "Ingresso", altitude: "Altitudine", repetitiveDive: "Ripetitiva n°" }).forEach(([k, label]) => {
+        const v = t(dv, k);
+        if (v) all[label] = v;
+      });
+      if (siteEl) {
+        Object.entries({ bodyOfWater: "Mare / lago", waterType: "Acqua", difficulty: "Difficoltà" }).forEach(([k, label]) => { const v = t(siteEl, k); if (v) all[label] = v; });
+      }
+      if (tags.length) all.Etichette = tags.join(", ");
+      if (visRaw && visNum.v === "") all["Visibilità"] = visRaw;
+      const dt = anyDateTime(t(dv, "date"));
+      const lat = siteEl ? num(t(siteEl, "lat")) : "";
+      const lng = siteEl ? num(t(siteEl, "lon") || t(siteEl, "lng")) : "";
+      return finishExtraDive({
+        format: "MacDive",
+        source: "macdive",
+        date: dt.date,
+        time: dt.time,
+        site: siteEl ? t(siteEl, "name") : "",
+        location: siteEl ? [t(siteEl, "location"), t(siteEl, "country")].filter(Boolean).join(", ") : "",
+        lat: lat === 0 && lng === 0 ? "" : lat,
+        lng: lat === 0 && lng === 0 ? "" : lng,
+        points,
+        gases,
+        maxDepth: depthM(t(dv, "maxDepth"), imperial),
+        avgDepth: depthM(t(dv, "averageDepth"), imperial),
+        totalMin: t(dv, "duration") !== "" ? minutesOf(t(dv, "duration"), true) : "",
+        surfaceMin: t(dv, "surfaceInterval") !== "" ? durationToMin(t(dv, "surfaceInterval")) : "",
+        waterTemp: tempCx(t(dv, "tempHigh"), imperial),
+        bottomTemp: tempCx(t(dv, "tempLow"), imperial),
+        airTemp: tempCx(t(dv, "tempAir"), imperial),
+        visibility: visNum.v !== "" ? String(depthM(visRaw, imperial)) : "",
+        sac: "",
+        cns: t(dv, "cns") !== "" ? pctOf(t(dv, "cns")) : "",
+        otu: "",
+        gf: gfFrom(decoModel),
+        ndlMin,
+        ndlLast,
+        deco,
+        closed,
+        current: t(dv, "current"),
+        seaConditions: t(dv, "surfaceConditions") || t(dv, "weather"),
+        wetsuit: "",
+        ballast: kgOf(t(dv, "weight"), imperial),
+        buddy: buddies.join(", "),
+        guide: t(dv, "diveMaster"),
+        center: t(dv, "diveOperator"),
+        notes: t(dv, "notes"),
+        rating: num(t(dv, "rating")),
+        tags,
+        instrument: t(dv, "computer"),
+        all,
+      });
+    })
+    .filter((d) => d.date || d.maxDepth || (d.profilePoints || []).length >= 3);
+}
+
+/* ---------- Shearwater Desktop / Cloud (.xml) ---------- */
+
+function looksShearwater(xml) {
+  return Boolean(findAll(xml, "divelogrecord").length && findAll(xml, "divelog").length);
+}
+
+function parseShearwaterXml(xml) {
+  const t = (el, n) => kids(el, n.toLowerCase())[0]?.textContent.trim() || "";
+  return findAll(xml, "divelog")
+    .filter((log) => findAll(log, "divelogrecord").length)
+    .map((log) => {
+      const imperial = /^(true|1)$/i.test(t(log, "imperialUnits"));
+      const recs = findAll(log, "divelogrecord");
+      const rawT = recs.map((r) => num(t(r, "currentTime")));
+      const lastRaw = Math.max(0, ...rawT.filter((v) => v !== ""));
+      // Il tempo dei campioni può essere in secondi o millisecondi: si sceglie quello con una durata sensata.
+      const div = [1, 60, 60000].find((k) => lastRaw / k >= 3 && lastRaw / k <= 400) || 60;
+      const points = [];
+      let ndlMin = "";
+      let ndlLast = "";
+      let deco = false;
+      let cnsLast = "";
+      let o2 = "";
+      let he = "";
+      let p0 = "";
+      let p1 = "";
+      let closed = false;
+      const mixes = [];
+      recs.forEach((r, i) => {
+        const tv = rawT[i];
+        const d = depthM(t(r, "currentDepth"), imperial);
+        if (tv === "" || d === "") return;
+        const pt = { t: Math.round((tv / div) * 100) / 100, d };
+        const c = t(r, "waterTemp") !== "" ? tempCx(t(r, "waterTemp"), imperial) : "";
+        if (c !== "") pt.c = c;
+        points.push(pt);
+        const ndl = num(t(r, "currentNdl"));
+        if (ndl !== "" && d > 1 && ndl < 99) {
+          ndlLast = ndl;
+          ndlMin = ndlMin === "" ? ndl : Math.min(ndlMin, ndl);
+        }
+        const stop = num(t(r, "firstStopDepth"));
+        const stopT = num(t(r, "firstStopTime"));
+        if ((stop !== "" && stop > 0 && stopT !== "" && stopT > 0) || ndl === 0) deco = true;
+        const cns = num(t(r, "cns"));
+        if (cns !== "") cnsLast = cns;
+        const fo2 = t(r, "fractionO2");
+        const fhe = t(r, "fractionHe");
+        if (fo2 !== "") {
+          const key = `${pctOf(fo2)}/${fhe !== "" ? pctOf(fhe) : 0}`;
+          if (!mixes.includes(key)) mixes.push(key);
+          if (o2 === "") { o2 = pctOf(fo2); he = fhe !== "" ? pctOf(fhe) : 0; }
+        }
+        const mode = t(r, "currentCircuitMode");
+        if (mode === "1" || /ccr|closed/i.test(mode)) closed = true;
+        const pr = t(r, "tank0pressurePSI");
+        if (pr !== "" && num(pr) > 0) {
+          const b = Math.round(num(pr) / 14.5038);
+          if (p0 === "") p0 = b;
+          p1 = b;
+        }
+      });
+      const gases = mixes.map((m, i) => {
+        const [mo2, mhe] = m.split("/").map(Number);
+        return { l: "", o2: mo2, he: mhe, start: i === 0 ? p0 : "", end: i === 0 ? p1 : "" };
+      });
+      const gfLo = t(log, "gfMin") || t(log, "gradientFactorLow");
+      const gfHi = t(log, "gfMax") || t(log, "gradientFactorHigh");
+      const all = {};
+      Object.entries({ product: "Computer", serialNumber: "N° di serie", firmwareVersion: "Firmware", decoModel: "Modello deco", number: "Immersione n°", mode: "Modo", salinity: "Salinità", surfacePressure: "Press. superficie", batteryType: "Batteria" }).forEach(([k, label]) => {
+        const v = t(log, k);
+        if (v) all[label] = v;
+      });
+      const dt = anyDateTime(t(log, "startDate"));
+      const end = anyDateTime(t(log, "endDate"));
+      let totalMin = "";
+      if (dt.time && end.time) {
+        const a = dt.time.split(":").map(Number);
+        const b = end.time.split(":").map(Number);
+        totalMin = ((b[0] * 60 + b[1] - (a[0] * 60 + a[1])) + 1440) % 1440 || "";
+      }
+      return finishExtraDive({
+        format: "Shearwater",
+        source: "shearwater",
+        date: dt.date,
+        time: dt.time,
+        site: t(log, "site") || t(log, "location"),
+        location: t(log, "location") && t(log, "site") ? t(log, "location") : "",
+        points,
+        gases,
+        maxDepth: depthM(t(log, "maxDepth"), imperial),
+        avgDepth: depthM(t(log, "avgDepth") || t(log, "averageDepth"), imperial),
+        totalMin: totalMin || "",
+        sac: "",
+        cns: cnsLast,
+        otu: "",
+        gf: gfLo && gfHi ? `${gfLo}/${gfHi}` : gfFrom(t(log, "decoModel")),
+        ndlMin,
+        ndlLast,
+        deco,
+        closed,
+        buddy: t(log, "buddy"),
+        notes: t(log, "notes"),
+        instrument: [t(log, "product") ? "Shearwater " + t(log, "product").replace(/^shearwater\s*/i, "") : "Shearwater"].join(""),
+        all,
+      });
+    })
+    .filter((d) => d.date || d.maxDepth || (d.profilePoints || []).length >= 3);
+}
+
+/* ---------- CSV di Subsurface (elenco immersioni e profili) ---------- */
+
+function csvRows(text) {
+  const first = text.split(/\r?\n/, 1)[0] || "";
+  const delim = [",", ";", "\t"].map((c) => [c, first.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === delim) { row.push(cell.trim()); cell = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell.trim());
+      if (row.some((c) => c !== "")) rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += ch;
+  }
+  row.push(cell.trim());
+  if (row.some((c) => c !== "")) rows.push(row);
+  return rows;
+}
+
+function looksSubsurfaceCsv(text) {
+  const head = (text.split(/\r?\n/, 1)[0] || "").toLowerCase();
+  return /dive number/.test(head) && /(duration|sample time)/.test(head);
+}
+
+function parseSubsurfaceCsv(text) {
+  const rows = csvRows(text);
+  if (rows.length < 2) return [];
+  const heads = rows[0].map((h) => h.toLowerCase().trim());
+  // Colonna per nome esatto, senza contare l'unità tra parentesi; l'unità serve per convertire.
+  const colInfo = (name) => {
+    const i = heads.findIndex((h) => h.replace(/\s*\(.*\)\s*$/, "") === name);
+    return i < 0 ? null : { i, unit: (heads[i].match(/\(([^)]*)\)/) || [])[1] || "" };
+  };
+  const get = (r, name) => { const c = colInfo(name); return c ? r[c.i] || "" : ""; };
+  const unitOf = (name) => colInfo(name)?.unit || "";
+  const imperialDepth = /ft/.test(unitOf("maxdepth") || unitOf("sample depth"));
+  const imperialTemp = /f/.test(unitOf("watertemp") || unitOf("sample temperature"));
+  const imperialPress = /psi/.test(unitOf("startpressure") || unitOf("sample pressure"));
+  const body = rows.slice(1);
+  // CSV dei profili: una riga per campione → si raggruppa per immersione.
+  if (colInfo("sample time") && colInfo("sample depth")) {
+    const groups = new Map();
+    body.forEach((r) => {
+      const key = `${get(r, "dive number")}|${get(r, "date")}|${get(r, "time")}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    });
+    return [...groups.values()].map((list) => {
+      const r0 = list[0];
+      const points = [];
+      let lastC = null;
+      let p0 = "";
+      let p1 = "";
+      list.forEach((r) => {
+        const tm = minutesOf(get(r, "sample time"));
+        const d = depthM(get(r, "sample depth"), imperialDepth);
+        if (tm === "" || d === "" || !Number.isFinite(tm)) return;
+        const c = get(r, "sample temperature") !== "" ? tempCx(get(r, "sample temperature"), imperialTemp) : "";
+        if (c !== "") lastC = c;
+        const pt = { t: Math.round(tm * 100) / 100, d };
+        if (lastC != null) pt.c = lastC;
+        points.push(pt);
+        const pr = get(r, "sample pressure") !== "" ? barOf(get(r, "sample pressure"), imperialPress) : "";
+        if (pr !== "") { if (p0 === "") p0 = pr; p1 = pr; }
+      });
+      const dt = anyDateTime(`${get(r0, "date")} ${get(r0, "time")}`);
+      return finishExtraDive({
+        format: "Subsurface CSV (profilo)",
+        source: "subsurface",
+        date: dt.date,
+        time: dt.time || hhmm(get(r0, "time")),
+        points,
+        gases: p0 !== "" ? [{ l: "", o2: 21, he: 0, start: p0, end: p1 }] : [],
+        all: { "Immersione n°": get(r0, "dive number") },
+      });
+    }).filter((d) => d.date || (d.profilePoints || []).length >= 3);
+  }
+  return body.map((r) => {
+    const dt = anyDateTime(`${get(r, "date")} ${get(r, "time")}`);
+    const gps = String(get(r, "gps")).trim().split(/[\s,]+/).map(Number);
+    const o2 = get(r, "o2") !== "" ? pctOf(get(r, "o2")) : "";
+    const he = get(r, "he") !== "" ? pctOf(get(r, "he")) : 0;
+    const wp = barOf(get(r, "cylinder working pressure") || get(r, "workpressure"), imperialPress);
+    const gases = get(r, "cylinder size") !== "" || get(r, "startpressure") !== "" || o2 !== ""
+      ? [{ l: litersOf(get(r, "cylinder size") + (/cuft/.test(unitOf("cylinder size")) ? " cuft" : ""), false, wp), o2: o2 === "" ? 21 : o2, he, start: barOf(get(r, "startpressure"), imperialPress), end: barOf(get(r, "endpressure"), imperialPress) }]
+      : [];
+    const tags = String(get(r, "tags")).split(",").map((s) => s.trim()).filter(Boolean);
+    const all = {};
+    if (get(r, "dive number")) all["Immersione n°"] = get(r, "dive number");
+    if (get(r, "mode")) all.Modo = get(r, "mode");
+    if (get(r, "suit")) all.Muta = get(r, "suit");
+    if (get(r, "visibility")) all["Visibilità (voto)"] = `${get(r, "visibility")}/5`;
+    if (tags.length) all.Etichette = tags.join(", ");
+    return finishExtraDive({
+      format: "Subsurface CSV",
+      source: "subsurface",
+      date: dt.date,
+      time: dt.time || hhmm(get(r, "time")),
+      site: get(r, "location"),
+      lat: gps.length === 2 && Number.isFinite(gps[0]) ? gps[0] : "",
+      lng: gps.length === 2 && Number.isFinite(gps[1]) ? gps[1] : "",
+      points: [],
+      gases,
+      maxDepth: depthM(get(r, "maxdepth"), imperialDepth),
+      avgDepth: depthM(get(r, "avgdepth"), imperialDepth),
+      totalMin: minutesOf(get(r, "duration")),
+      waterTemp: tempCx(get(r, "watertemp"), imperialTemp),
+      airTemp: tempCx(get(r, "airtemp"), imperialTemp),
+      sac: unitVal(get(r, "sac")).v,
+      closed: /ccr|closed/i.test(get(r, "mode")),
+      mode: get(r, "mode") && !/^oc$/i.test(get(r, "mode")) ? get(r, "mode") : "",
+      wetsuit: suitMm(get(r, "suit")),
+      ballast: kgOf(get(r, "weight"), /lb/.test(unitOf("weight"))),
+      buddy: get(r, "buddy"),
+      guide: get(r, "divemaster"),
+      notes: get(r, "notes"),
+      rating: num(get(r, "rating")),
+      tags,
+      all,
+    });
+  }).filter((d) => d.date || d.maxDepth);
+}
+
 function parseComputerFile(name, text) {
   const lower = name.toLowerCase();
   const trimmed = (text || "").trim().replace(/^\uFEFF/, "");
@@ -3186,6 +3960,7 @@ function parseComputerFile(name, text) {
   if (lower.endsWith(".json") || trimmed.startsWith("{") || trimmed.startsWith("[")) {
     return { dives: parseDiveJson(trimmed), format: "JSON" };
   }
+  if (!trimmed.startsWith("<") && looksSubsurfaceCsv(trimmed)) return { dives: parseSubsurfaceCsv(trimmed), format: "Subsurface CSV" };
   if (lower.endsWith(".csv") || (!trimmed.startsWith("<") && trimmed.includes(",") && /date|data|depth|prof/i.test(trimmed.slice(0, 200)))) {
     return { dives: parseCsv(trimmed), format: "CSV" };
   }
@@ -3193,12 +3968,15 @@ function parseComputerFile(name, text) {
     const xml = new DOMParser().parseFromString(trimmed, "application/xml");
     if (xml.querySelector("parsererror")) throw new Error(`XML non valido in ${name}`);
     if (lower.endsWith(".gpx") || xml.querySelector("gpx, trkpt")) return { dives: parseGpx(xml), format: "GPX" };
+    if (!findAll(xml, "uddf").length && !findAll(xml, "divesegment").length && looksSubsurface(xml)) return { dives: parseSubsurfaceXml(xml), format: "Subsurface" };
     const uddfHits = findAll(xml, "uddf").length || findAll(xml, "profiledata").length;
     if (uddfHits || lower.endsWith(".uddf") || lower.endsWith(".ssrf")) return { dives: parseUDDF(xml), format: "UDDF" };
     if (findAll(xml, "divesegment").length) return { dives: parseRatioXml(xml, name), format: "Ratio XML" };
+    if (looksShearwater(xml)) return { dives: parseShearwaterXml(xml), format: "Shearwater XML" };
+    if (looksMacDive(xml)) return { dives: parseMacDiveXml(xml), format: "MacDive" };
     return { dives: parseSuuntoXml(xml), format: "XML computer" };
   }
-  throw new Error(`Formato non riconosciuto: ${name}. Prova UDDF, FIT, JSON, XML, CSV o GPX.`);
+  throw new Error(`Formato non riconosciuto: ${name}. Prova FIT, UDDF, Subsurface, MacDive, Shearwater, JSON, XML, CSV o GPX.`);
 }
 
 function parseComputerBytes(name, buffer) {
