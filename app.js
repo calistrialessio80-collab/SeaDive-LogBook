@@ -2739,10 +2739,25 @@ async function postCommunityBoard(raw) {
   communityBoardCache = { at: Date.now(), data: next, flight: null };
 }
 
+// Pantry riscrive tutto il cestino a ogni POST: se due persone scrivono insieme, vince l'ultima
+// e la modifica dell'altra sparisce. Per questo dopo ogni scrittura si rilegge e, se manca, si riscrive.
+const cloudJitter = (min, span) => new Promise((resolve) => setTimeout(resolve, min + Math.random() * span));
+
+function cloudKeyPresent(board, key, value) {
+  if (!board) return false;
+  if (key.startsWith("p-")) {
+    const row = board.profiles?.[key.slice(2)];
+    return Boolean(row) && (!value?.at || row.at === value.at);
+  }
+  if (key.startsWith("l-")) return Boolean(board.links?.[key.slice(2)]);
+  if (key.startsWith("m-")) return (board.messages || []).some((row) => row && row._id === value?._id);
+  return true;
+}
+
 async function cloudSet(key, value) {
   return enqueueCloud(async () => {
     let lastErr = new Error("network");
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
         const board = await loadCommunityBoard(0);
         const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
@@ -2750,13 +2765,15 @@ async function cloudSet(key, value) {
         const prevProfiles = Object.keys(board.profiles || {}).length;
         if (prevProfiles && !Object.keys(next.profiles || {}).length) throw new Error("network");
         await postCommunityBoard(next);
-        return;
+        await cloudJitter(900, 1400);
+        if (cloudKeyPresent(await loadCommunityBoard(0), key, value)) return;
+        lastErr = new Error("network");
       } catch (err) {
         lastErr = err;
-        communityBoardCache = { at: 0, data: null, flight: null };
-        // Pausa crescente tra i tentativi: senza, i 3 tentativi partivano in raffica.
-        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
       }
+      communityBoardCache = { at: 0, data: null, flight: null };
+      // Pausa crescente e casuale tra i tentativi, così due telefoni non si scavalcano di nuovo.
+      if (attempt < 4) await cloudJitter(1000 * (attempt + 1), 1500);
     }
     throw lastErr;
   });
@@ -2809,6 +2826,27 @@ async function loadMergedLinks(fresh) {
     loadLinkBasket(age).catch(() => linkBasketCache.data || {}),
   ]);
   return { ...(board.links || {}), ...(basket || {}) };
+}
+
+// Scrive i collegamenti, rilegge dopo una pausa casuale e ripete il giro se un altro telefono
+// ha sovrascritto la modifica nello stesso momento.
+async function linkWriteVerified(task, check) {
+  let lastErr = new Error("network");
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const out = await task();
+      await cloudJitter(900, 1400);
+      linkBasketCache = { at: 0, data: null, flight: null };
+      const fresh = await loadMergedLinks(true);
+      if (check(fresh)) return out;
+      lastErr = new Error("network");
+    } catch (err) {
+      lastErr = err;
+    }
+    linkBasketCache = { at: 0, data: null, flight: null };
+    if (attempt < 3) await cloudJitter(1000 * (attempt + 1), 1500);
+  }
+  throw lastErr;
 }
 
 async function postLinkBasket(raw) {
@@ -3434,6 +3472,15 @@ async function refreshSeaDirectory() {
     } else {
       seaDirectory.list = loaded.list.filter((card) => card.owner && card.owner !== mine);
       seaDirectory.error = "";
+      // Il mio profilo risulta pubblicato ma nel registro non c'è (sovrascritto da un altro telefono):
+      // si ripubblica, al massimo una volta ogni 10 minuti.
+      const board = communityBoardCache.data;
+      if (mine && board && !state.profile?.communityOff && loadPublishedMark().fp && !board.profiles?.[mine]
+        && Date.now() - (refreshSeaDirectory.healAt || 0) > 10 * 60 * 1000) {
+        refreshSeaDirectory.healAt = Date.now();
+        localStorage.removeItem(PROFILE_PUBLISHED_KEY);
+        queueProfilePublish(1500 + Math.random() * 2500);
+      }
       seaDirectory.at = Date.now();
       seaDirectory.namesChanged = repairCommunityNames();
     }
@@ -4274,7 +4321,7 @@ async function ensureCommunityLink(mine, other) {
   const pair = chatPair(mine, remote);
   if (linkedPairs.has(pair)) return { ok: true, pair };
   try {
-    await enqueueCloud(async () => {
+    await enqueueCloud(() => linkWriteVerified(async () => {
       const links = await loadMergedLinks(true);
       if (links[pair]) return;
       const leftIsMine = mine < remote;
@@ -4290,7 +4337,7 @@ async function ensureCommunityLink(mine, other) {
         rightFollows: false,
       };
       await postLinkBasket({ ...links, [pair]: body });
-    });
+    }, (fresh) => Boolean(fresh[pair])));
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
   }
@@ -4365,7 +4412,7 @@ async function setMyFollow(other, on) {
   const pair = chatPair(mine, remote);
   if (on) await myCommKeys(true).catch(() => null);
   try {
-    const body = await enqueueCloud(async () => {
+    const body = await enqueueCloud(() => linkWriteVerified(async () => {
       const links = await loadMergedLinks(true);
       const current = links[pair] || null;
       const local = (state.people || []).find((p) => p.remoteOwner === remote);
@@ -4412,7 +4459,12 @@ async function setMyFollow(other, on) {
       }
       await postLinkBasket({ ...links, [pair]: nextBody });
       return nextBody;
-    });
+    }, (fresh) => {
+      const row = fresh[pair];
+      if (!row) return !on;
+      const mineIsLeft = row.left === mine;
+      return Boolean(mineIsLeft ? row.leftFollows : row.rightFollows) === Boolean(on);
+    }));
     linkedPairs.add(pair);
     return { ok: true, ...linkFollowFlags(body, mine), link: body };
   } catch (err) {
