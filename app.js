@@ -11312,6 +11312,70 @@ function startNew() {
   render();
 }
 
+// Scheda immersione a riquadri: icona, titolo e, sotto, i valori principali già scritti.
+const DIVE_SEC_ICONS = {
+  dove: '<path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/>',
+  profilo: '<path d="M3 5c3 0 3 9 6 9s3-4 6-4 3 7 6 7"/><path d="M3 20h18"/>',
+  tempi: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  ambiente: '<path d="M3 9c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  gas: '<rect x="8" y="6" width="8" height="15" rx="3.5"/><path d="M10 6V3.5h4V6M12 3.5V2"/>',
+  computer: '<rect x="6" y="6" width="12" height="12" rx="4"/><path d="M9 6l1-3h4l1 3M9 18l1 3h4l1-3M12 9.5V12l1.6 1"/>',
+  come: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
+  firme: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/>',
+};
+
+function diveSec(key, title, open, body) {
+  return `<details class="dive-sec" data-sec="${key}" ${open ? "open" : ""}>
+    <summary class="dive-sec-h">
+      <span class="dive-sec-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DIVE_SEC_ICONS[key] || ""}</svg></span>
+      <span class="dive-sec-t">${escapeHtml(title)}<small data-secsum="${key}"></small></span>
+      <i class="dive-sec-chev" aria-hidden="true"></i>
+    </summary>
+    <div class="dive-sec-b">${body}</div>
+  </details>`;
+}
+
+function diveSecSummaries(form, d) {
+  const v = (n) => String(form.querySelector(`[name=${n}]`)?.value ?? d[n] ?? "").trim();
+  const on = (n) => Boolean(form.querySelector(`[name=${n}]`)?.checked);
+  const it = (n) => n.replace(".", ",");
+  const join = (parts) => parts.filter(Boolean).join(" · ");
+  const date = v("date") ? v("date").split("-").reverse().join("/") : "";
+  const mixName = (o2, he) => {
+    const o = Number(o2);
+    if (!o2 || !Number.isFinite(o)) return "";
+    if (Number(he) > 0) return `Trimix ${o}/${Number(he)}`;
+    return o === 21 ? "Aria" : `EAN${o}`;
+  };
+  const stages = STAGE_SLOTS.map((slot) => mixName(v(slot.o2), v(slot.he))).filter(Boolean);
+  const signs = [["buddySign", "buddy"], ["guideSign", "guida"], ["centerSign", "diving"]].filter(([k]) => d[k]).map(([, l]) => l);
+  const types = Array.isArray(d.types) ? d.types : [];
+  return {
+    dove: join([v("number") ? `n° ${v("number")}` : "", date, v("site")]),
+    profilo: join([v("maxDepth") ? `${it(v("maxDepth"))} m` : "", v("totalTime") ? `${v("totalTime")} min` : "", on("hadDeco") ? "fuori curva" : "in curva"]),
+    tempi: join([v("timeIn") && v("timeOut") ? `${v("timeIn")}–${v("timeOut")}` : v("timeIn"), v("maxDepth") ? `max ${it(v("maxDepth"))} m` : "", v("avgDepth") ? `media ${it(v("avgDepth"))} m` : ""]),
+    ambiente: join([v("waterTemp") ? `acqua ${it(v("waterTemp"))}°` : "", v("bottomTemp") ? `fondo ${it(v("bottomTemp"))}°` : "", v("visibility") ? `visibilità ${it(v("visibility"))} m` : "", v("current")]),
+    gas: join([mixName(v("mix") || "21", 0), v("tank") ? `${it(v("tank"))} L` : "", v("pressureStart") ? `${v("pressureStart")}→${v("pressureEnd") || "…"} bar` : "", v("sac") ? `SAC ${it(v("sac"))}` : "", stages.length ? `stage ${stages.join(", ")}` : ""]),
+    computer: join([v("cns") ? `CNS ${v("cns")}%` : "", v("otu") ? `OTU ${v("otu")}` : "", v("gf") ? `GF ${v("gf")}` : "", v("tss") ? `TSS ${v("tss")}` : "", v("ndl") !== "" ? `NDL ${v("ndl")}` : ""]),
+    come: join([types.join(", "), d.feeling ? "★".repeat(d.feeling) : ""]),
+    firme: join([v("certOnDive") ? "brevetto inserito" : "", signs.length ? `firme: ${signs.join(", ")}` : "nessuna firma"]),
+  };
+}
+
+function paintDiveSummaries(form, d) {
+  const sums = diveSecSummaries(form, d);
+  form.querySelectorAll("[data-secsum]").forEach((el) => {
+    el.textContent = sums[el.dataset.secsum] || "da compilare";
+  });
+}
+
+// Apre il riquadro che contiene un elemento (prima di portarci la vista).
+function openDiveSecOf(el) {
+  const det = el?.closest?.("details.dive-sec");
+  if (det && !det.open) det.open = true;
+  return el;
+}
+
 function renderEdit() {
   const d = view.draft;
   ensureCircuit(d);
@@ -11329,144 +11393,161 @@ function renderEdit() {
   const form = document.createElement("form");
   form.className = "card dive-edit";
   const log = d.computerLog || {};
+  // Scheda a riquadri: il profilo resta sempre aperto; una scheda nuova scritta a mano apre anche
+  // dove/quando e tempi, così si comincia subito a scrivere.
+  const blank = !d.imported && !d.profileFromComputer && !String(d.site || "").trim() && !String(d.maxDepth || "").trim();
+  const openSecs = { dove: blank, tempi: blank, ambiente: false, gas: false, computer: false, come: false, firme: Boolean(view.focusSign) };
   form.innerHTML = `
     ${computerFillHtml()}
-    <div class="form-grid">
-      ${field("number", "Immersione n°", d.number, false, "number")}
-      ${field("date", "Data", d.date, false, "date")}
-      ${field("site", "Sito di immersione", d.site, true)}
-      ${field("location", "Località / paese", d.location, true)}
-    </div>
-    <input type="hidden" name="lat" value="${escapeHtml(d.lat || "")}" />
-    <input type="hidden" name="lng" value="${escapeHtml(d.lng || "")}" />
-    <p class="hint" style="margin-top:14px">Mappa del sito — tocca o trascina il pin</p>
-    <div class="site-map" data-sitemap></div>
-    <div class="actions" style="margin-top:8px">
-      <button class="btn ghost" type="button" data-findsite>Cerca il sito sulla mappa</button>
-      <button class="btn ghost" type="button" data-geo>Usa posizione attuale</button>
-    </div>
-    <p class="hint" data-geohint>Tocca o trascina il pin. Non serve scrivere latitudine e longitudine.</p>
-    <div class="form-grid">
-      <div class="form-pair">
+    ${diveSec("dove", "Dove e quando", openSecs.dove, `
+      <div class="form-grid sec-g2">
+        ${field("number", "Immersione n°", d.number, false, "number")}
+        ${field("date", "Data", d.date, false, "date")}
+        ${field("site", "Sito di immersione", d.site, true)}
+        ${field("location", "Località / paese", d.location, true)}
+      </div>
+      <input type="hidden" name="lat" value="${escapeHtml(d.lat || "")}" />
+      <input type="hidden" name="lng" value="${escapeHtml(d.lng || "")}" />
+      <p class="hint" style="margin-top:12px">Mappa del sito — tocca o trascina il pin</p>
+      <div class="site-map" data-sitemap></div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn ghost" type="button" data-findsite>Cerca il sito sulla mappa</button>
+        <button class="btn ghost" type="button" data-geo>Usa posizione attuale</button>
+      </div>
+      <p class="hint" data-geohint>Tocca o trascina il pin. Non serve scrivere latitudine e longitudine.</p>`)}
+    ${diveSec("profilo", "Profilo dell’immersione", true, `
+      <p class="hint">Fuori curva (decompressione) sì o no — puoi correggere con la spunta.</p>
+      ${checkPicks([
+        { name: "noDeco", label: "In curva", on: d.noDeco },
+        { name: "hadDeco", label: "Fuori curva", on: d.deco },
+      ])}
+      <canvas class="profile" data-profile></canvas>
+      <p class="hint" data-profilehint>Curva profondità dal computer, aggiornata in automatico.</p>
+      <p class="sec-sub">Temperatura / profondità</p>
+      <canvas class="profile thermo-detail" data-thermo-edit></canvas>
+      <p class="hint">Profondità in verticale, temperatura in orizzontale (arancione anche sul profilo).</p>`)}
+    ${diveSec("tempi", "Tempi e profondità", openSecs.tempi, `
+      <div class="form-grid sec-g2">
         ${field("timeIn", "Ora ingresso", d.timeIn, false, "time")}
         ${field("timeOut", "Ora uscita", d.timeOut, false, "time")}
+        ${field("maxDepth", "Prof. max (m)", d.maxDepth, false, "number")}
+        ${field("avgDepth", "Prof. media (m)", d.avgDepth || d.computerLog?.avgDepth || "", false, "number")}
+        ${field("plannedDepth", "Prof. programmata (m)", d.plannedDepth, false, "number")}
+        ${field("bottomTime", "Tempo di fondo (min)", d.bottomTime, false, "number")}
+        ${field("totalTime", "Durata totale (min)", d.totalTime, false, "number")}
+        ${field("safetyStop", "Sosta sicurezza (min)", d.safetyStop, false, "number")}
+        ${field("surfaceInterval", "Intervallo superficie (min)", d.surfaceInterval || d.computerLog?.surfaceInterval || "")}
+      </div>`)}
+    ${diveSec("ambiente", "Ambiente", openSecs.ambiente, `
+      <div class="form-grid sec-g3">
+        ${field("waterTemp", "Acqua (°C)", d.waterTemp, false, "number")}
+        ${field("bottomTemp", "Fondo (°C)", d.bottomTemp, false, "number")}
+        ${field("airTemp", "Aria (°C)", d.airTemp, false, "number")}
       </div>
-      ${field("maxDepth", "Prof. max (m)", d.maxDepth, false, "number")}
-      ${field("avgDepth", "Prof. media (m)", d.avgDepth || d.computerLog?.avgDepth || "", false, "number")}
-      ${field("plannedDepth", "Prof. programmata (m)", d.plannedDepth, false, "number")}
-      ${field("bottomTime", "Tempo di fondo (min)", d.bottomTime, false, "number")}
-      ${field("totalTime", "Durata totale (min)", d.totalTime, false, "number")}
-      ${field("safetyStop", "Sosta sicurezza (min)", d.safetyStop, false, "number")}
-      ${field("surfaceInterval", "Intervallo superficie (min)", d.surfaceInterval || d.computerLog?.surfaceInterval || "")}
-      ${field("visibility", "Visibilità (m)", d.visibility, false, "number")}
-      ${field("waterTemp", "Temp. acqua (°C)", d.waterTemp, false, "number")}
-      ${field("bottomTemp", "Temp. fondo (°C)", d.bottomTemp, false, "number")}
-      ${field("airTemp", "Temp. aria (°C)", d.airTemp, false, "number")}
-      ${field("cns", "CNS %", d.cns !== "" && d.cns != null ? d.cns : d.computerLog?.cns || "", false, "number")}
-      ${field("otu", "OTU", d.otu !== "" && d.otu != null ? d.otu : d.computerLog?.otu || "", false, "number")}
-      ${field("tss", "TSS stress allenamento", d.tss, false, "number")}
-      ${field("current", "Corrente", d.current)}
-      ${field("seaConditions", "Mare / condizioni", d.seaConditions)}
-      ${field("wetsuit", "Muta (mm)", d.wetsuit)}
-      ${field("ballast", "Zavorra (kg)", d.ballast)}
-      ${field("tank", "Bombola (L)", d.tank)}
-      ${field("mix", "Miscela Nitrox %", d.mix)}
-      ${field("pressureStart", "Press. inizio (bar)", d.pressureStart)}
-      ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
-    </div>
-    <p class="hint">Inizio precompilato a 200 bar e bombola 15 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
-    <h3 class="serif">Decompressive</h3>
-    <p class="hint">Per ogni stage indica la miscela in azoto, ossigeno ed elio, e i litri della bombola.</p>
-    ${stageFormHtml(d)}
-    <div class="form-grid">
-      ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
-      ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
-      ${field("sac", "Consumo superficie / SAC (L/min)", d.sac, false, "decimal")}
-      ${field("gf", "GF (low/high)", d.gf || d.computerLog?.gf || "", false, "text")}
-      ${field("ndl", "NDL residuo (min)", d.ndl !== "" && d.ndl != null ? d.ndl : d.computerLog?.ndl || "", false, "number")}
-      ${field("instruments", "Strumentazione", d.instruments)}
-    </div>
-    <p class="hint">Autorespiratore — spunta circuito aperto, chiuso o entrambi</p>
-    ${checkPicks([
-      { name: "circuitOpen", label: "Circuito aperto", on: d.circuitOpen },
-      { name: "circuitClosed", label: "Circuito chiuso", on: d.circuitClosed },
-    ])}
-    <div class="form-grid">
-      ${field("certOnDive", "Il tuo brevetto (livello e n°)", d.certOnDive, true)}
-    </div>
-    <p class="hint">È il brevetto principale del Profilo, già inserito.</p>
-    <p class="hint" style="margin-top:14px">TIPO</p>
-    <div class="chips" data-chips></div>
-    <p class="hint" style="margin-top:14px">Sensazioni</p>
-    <div class="stars" data-stars></div>
-    <label class="field full" style="margin-top:12px">Foto dell'immersione
-      <input name="photoFile" type="file" accept="image/*" />
-    </label>
-    ${isSafeImage(d.photo) ? `<img class="cover" alt="" src="${escapeHtml(d.photo)}" data-preview />` : `<img class="cover" alt="" hidden data-preview />`}
-    <label class="field full" style="margin-top:12px">Note e sensazioni
-      <textarea name="notes">${escapeHtml(d.notes)}</textarea>
-    </label>
-    <div class="computer-log">
-      <h3 class="serif">Fisiologia e computer</h3>
-      <div class="kv">
-        <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "—"))}</div>
-        <div><b>Prof. media</b>${escapeHtml(d.avgDepth || log.avgDepth ? (d.avgDepth || log.avgDepth) + " m" : "—")}</div>
-        <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
-        <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : log.cns !== "" && log.cns != null ? String(log.cns) + "%" : "—")}</div>
-        <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : log.otu !== "" && log.otu != null ? String(log.otu) : "—")}</div>
-        <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}${d.tssLabel ? " · " + escapeHtml(d.tssLabel) : ""}</div>
-        <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp ? d.bottomTemp + " °C" : "—")}</div>
-        <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
-        <div><b>Risalita</b>${escapeHtml(d.ascentRate ? d.ascentRate + " m/min" : "—")}${d.ascentMax ? " (max " + escapeHtml(d.ascentMax) + ")" : ""}</div>
-        <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
-        <div><b>Fuori curva</b>${escapeHtml(d.deco ? "Sì" : "No")}</div>
-        <div><b>NDL</b>${escapeHtml(d.ndl !== "" && d.ndl != null ? String(d.ndl) + " min" : "—")}</div>
-        <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
-        <div><b>GF</b>${escapeHtml(d.gf || log.gf || "—")}</div>
-        <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
-        ${log.hrAvg ? `<div><b>FC media</b>${escapeHtml(String(log.hrAvg))} bpm</div>` : ""}
-        ${log.hrMax ? `<div><b>FC max</b>${escapeHtml(String(log.hrMax))} bpm</div>` : ""}
+      <div class="form-grid sec-g2" style="margin-top:8px">
+        ${field("visibility", "Visibilità (m)", d.visibility, false, "number")}
+        ${field("current", "Corrente", d.current)}
+        ${field("seaConditions", "Mare / condizioni", d.seaConditions)}
+        ${field("wetsuit", "Muta (mm)", d.wetsuit)}
+      </div>`)}
+    ${diveSec("gas", "Gas, deco e attrezzatura", openSecs.gas, `
+      <div class="form-grid sec-g2">
+        ${field("tank", "Bombola (L)", d.tank)}
+        ${field("mix", "Miscela Nitrox %", d.mix)}
+        ${field("pressureStart", "Press. inizio (bar)", d.pressureStart)}
+        ${field("pressureEnd", "Press. fine (bar)", d.pressureEnd)}
+        ${field("sac", "SAC (L/min)", d.sac, false, "decimal")}
+        ${field("ballast", "Zavorra (kg)", d.ballast)}
       </div>
-    </div>
-    ${fitDumpHtml(log)}
-    <h3 class="serif">Fatica — litri/minuto in superficie</h3>
-    <div data-effortwrap>${effortHtml(d)}</div>
-    <p class="hint" data-tsshint>${escapeHtml(d.tssLabel || "TSS = intensità² × durata, ponderata sulla soglia zona 4/5. Senza FC si usa TSS(MET) da SAC e profondità. Puoi sovrascrivere a mano (TSS Manuale).")}</p>
-    <h3 class="serif">Profilo di immersione</h3>
-    <p class="hint">Fuori curva (decompressione) sì o no — puoi correggere con la spunta.</p>
-    ${checkPicks([
-      { name: "noDeco", label: "In curva", on: d.noDeco },
-      { name: "hadDeco", label: "Fuori curva", on: d.deco },
-    ])}
-    <canvas class="profile" data-profile></canvas>
-    <p class="hint" data-profilehint>Curva profondità dal computer, aggiornata in automatico.</p>
-    <h3 class="serif">Temperatura / profondità</h3>
-    <canvas class="profile thermo-detail" data-thermo-edit></canvas>
-    <p class="hint">Grafico dal FIT: profondità in verticale, temperatura in orizzontale (arancione anche sul profilo).</p>
-    <div class="sign-legal" id="firme">
-      <h3 class="serif">Firme del libretto — L. 70/2026 art. 12 c. 8</h3>
-      <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
-      ${ownerOnDiveHtml()}
-      ${peoplePicksHtml()}
-      <p class="hint" data-pickedperson hidden></p>
-      <p class="hint">Tocca un buddy: nome, cognome, brevetto, numero e firma digitale entrano in questa scheda e, al salvataggio, nel diario su Drive.</p>
+      <p class="hint">Inizio precompilato a 200 bar e bombola 15 L se il computer non li ha. Inserisci i bar di fine: il SAC si calcola da solo.</p>
+      <p class="sec-sub">Decompressive / stage</p>
+      <p class="hint">Per ogni stage indica la miscela in azoto, ossigeno ed elio, e i litri della bombola.</p>
+      ${stageFormHtml(d)}
+      <div class="form-grid" style="margin-top:10px">
+        ${field("instruments", "Strumentazione", d.instruments, true)}
+      </div>
+      <p class="hint">Autorespiratore — spunta circuito aperto, chiuso o entrambi</p>
+      ${checkPicks([
+        { name: "circuitOpen", label: "Circuito aperto", on: d.circuitOpen },
+        { name: "circuitClosed", label: "Circuito chiuso", on: d.circuitClosed },
+      ])}`)}
+    ${diveSec("computer", "Dati del computer", openSecs.computer, `
+      <div class="form-grid sec-g3">
+        ${field("cns", "CNS %", d.cns !== "" && d.cns != null ? d.cns : d.computerLog?.cns || "", false, "number")}
+        ${field("otu", "OTU", d.otu !== "" && d.otu != null ? d.otu : d.computerLog?.otu || "", false, "number")}
+        ${field("tss", "TSS", d.tss, false, "number")}
+        ${field("gf", "GF (low/high)", d.gf || d.computerLog?.gf || "", false, "text")}
+        ${field("ndl", "NDL residuo (min)", d.ndl !== "" && d.ndl != null ? d.ndl : d.computerLog?.ndl || "", false, "number")}
+        ${field("ascentRate", "Risalita media (m/min)", d.ascentRate, false, "number")}
+        ${field("ascentMax", "Risalita max (m/min)", d.ascentMax, false, "number")}
+      </div>
+      <div class="computer-log">
+        <p class="sec-sub">Fisiologia e computer</p>
+        <div class="kv">
+          <div><b>Origine</b>${escapeHtml(String(log.format || d.instruments || "—"))}</div>
+          <div><b>Prof. media</b>${escapeHtml(d.avgDepth || log.avgDepth ? (d.avgDepth || log.avgDepth) + " m" : "—")}</div>
+          <div><b>Modo</b>${escapeHtml(log.mode || "—")}</div>
+          <div><b>CNS</b>${escapeHtml(d.cns !== "" && d.cns != null ? String(d.cns) + "%" : log.cns !== "" && log.cns != null ? String(log.cns) + "%" : "—")}</div>
+          <div><b>OTU</b>${escapeHtml(d.otu !== "" && d.otu != null ? String(d.otu) : log.otu !== "" && log.otu != null ? String(log.otu) : "—")}</div>
+          <div><b>TSS</b>${escapeHtml(d.tss !== "" && d.tss != null ? String(d.tss) : "—")}${d.tssLabel ? " · " + escapeHtml(d.tssLabel) : ""}</div>
+          <div><b>Temp. fondo</b>${escapeHtml(d.bottomTemp ? d.bottomTemp + " °C" : "—")}</div>
+          <div><b>Durata tot.</b>${escapeHtml(d.totalTime ? d.totalTime + " min" : "—")}</div>
+          <div><b>Risalita</b>${escapeHtml(d.ascentRate ? d.ascentRate + " m/min" : "—")}${d.ascentMax ? " (max " + escapeHtml(d.ascentMax) + ")" : ""}</div>
+          <div><b>SAC</b>${escapeHtml(d.sac ? d.sac + " L/min" : "—")}</div>
+          <div><b>Fuori curva</b>${escapeHtml(d.deco ? "Sì" : "No")}</div>
+          <div><b>NDL</b>${escapeHtml(d.ndl !== "" && d.ndl != null ? String(d.ndl) + " min" : "—")}</div>
+          <div><b>Autorespiratore</b>${escapeHtml(circuitLabel(d))}</div>
+          <div><b>GF</b>${escapeHtml(d.gf || log.gf || "—")}</div>
+          <div><b>Campioni curva</b>${escapeHtml(String(log.samples || (d.profilePoints || []).length || 0))}</div>
+          ${log.hrAvg ? `<div><b>FC media</b>${escapeHtml(String(log.hrAvg))} bpm</div>` : ""}
+          ${log.hrMax ? `<div><b>FC max</b>${escapeHtml(String(log.hrMax))} bpm</div>` : ""}
+        </div>
+      </div>
+      ${fitDumpHtml(log)}
+      <p class="sec-sub">Fatica — litri/minuto in superficie</p>
+      <div data-effortwrap>${effortHtml(d)}</div>
+      <p class="hint" data-tsshint>${escapeHtml(d.tssLabel || "TSS = intensità² × durata, ponderata sulla soglia zona 4/5. Senza FC si usa TSS(MET) da SAC e profondità. Puoi sovrascrivere a mano (TSS Manuale).")}</p>`)}
+    ${diveSec("come", "Com’è andata", openSecs.come, `
+      <p class="sec-sub" style="margin-top:0">Tipo</p>
+      <div class="chips" data-chips></div>
+      <p class="sec-sub">Sensazioni</p>
+      <div class="stars" data-stars></div>
+      <label class="field full" style="margin-top:12px">Foto dell’immersione
+        <input name="photoFile" type="file" accept="image/*" />
+      </label>
+      ${isSafeImage(d.photo) ? `<img class="cover" alt="" src="${escapeHtml(d.photo)}" data-preview />` : `<img class="cover" alt="" hidden data-preview />`}
+      <label class="field full" style="margin-top:12px">Note e sensazioni
+        <textarea name="notes">${escapeHtml(d.notes)}</textarea>
+      </label>`)}
+    ${diveSec("firme", "Brevetto e firme", openSecs.firme, `
       <div class="form-grid">
-        ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
-        ${field("buddyLevel", "Buddy — brevetto", d.buddyLevel)}
-        ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
-        ${dropContactButton("buddy", d)}
-        ${field("guideName", "Guida / istruttore — nome e cognome", d.guideName)}
-        ${field("guideLevel", "Guida — brevetto", d.guideLevel)}
-        ${field("guideCert", "Guida — n° brevetto", d.guideCert)}
-        ${dropContactButton("guide", d)}
-        ${field("centerName", "Denominazione diving center", d.centerName, true)}
-        ${field("centerLead", "Responsabile del centro", d.centerLead, true)}
-        ${dropContactButton("center", d)}
+        ${field("certOnDive", "Il tuo brevetto (livello e n°)", d.certOnDive, true)}
       </div>
-      ${signPad("buddySign", "Firma buddy", "Compagno di immersione")}
-      ${signPad("guideSign", "Firma guida / istruttore", "Obbligatoria per legge sulla scheda")}
-      ${signPad("centerSign", "Firma diving center", "Responsabile del centro")}
-    </div>
+      <p class="hint">È il brevetto principale del Profilo, già inserito.</p>
+      <div class="sign-legal" id="firme">
+        <p class="sec-sub">Firme del libretto — L. 70/2026 art. 12 c. 8</p>
+        <p class="hint">${LEGAL_L70} La firma della guida o istruttore responsabile è richiesta dalla legge (lett. n–o). Ogni firmatario scrive a mano, conferma con la spunta e può cancellare per ripetere.</p>
+        ${ownerOnDiveHtml()}
+        ${peoplePicksHtml()}
+        <p class="hint" data-pickedperson hidden></p>
+        <p class="hint">Tocca un buddy: nome, cognome, brevetto, numero e firma digitale entrano in questa scheda e, al salvataggio, nel diario su Drive.</p>
+        <div class="form-grid">
+          ${field("buddyName", "Buddy — nome e cognome", d.buddyName)}
+          ${field("buddyLevel", "Buddy — brevetto", d.buddyLevel)}
+          ${field("buddyCert", "Buddy — n° brevetto", d.buddyCert)}
+          ${dropContactButton("buddy", d)}
+          ${field("guideName", "Guida / istruttore — nome e cognome", d.guideName)}
+          ${field("guideLevel", "Guida — brevetto", d.guideLevel)}
+          ${field("guideCert", "Guida — n° brevetto", d.guideCert)}
+          ${dropContactButton("guide", d)}
+          ${field("centerName", "Denominazione diving center", d.centerName, true)}
+          ${field("centerLead", "Responsabile del centro", d.centerLead, true)}
+          ${dropContactButton("center", d)}
+        </div>
+        ${signPad("buddySign", "Firma buddy", "Compagno di immersione")}
+        ${signPad("guideSign", "Firma guida / istruttore", "Obbligatoria per legge sulla scheda")}
+        ${signPad("centerSign", "Firma diving center", "Responsabile del centro")}
+      </div>`)}
     <div class="actions">
       <button class="btn primary" type="submit">Salva immersione</button>
       <button class="btn ghost" type="button" data-cancel>Annulla</button>
@@ -11474,6 +11555,20 @@ function renderEdit() {
     </div>
   `;
   bindComputerFill(form);
+  paintDiveSummaries(form, d);
+  form.addEventListener("input", () => paintDiveSummaries(form, d));
+  form.addEventListener("change", () => paintDiveSummaries(form, d));
+  ["click", "mouseup", "touchend"].forEach((type) => {
+    form.addEventListener(type, () => setTimeout(() => paintDiveSummaries(form, d), 60));
+  });
+  // "toggle" non risale: si ascolta in cattura. All'apertura la mappa del sito si rimisura.
+  form.addEventListener("toggle", (e) => {
+    const det = e.target;
+    if (!det?.open || !det.classList?.contains("dive-sec")) return;
+    if (det.querySelector("[data-sitemap]") && typeof diveSiteMap !== "undefined" && diveSiteMap) {
+      requestAnimationFrame(() => diveSiteMap.invalidateSize());
+    }
+  }, true);
   bindPeoplePicks(form, d);
   refreshSeaDirectory()
     .then(() => {
@@ -11771,7 +11866,7 @@ function renderEdit() {
       });
     });
     if (view.focusSign) {
-      form.querySelector(`[data-sign="${view.focusSign}"]`)?.closest(".sign-pad")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      openDiveSecOf(form.querySelector(`[data-sign="${view.focusSign}"]`)?.closest(".sign-pad"))?.scrollIntoView({ behavior: "smooth", block: "center" });
       view.focusSign = "";
     }
   });
@@ -11791,17 +11886,17 @@ function renderEdit() {
     };
     if (signed.buddy && !form.querySelector('[name=buddySignOk]')?.checked) {
       alert("Per la firma del buddy spunta la conferma legale sotto il riquadro.");
-      form.querySelector('[data-pad="buddySign"]')?.scrollIntoView({ block: "center" });
+      openDiveSecOf(form.querySelector('[data-pad="buddySign"]'))?.scrollIntoView({ block: "center" });
       return;
     }
     if (signed.guide && !form.querySelector('[name=guideSignOk]')?.checked) {
       alert("Per la firma della guida spunta la conferma legale sotto il riquadro (L. 70/2026).");
-      form.querySelector('[data-pad="guideSign"]')?.scrollIntoView({ block: "center" });
+      openDiveSecOf(form.querySelector('[data-pad="guideSign"]'))?.scrollIntoView({ block: "center" });
       return;
     }
     if (signed.center && !form.querySelector('[name=centerSignOk]')?.checked) {
       alert("Per la firma del centro spunta la conferma legale sotto il riquadro.");
-      form.querySelector('[data-pad="centerSign"]')?.scrollIntoView({ block: "center" });
+      openDiveSecOf(form.querySelector('[data-pad="centerSign"]'))?.scrollIntoView({ block: "center" });
       return;
     }
     const contactBefore = {
@@ -12216,6 +12311,10 @@ function bindSign(canvas, existing, onChange) {
   const clear = () => paint("", true);
   fit();
   requestAnimationFrame(fit);
+  // Dentro un riquadro chiuso la firma ha misura zero: si ridisegna quando il riquadro si apre.
+  canvas.closest("details")?.addEventListener("toggle", (e) => {
+    if (e.target.open && e.target === canvas.closest("details")) requestAnimationFrame(fit);
+  });
   let drawing = false;
   const pos = (ev) => {
     const r = canvas.getBoundingClientRect();

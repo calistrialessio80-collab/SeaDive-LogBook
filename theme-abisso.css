@@ -608,3 +608,92 @@ body.abisso .profile-coffee h3 .ui-ico { width: 34px; height: 34px; border-radiu
 body.abisso .profile-coffee p { color: rgba(255, 255, 255, 0.72); opacity: 1; }
 body.abisso .profile-coffee .coffee-btn,
 body.abisso .profile-coffee a.btn.coffee-btn { background: rgba(251, 191, 36, 0.14); color: #fde68a; border: 1px solid rgba(251, 191, 36, 0.42); box-shadow: none; border-radius: 99px; }
+
+/* Scheda immersione a riquadri (versione B): ogni gruppo si apre con un tocco, sotto il titolo i valori principali. */
+.dive-edit .dive-sec {
+  display: block;
+  margin: 0 0 12px;
+  padding: 0;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+  overflow: clip;
+}
+.dive-edit .dive-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dive-edit .dive-sec-h::-webkit-details-marker { display: none; }
+.dive-edit .dive-sec-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #22d3ee;
+  background: rgba(34, 211, 238, 0.12);
+}
+.dive-edit .dive-sec-t {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #eaf6ff;
+  line-height: 1.2;
+}
+.dive-edit .dive-sec-t small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #86a7b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dive-edit .dive-sec-chev {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-right: 4px;
+  border-right: 2px solid #6fa8c0;
+  border-bottom: 2px solid #6fa8c0;
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+}
+.dive-edit .dive-sec[open] > .dive-sec-h .dive-sec-chev { transform: rotate(45deg); }
+.dive-edit .dive-sec[open] > .dive-sec-h { border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.dive-edit .dive-sec-b { padding: 10px 12px 12px; }
+.dive-edit .dive-sec-b > .hint:first-child { margin-top: 0; }
+.dive-edit .sec-sub {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #86a7b8;
+}
+.dive-edit .form-grid.sec-g2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.dive-edit .form-grid.sec-g3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+.dive-edit .form-grid.sec-g2 .field.full,
+.dive-edit .form-grid.sec-g3 .field.full { grid-column: 1 / -1; }
+.dive-edit .dive-sec .field { min-width: 0; }
+.dive-edit .dive-sec .stage-card { margin-top: 8px; padding: 10px; }
+.dive-edit .dive-sec .stage-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.dive-edit .dive-sec .stage-grid .field { font-size: 9.5px; }
+.dive-edit .dive-sec .stage-grid .field input { padding: 9px 8px; }
+.dive-edit .dive-sec .computer-log { margin-top: 6px; }
+.dive-edit .dive-sec .computer-log .kv { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.dive-edit .dive-sec .sign-legal { margin: 0; padding: 0; border: 0; background: none; }
+.dive-edit .dive-sec canvas.profile { width: 100%; }
+@media (max-width: 360px) {
+  .dive-edit .form-grid.sec-g3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .dive-edit .dive-sec .stage-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
