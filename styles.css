@@ -3116,3 +3116,6 @@ body.page-home .app-rate p {
 .bio-page .bio-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; }
 .bio-page .bio-actions .btn { padding-left: 8px; padding-right: 8px; text-align: center; white-space: nowrap; }
 .bio-page [data-biowiki] a { color: #0b6b68; font-weight: 700; text-decoration: none; }
+.chat-bubble.sending { opacity: 0.6; }
+.chat-bubble.failed { opacity: 0.85; outline: 1px solid rgba(248, 113, 113, 0.7); cursor: pointer; }
+.chat-bubble.failed time { color: #fca5a5; }

@@ -2648,6 +2648,78 @@ function storeFollowedPerson(card, role) {
 const COMMUNITY_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/board";
 const COMMUNITY_LINKS_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/links";
 const RATINGS_CLOUD = "https://getpantry.cloud/apiv1/pantry/196bbbae-f1bc-4c2f-a2ca-18dd96bbf5c0/basket/ratings";
+// Pantry gratuito accetta al massimo 2 richieste ogni 10 secondi (per rete). Oltre risponde 429 senza
+// intestazioni CORS, e il telefono lo vede come "rete assente": da qui la "Chat non raggiungibile".
+// Ogni scrittura (POST) vale 2, perché il telefono prima chiede il permesso (OPTIONS) e poi scrive.
+// Tutte le chiamate a Pantry passano da questo semaforo: in fila, mai più di 2 ogni 10,5 s; se una
+// fallisce lo stesso (un altro telefono sulla stessa rete) si aspetta la finestra e si riprova.
+// Il limite vale per rete: due telefoni sulla stessa Wi-Fi se lo dividono. Dopo un rifiuto l'app
+// passa per 3 minuti a metà ritmo (2 ogni 21 s), così insieme restano sotto il limite.
+const PANTRY_WINDOW_MS = 10500;
+const pantryGate = { stamps: [], chain: Promise.resolve(), blockedUntil: 0, sharedUntil: 0, writes: 0 };
+
+// Scritture in fila: intanto gli aggiornamenti automatici saltano un giro e lasciano passare gli invii.
+function pantryWriting() {
+  return pantryGate.writes > 0;
+}
+
+function pantryShared() {
+  return Date.now() < pantryGate.sharedUntil;
+}
+
+function pantryWindow() {
+  return Date.now() < pantryGate.sharedUntil ? PANTRY_WINDOW_MS * 2 : PANTRY_WINDOW_MS;
+}
+
+function pantrySlot(cost = 1) {
+  const job = pantryGate.chain.then(async () => {
+    for (;;) {
+      const now = Date.now();
+      const span = pantryWindow();
+      pantryGate.stamps = pantryGate.stamps.filter((t) => now - t < span);
+      let wait = Math.max(0, pantryGate.blockedUntil - now);
+      if (!wait && pantryGate.stamps.length + cost > 2) wait = span - (now - pantryGate.stamps[pantryGate.stamps.length + cost - 3]) + 50;
+      if (!wait) {
+        for (let i = 0; i < cost; i += 1) pantryGate.stamps.push(now);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  });
+  pantryGate.chain = job.catch(() => {});
+  return job;
+}
+
+async function pantryFetch(url, init, tries = 3) {
+  const writing = Boolean(init?.method && init.method !== "GET");
+  if (writing) pantryGate.writes += 1;
+  try {
+    return await pantryAttempts(url, init, tries);
+  } finally {
+    if (writing) pantryGate.writes -= 1;
+  }
+}
+
+async function pantryAttempts(url, init, tries) {
+  let lastErr = new Error("network");
+  for (let attempt = 0; attempt < tries; attempt++) {
+    await pantrySlot(init?.method && init.method !== "GET" ? 2 : 1);
+    try {
+      const res = await fetch(url, init);
+      if (res.status !== 429) return res;
+      lastErr = new Error("network");
+    } catch (err) {
+      // Un 429 arriva come errore di rete: senza connessione non serve insistere.
+      lastErr = err;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) break;
+    }
+    // Pausa con una parte casuale ampia: due telefoni sulla stessa rete non ripartono insieme.
+    pantryGate.blockedUntil = Date.now() + PANTRY_WINDOW_MS + Math.random() * 8000;
+    pantryGate.sharedUntil = Date.now() + 3 * 60 * 1000;
+  }
+  throw lastErr;
+}
+
 const COMMUNITY_API = "profiles";
 const COMMUNITY_LINKS = "links";
 const COMMUNITY_MESSAGES = "messages";
@@ -2662,7 +2734,18 @@ function boardFromPayload(data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return board;
   if (data.profiles && typeof data.profiles === "object" && !Array.isArray(data.profiles)) board.profiles = data.profiles;
   if (data.links && typeof data.links === "object" && !Array.isArray(data.links)) board.links = data.links;
-  if (Array.isArray(data.messages)) board.messages = data.messages.filter((row) => row && typeof row === "object");
+  if (Array.isArray(data.messages)) {
+    // Con PUT Pantry aggiunge in coda: un messaggio rimandato può comparire due volte, si tiene l'ultimo.
+    const byId = new Map();
+    data.messages.forEach((row, i) => {
+      if (row && typeof row === "object") byId.set(String(row._id || "i" + i), row);
+    });
+    board.messages = [...byId.values()];
+    if (board.messages.length > 200) {
+      board.messages.sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+      board.messages = board.messages.slice(-200);
+    }
+  }
   return board;
 }
 
@@ -2681,6 +2764,8 @@ function applyCloudKey(board, key, value) {
 }
 
 let communityBoardCache = { at: 0, data: null, flight: null };
+// Ultima bacheca letta bene: se Pantry rallenta, elenco e chat restano quelli di prima invece di dare errore.
+let lastGoodBoard = null;
 let communityLoadGen = 0;
 let cloudChain = Promise.resolve();
 let followSaveBusy = false;
@@ -2692,11 +2777,12 @@ function enqueueCloud(task) {
 }
 
 async function loadCommunityBoard(maxAge = 20000) {
+  if (maxAge === Infinity && (communityBoardCache.data || lastGoodBoard)) return communityBoardCache.data || lastGoodBoard;
   if (communityBoardCache.data && Date.now() - communityBoardCache.at < maxAge) return communityBoardCache.data;
-  if (maxAge !== 0 && communityBoardCache.flight) return communityBoardCache.flight;
+  if (communityBoardCache.flight) return communityBoardCache.flight;
   const gen = ++communityLoadGen;
   const boardUrl = `${COMMUNITY_CLOUD}?t=${Date.now()}`;
-  const flight = fetch(boardUrl, {
+  const flight = pantryFetch(boardUrl, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   })
@@ -2707,6 +2793,8 @@ async function loadCommunityBoard(maxAge = 20000) {
       }
       if (!res.ok) throw new Error("network");
       const board = boardFromPayload(await res.json());
+      lastGoodBoard = board;
+      resendLostMessages(board);
       if (gen === communityLoadGen) communityBoardCache = { at: Date.now(), data: board, flight: null };
       return board;
     })
@@ -2729,13 +2817,14 @@ async function postCommunityBoard(raw) {
   const next = { ...raw, profiles: scrubMap(raw.profiles, scrubProfileRow), links: scrubMap(raw.links, scrubLink) };
   const body = JSON.stringify({ v: 1, profiles: next.profiles, links: next.links, messages: next.messages });
   if (body.length > 1400000) throw new Error("network");
-  const res = await fetch(COMMUNITY_CLOUD, {
+  const res = await pantryFetch(COMMUNITY_CLOUD, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
   });
   if (!res.ok) throw new Error("network");
   communityLoadGen += 1;
+  lastGoodBoard = next;
   communityBoardCache = { at: Date.now(), data: next, flight: null };
 }
 
@@ -2754,12 +2843,62 @@ function cloudKeyPresent(board, key, value) {
   return true;
 }
 
+/* Messaggi: si aggiungono con PUT, che su Pantry unisce invece di sostituire (gli elenchi vengono
+   accodati). Niente lettura prima, quindi nessun messaggio altrui può essere cancellato. Se poi un
+   altro telefono riscrive la bacheca con una copia vecchia, il mio messaggio sparisce: per 5 minuti
+   l'app lo controlla a ogni lettura e lo rimanda. */
+const outgoingMessages = new Map();
+
+async function putChatMessage(msg) {
+  const res = await pantryFetch(COMMUNITY_CLOUD, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: [msg] }),
+  });
+  if (!res.ok) throw new Error("network");
+  const mine = outgoingMessages.get(msg._id) || { msg, since: Date.now() };
+  mine.sentAt = Date.now();
+  outgoingMessages.set(msg._id, mine);
+  const board = communityBoardCache.data;
+  if (board && !(board.messages || []).some((row) => row && row._id === msg._id)) board.messages = [...(board.messages || []), msg];
+}
+
+function resendLostMessages(board) {
+  const now = Date.now();
+  outgoingMessages.forEach((item, id) => {
+    if (now - item.since > 5 * 60 * 1000) {
+      outgoingMessages.delete(id);
+      return;
+    }
+    if ((board.messages || []).some((row) => row && row._id === id)) return;
+    if (item.busy || now - (item.sentAt || 0) < 12000) return;
+    item.busy = true;
+    putChatMessage(item.msg)
+      .catch(() => {})
+      .finally(() => {
+        item.busy = false;
+      });
+  });
+}
+
 async function cloudSet(key, value) {
+  if (key.startsWith("m-")) {
+    let lastErr = new Error("network");
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        await putChatMessage(value);
+        return;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  }
   return enqueueCloud(async () => {
     let lastErr = new Error("network");
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        const board = await loadCommunityBoard(0);
+        const board = await loadCommunityBoard(attempt === 0 ? 4000 : 0);
         const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
         applyCloudKey(next, key, value);
         const prevProfiles = Object.keys(board.profiles || {}).length;
@@ -2798,9 +2937,9 @@ function linkMapFromPayload(data) {
 
 async function loadLinkBasket(maxAge = 20000) {
   if (linkBasketCache.data && Date.now() - linkBasketCache.at < maxAge) return linkBasketCache.data;
-  if (maxAge !== 0 && linkBasketCache.flight) return linkBasketCache.flight;
+  if (linkBasketCache.flight) return linkBasketCache.flight;
   const gen = ++linkLoadGen;
-  const flight = fetch(`${COMMUNITY_LINKS_CLOUD}?t=${Date.now()}`, {
+  const flight = pantryFetch(`${COMMUNITY_LINKS_CLOUD}?t=${Date.now()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   })
@@ -2820,10 +2959,12 @@ async function loadLinkBasket(maxAge = 20000) {
 }
 
 async function loadMergedLinks(fresh) {
-  const age = fresh ? 0 : 20000;
+  // "cache": quello che c'è già, per disegnare subito; "board": bacheca fresca, collegamenti fino a 45 s.
+  const age = fresh === "cache" ? Infinity : fresh ? 0 : 20000;
+  const basketAge = fresh === "board" ? (pantryShared() ? 120000 : 45000) : age;
   const [board, basket] = await Promise.all([
     loadCommunityBoard(age),
-    loadLinkBasket(age).catch(() => linkBasketCache.data || {}),
+    loadLinkBasket(basketAge).catch(() => linkBasketCache.data || {}),
   ]);
   return { ...(board.links || {}), ...(basket || {}) };
 }
@@ -2852,7 +2993,7 @@ async function linkWriteVerified(task, check) {
 async function postLinkBasket(raw) {
   const map = scrubMap(raw, scrubLink);
   const body = JSON.stringify({ v: 1, links: map });
-  const res = await fetch(COMMUNITY_LINKS_CLOUD, {
+  const res = await pantryFetch(COMMUNITY_LINKS_CLOUD, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
@@ -3325,7 +3466,10 @@ function shrinkPhoto(dataUrl, maxSide = 720, limit = 90000) {
 
 async function loadOnlineProfiles() {
   try {
-    const board = await loadCommunityBoard();
+    const board = await loadCommunityBoard().catch((err) => {
+      if (lastGoodBoard) return lastGoodBoard;
+      throw err;
+    });
     return {
       list: Object.values(board.profiles)
         .map((row) => {
@@ -4590,6 +4734,54 @@ async function syncIncomingLinks() {
   return changed;
 }
 
+/* Messaggi in uscita: restano qui anche se la schermata si ridisegna. Ogni messaggio riprova da solo
+   (fino a 4 giri, con pause crescenti); solo dopo compare "non inviato · tocca per riprovare". */
+const chatOutbox = [];
+let chatRedraw = null;
+
+async function deliverChatItem(item) {
+  if (item.busy) return;
+  item.busy = true;
+  item.state = "wait";
+  try {
+    const owner = await profileOwnerKey();
+    const links = await loadMergedLinks("board").catch(() => null) || await loadMergedLinks(false);
+    const rooms = chatRooms(owner, links);
+    const room = rooms.find((r) => r.key === item.room) || pickChatRoom(rooms, item.room, "");
+    if (!room?.members.has(owner)) {
+      chatOutbox.splice(chatOutbox.indexOf(item), 1);
+      item.busy = false;
+      chatRedraw?.("Sei uscito dalla chat: non vi seguite più.");
+      return;
+    }
+    const boxes = await sealChatText(item.text, room.members, item.id);
+    if (!boxes) throw new Error("seal");
+    await cloudSet(`m-${item.id}`, {
+      _id: item.id,
+      v: 2,
+      thread: room.key,
+      with: room.key,
+      from: owner,
+      name: item.name,
+      boxes,
+      at: item.at,
+    });
+    item.state = "sent";
+    item.busy = false;
+    pushChatMembers(owner, room.members);
+    chatRedraw?.();
+  } catch {
+    item.busy = false;
+    item.tries = (item.tries || 0) + 1;
+    if (item.tries < 4) {
+      setTimeout(() => deliverChatItem(item), 15000 * item.tries + Math.random() * 8000);
+    } else {
+      item.state = "fail";
+    }
+    chatRedraw?.();
+  }
+}
+
 function renderChat() {
   const frag = document.createDocumentFragment();
   frag.append(topbar("Chat"));
@@ -4625,6 +4817,9 @@ function renderChat() {
   let active = null;
   let knownRooms = [];
   let stick = true;
+  let pulling = false;
+  let lastRows = [];
+  const outbox = chatOutbox;
   const paintMembers = (people) => {
     members.replaceChildren();
     people.forEach((person) => {
@@ -4664,7 +4859,11 @@ function renderChat() {
       roomBox.append(button);
     });
   };
-  const draw = (rows) => {
+  const draw = (got) => {
+    lastRows = got;
+    const sentIds = new Set(got.map((row) => row.id).filter(Boolean));
+    for (let i = outbox.length - 1; i >= 0; i -= 1) if (sentIds.has(outbox[i].id)) outbox.splice(i, 1);
+    const rows = got.concat(outbox.filter((row) => row.room === active?.key)).sort((a, b) => a.at.localeCompare(b.at));
     const near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
     log.replaceChildren();
     if (!rows.length) {
@@ -4676,7 +4875,7 @@ function renderChat() {
     }
     rows.forEach((row) => {
       const bubble = document.createElement("div");
-      bubble.className = "chat-bubble" + (row.from === owner ? " mine" : "");
+      bubble.className = "chat-bubble" + (row.from === owner ? " mine" : "") + (row.state === "wait" ? " sending" : "");
       if (row.from !== owner) {
         const who = document.createElement("strong");
         who.className = "chat-who";
@@ -4687,23 +4886,36 @@ function renderChat() {
       text.textContent = row.text;
       const time = document.createElement("time");
       const when = new Date(row.at);
-      time.textContent = Number.isNaN(when.getTime())
-        ? ""
-        : when.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      time.textContent = row.state === "fail"
+        ? "non inviato · tocca per riprovare"
+        : row.state === "wait"
+          ? "invio…"
+          : Number.isNaN(when.getTime())
+            ? ""
+            : when.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      if (row.state === "fail") {
+        bubble.classList.add("failed");
+        bubble.onclick = () => {
+          row.tries = 0;
+          row.state = "wait";
+          draw(lastRows);
+          deliverChatItem(row);
+        };
+      }
       bubble.append(text, time);
       log.append(bubble);
     });
     if (stick || near) log.scrollTop = log.scrollHeight;
     stick = false;
   };
-  const pull = async () => {
-    if (view.name !== "chat" || !log.isConnected || !owner) return;
+  const pull = async (quick) => {
+    if (view.name !== "chat" || !log.isConnected || !owner || pulling) return;
+    if (!quick && lastRows.length && (pantryWriting() || chatOutbox.some((item) => item.busy))) return;
+    pulling = true;
     try {
-      const [links, all, profiles] = await Promise.all([
-        loadMergedLinks(true),
-        crudList(COMMUNITY_MESSAGES, true),
-        loadOnlineProfiles(),
-      ]);
+      const links = await loadMergedLinks(quick ? "cache" : "board");
+      const all = quick ? (await loadCommunityBoard(Infinity)).messages || [] : await crudList(COMMUNITY_MESSAGES, false);
+      const profiles = await loadOnlineProfiles();
       if (!log.isConnected) return;
       knownRooms = chatRooms(owner, links);
       active = pickChatRoom(knownRooms, view.chatRoom, view.chatFocus);
@@ -4731,6 +4943,7 @@ function renderChat() {
         .map((row) => {
           if (row._id) chatSeen.add(String(row._id));
           return {
+            id: String(row._id || ""),
             from: String(row.from || ""),
             name: String(row.name || "").slice(0, 80),
             text: String(row.text || "").slice(0, 400),
@@ -4741,59 +4954,54 @@ function renderChat() {
       draw(rows);
       status.textContent = "";
     } catch {
-      if (status.isConnected) status.textContent = "Chat non raggiungibile. Riprovo.";
+      if (status.isConnected) status.textContent = "Collegamento lento, riprovo tra poco…";
     }
+    pulling = false;
   };
-  form.onsubmit = async (e) => {
+  chatRedraw = (note) => {
+    if (!log.isConnected) return;
+    if (note) status.textContent = note;
+    stick = true;
+    draw(lastRows);
+  };
+  form.onsubmit = (e) => {
     e.preventDefault();
     const input = form.querySelector("[name=text]");
     const text = String(input.value || "").trim().slice(0, 400);
     if (!text || !owner || !active?.members.has(owner)) return;
-    input.disabled = true;
-    try {
-      const links = await loadMergedLinks(true);
-      knownRooms = chatRooms(owner, links);
-      active = pickChatRoom(knownRooms, view.chatRoom, view.chatFocus);
-      if (!active?.members.has(owner)) {
-        status.textContent = "Sei uscito dalla chat: non vi seguite più.";
-        await pull();
-      } else {
-        const sender = personNames({ name: state.profile?.name || "" }).name || "SeaDive";
-        const msgId = uid().replace(/-/g, "");
-        if (!communityBoardCache.data) await loadCommunityBoard(0);
-        const boxes = await sealChatText(text, active.members, msgId);
-        if (!boxes) throw new Error("seal");
-        const msg = {
-          _id: msgId,
-          v: 2,
-          thread: active.key,
-          with: active.key,
-          from: owner,
-          name: sender.slice(0, 80),
-          boxes,
-          at: new Date().toISOString(),
-        };
-        chatTextCache.set(msgId, text);
-        await cloudSet(`m-${msg._id}`, msg);
-        pushChatMembers(owner, active.members);
-        input.value = "";
-        stick = true;
-        await pull();
-      }
-    } catch {
-      status.textContent = "Messaggio non inviato. Riprova.";
-    }
-    input.disabled = false;
+    const item = {
+      id: uid().replace(/-/g, ""),
+      room: active.key,
+      from: owner,
+      name: (personNames({ name: state.profile?.name || "" }).name || "SeaDive").slice(0, 80),
+      text,
+      at: new Date().toISOString(),
+      state: "wait",
+    };
+    chatTextCache.set(item.id, text);
+    outbox.push(item);
+    input.value = "";
+    stick = true;
+    draw(lastRows);
+    status.textContent = "";
     input.focus();
+    deliverChatItem(item);
   };
   profileOwnerKey().then((mine) => {
     if (!card.isConnected) return;
     owner = mine;
-    pull();
+    // Prima si disegna con i dati già scaricati, poi si aggiorna.
+    const fresh = () => pull();
+    if (communityBoardCache.data || lastGoodBoard) pull(true).then(fresh, fresh);
+    else fresh();
     stopChatPoll();
+    let tick = 0;
     chatTimer = setInterval(() => {
+      tick += 1;
+      // Sulla stessa rete di un altro telefono si aggiorna ogni 40 s invece che ogni 20.
+      if (pantryShared() && tick % 2) return;
       if (!document.hidden) pull();
-    }, 15000);
+    }, 20000);
   });
   frag.append(card);
   return frag;
@@ -7530,14 +7738,20 @@ function ratingSummaryText(board) {
   return `Media ${shown} · ${n} ${n === 1 ? "voto" : "voti"}`;
 }
 
-async function loadRatingsBoard() {
-  const res = await fetch(`${RATINGS_CLOUD}?t=${Date.now()}`, {
+// La media dei voti si rilegge al massimo ogni 5 minuti: la Home si ridisegna spesso.
+let ratingsCache = { at: 0, data: null };
+
+async function loadRatingsBoard(maxAge = 5 * 60 * 1000) {
+  if (ratingsCache.data && Date.now() - ratingsCache.at < maxAge) return JSON.parse(JSON.stringify(ratingsCache.data));
+  const res = await pantryFetch(`${RATINGS_CLOUD}?t=${Date.now()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   });
   if (res.status === 400 || res.status === 404) return { v: 1, votes: {}, history: [] };
   if (!res.ok) throw new Error("network");
-  return ratingsFromPayload(await res.json());
+  const board = ratingsFromPayload(await res.json());
+  ratingsCache = { at: Date.now(), data: board };
+  return JSON.parse(JSON.stringify(board));
 }
 
 async function publishAppRating(stars) {
@@ -7547,18 +7761,18 @@ async function publishAppRating(stars) {
   let lastErr = new Error("network");
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const board = await loadRatingsBoard();
+      const board = await loadRatingsBoard(0);
       if (stars >= 1) board.votes[id] = { stars, at };
       else delete board.votes[id];
       board.history.push({ id: mark, stars, at });
       board.history = board.history.slice(-400);
-      const res = await fetch(RATINGS_CLOUD, {
+      const res = await pantryFetch(RATINGS_CLOUD, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(board),
       });
       if (!res.ok) throw new Error("network");
-      const saved = await loadRatingsBoard();
+      const saved = await loadRatingsBoard(0);
       const got = Number(saved.votes[id]?.stars) || 0;
       if (got !== stars) throw new Error("network");
       localStorage.removeItem(RATING_PENDING_KEY);
