@@ -9,7 +9,9 @@
   var inApp = /FBAN|FBAV|FB_IAB|Instagram|WhatsApp|Line\/|Telegram|Snapchat|TikTok|musical_ly|; wv\)/i.test(ua);
   var iosOtherBrowser = isIOS && /CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
   var installed = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
-  var appUrl = new URL("./", location.href).href;
+  // La cartella dell'app è quella dello script (la pagina può stare in /installa/).
+  var root = new URL("./", (document.currentScript && document.currentScript.src) || location.href);
+  var appUrl = root.href;
   var pageUrl = location.origin + location.pathname;
 
   // Già installata e aperta dalla schermata Home: si va dritti all'app.
@@ -88,5 +90,5 @@
   }
 
   // Il service worker dell'app serve al browser per proporre l'installazione.
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(function () {});
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register(new URL("sw.js", root).href).catch(function () {});
 })();

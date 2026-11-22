@@ -2,85 +2,16 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
-    />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#04121c" />
-    <meta name="description" content="Installa SeaDive LogBook, il diario di immersioni gratuito, su Android o iPhone." />
-    <title>Installa SeaDive LogBook</title>
-    <link rel="manifest" href="./manifest.json" />
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./installa.css" />
+    <meta http-equiv="refresh" content="0; url=./installa/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SeaDive LogBook</title>
+    <meta property="og:title" content="SeaDive LogBook" />
+    <meta property="og:description" content="Il diario delle immersioni sul telefono. Gratis. Tocca per installarlo su Android o iPhone." />
+    <meta property="og:url" content="https://calistrialessio80-collab.github.io/SeaDive-LogBook/installa/" />
+    <meta property="og:image" content="https://calistrialessio80-collab.github.io/SeaDive-LogBook/anteprima.jpg" />
+    <link rel="canonical" href="https://calistrialessio80-collab.github.io/SeaDive-LogBook/installa/" />
   </head>
-  <body>
-    <main class="wrap">
-      <header class="hero">
-        <img class="logo" src="./icon-192.png" alt="" width="76" height="76" />
-        <h1>SeaDive LogBook</h1>
-        <p class="sub">Il tuo diario di immersioni, sempre con te. Gratis.</p>
-      </header>
-
-      <section class="card warn" data-inapp hidden>
-        <h2>Aperto da un'altra app?</h2>
-        <p data-inapp-text>Da qui non si può installare. Tocca <b>⋮</b> o <b>···</b> in alto e scegli <b>Apri nel browser</b>.</p>
-        <button class="ghost" type="button" data-copy>Copia il link</button>
-      </section>
-
-      <section class="card" data-os="android" hidden>
-        <p class="tag">Android</p>
-        <h2>Installa in un tocco</h2>
-        <button class="big" type="button" data-install>Installa SeaDive</button>
-        <p class="note" data-android-note>Se il pulsante non risponde: tocca <b>⋮</b> in alto a destra in Chrome, poi <b>Installa app</b> (o <b>Aggiungi a schermata Home</b>).</p>
-        <p class="done" data-installed hidden>Fatto! Trovi <b>SeaDive</b> nella schermata Home.</p>
-      </section>
-
-      <section class="card" data-os="ios" hidden>
-        <p class="tag">iPhone</p>
-        <h2>Tre tocchi in Safari</h2>
-        <ol class="steps">
-          <li>
-            <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg></span>
-            <span>Tocca <b>Condividi</b> in basso</span>
-          </li>
-          <li>
-            <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M12 8v8M8 12h8" /></svg></span>
-            <span>Scegli <b>Aggiungi alla schermata Home</b> (scorri l'elenco se non lo vedi)</span>
-          </li>
-          <li>
-            <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10" /></svg></span>
-            <span>Tocca <b>Aggiungi</b> in alto a destra</span>
-          </li>
-        </ol>
-        <p class="note" data-ios-other hidden>Stai usando un altro browser: funziona uguale, ma se non trovi <b>Aggiungi alla schermata Home</b> apri questa pagina in <b>Safari</b>.</p>
-      </section>
-
-      <section class="card" data-os="desktop" hidden>
-        <p class="tag">Dal telefono</p>
-        <h2>Apri questo link sul telefono</h2>
-        <p>SeaDive si installa sul telefono. Mandati questo indirizzo (per esempio su WhatsApp) e aprilo da lì:</p>
-        <p class="link" data-link></p>
-        <button class="ghost" type="button" data-copy>Copia il link</button>
-      </section>
-
-      <section class="card">
-        <h2>Poi, la prima volta</h2>
-        <ol class="steps plain">
-          <li><span class="n">1</span><span>Apri <b>SeaDive</b> dalla schermata Home</span></li>
-          <li><span class="n">2</span><span>Tocca <b>Continua con Google</b></span></li>
-          <li><span class="n">3</span><span>Tocca <b>Collega la Community</b> per amici e chat</span></li>
-        </ol>
-      </section>
-
-      <section class="card soft">
-        <h2>Hai cambiato o perso il telefono?</h2>
-        <p>Installa di nuovo come sopra ed entra con <b>lo stesso account Google</b>: immersioni, foto, firme e contatti tornano da soli.</p>
-      </section>
-
-      <p class="foot"><a href="./">Apri SeaDive nel browser</a> · <a href="./privacy.html">Privacy</a></p>
-    </main>
-    <script src="./installa.js"></script>
+  <body style="background:#04121c;color:#e6f6fb;font-family:system-ui,sans-serif;text-align:center;padding:40px">
+    <p><a style="color:#67e8f9" href="./installa/">Apri la pagina per installare SeaDive</a></p>
   </body>
 </html>
