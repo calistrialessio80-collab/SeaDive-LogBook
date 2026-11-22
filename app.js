@@ -13854,17 +13854,18 @@ function drawProfile(canvas, points, editable, onChange, deco) {
   };
 }
 
+const DRIVE_RESERVE_DAYS = 30;
 function backupNeedsUser() {
   const meta = loadMeta();
   if (!(loadSession() && meta.pendingBackup && meta.backupFailed)) return false;
-  // Con la copia privata automatica aggiornata il diario è già al sicuro: per Drive si chiede un tocco
-  // solo se l'ultima copia lì ha più di 7 giorni.
+  // Con la copia privata automatica aggiornata il diario è già al sicuro: per Drive (copia di riserva,
+  // indipendente da Firebase) si chiede un tocco al massimo una volta al mese.
   const vaultFresh = useFirebase() && meta.cloudVaultAt && meta.cloudVaultAt >= (meta.lastChangeAt || "");
   if (!vaultFresh) return true;
   // La chiave della copia online deve essere arrivata su Drive almeno una volta.
   if (state.profile?.vaultKey?.id && meta.vaultKeyOnDrive !== state.profile.vaultKey.id) return true;
   const last = new Date(meta.lastBackup || 0).getTime();
-  return !Number.isFinite(last) || Date.now() - last > 7 * 24 * 60 * 60 * 1000;
+  return !Number.isFinite(last) || Date.now() - last > DRIVE_RESERVE_DAYS * 24 * 60 * 60 * 1000;
 }
 
 function fmtBackupWhen(iso) {
