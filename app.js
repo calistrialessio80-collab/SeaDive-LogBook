@@ -4291,11 +4291,11 @@ function dmRooms(mine, links) {
   return out;
 }
 
-function openDmChat(remote) {
+function openDmChat(remote, fromCommunity = false) {
   const other = String(remote || "");
   if (!other) return;
   const person = (state.people || []).find((p) => p.remoteOwner === other);
-  view.chatBackPerson = person?.id || view.personId || null;
+  view.chatBackPerson = fromCommunity ? "community" : person?.id || view.personId || null;
   view.name = "chat";
   view.chatDm = other;
   view.chatTab = "dm";
@@ -4942,7 +4942,7 @@ function renderChat() {
       <button class="btn primary" type="submit">Invia</button>
     </form>
     <p class="hint" data-chatstatus></p>
-    <button class="btn ghost" type="button" data-back>${dmPerson ? "Torna " + escapeHtml(toName(dmFirst)) : "Torna alla Chat"}</button>
+    <button class="btn ghost" type="button" data-back>${view.chatBackPerson === "community" ? "Torna a Community" : dmPerson ? "Torna " + escapeHtml(toName(dmFirst)) : "Torna alla Chat"}</button>
   ` : `
     <h2 class="serif" style="margin:0">Chat</h2>
     <div class="chat-seg" role="tablist">
@@ -4968,7 +4968,11 @@ function renderChat() {
     ? () => {
       const back = view.chatBackPerson && (state.people || []).some((p) => p.id === view.chatBackPerson) ? view.chatBackPerson : null;
       view.chatDm = "";
-      if (back) {
+      if (view.chatBackPerson === "community") {
+        view.name = "people";
+        view.personId = null;
+        render();
+      } else if (back) {
         view.name = "people";
         view.personId = back;
         render();
@@ -10838,9 +10842,15 @@ function renderPeople() {
       <strong class="sea-last">${escapeHtml(shown.lastName || "")}</strong>
       ${status ? `<small class="sea-status">${escapeHtml(status)}</small>` : ""}
       <div class="people-actions">
+        ${mutual && cardHit.owner && !state.profile?.communityOff ? `<button class="btn sea-dm" type="button" data-dmopen="${escapeHtml(cardHit.owner)}">${uiIcon("chat", 14)}<span>Scrivi</span><span class="badge" hidden>0</span></button>` : ""}
         ${followBtn}
       </div>
     `;
+    row.querySelector("[data-dmopen]")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openDmChat(cardHit.owner, true);
+    });
     row.querySelector("[data-follow]")?.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -10862,6 +10872,7 @@ function renderPeople() {
     });
     seaRow.append(row);
   });
+  if (sea.querySelector("[data-dmopen]")) queueMicrotask(paintDmBadges);
   const localWait = document.createElement("p");
   localWait.className = "hint";
   localWait.setAttribute("data-list-wait", "");

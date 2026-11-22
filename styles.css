@@ -1026,6 +1026,11 @@ button.people-row { cursor: pointer; }
   white-space: normal;
   touch-action: manipulation;
 }
+.sea-person .people-actions:has(.sea-dm) { flex-direction: column; gap: 0; }
+.sea-person .people-actions .btn.sea-dm { display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-weight: 700; }
+.sea-dm .ui-ico { display: inline-grid; }
+.sea-dm .badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #e0245e; color: #fff; font-size: 10px; line-height: 16px; }
+.sea-dm .badge[hidden] { display: none; }
 .chat-log {
   display: flex;
   flex-direction: column;
