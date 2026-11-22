@@ -13,6 +13,7 @@ const ASSETS = [
   "./divelogs-sites.json",
   "./biology.js",
   "./drive.js",
+  "./firebase-community.js",
   "./config.js",
   "./manifest.json",
   "./aggiorna.html",

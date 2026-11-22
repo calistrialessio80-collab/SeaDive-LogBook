@@ -34,7 +34,7 @@ service cloud.firestore {
       return b is map
         && b.keys().hasOnly(['v', 'iv', 'ct', 'from', 'to'])
         && shortText(b.get('iv', ''), 40)
-        && shortText(b.get('ct', ''), 30000)
+        && shortText(b.get('ct', ''), 120000)
         && shortText(b.get('from', ''), 20)
         && shortText(b.get('to', ''), 20);
     }
@@ -115,13 +115,13 @@ service cloud.firestore {
         && request.resource.data._id == id
         && id.matches('^[0-9a-zA-Z]{8,40}$')
         && request.resource.data.ts == request.time
-        && shortText(request.resource.data.get('thread', ''), 400)
-        && shortText(request.resource.data.get('with', ''), 400)
+        && shortText(request.resource.data.get('thread', ''), 4000)
+        && shortText(request.resource.data.get('with', ''), 4000)
         && shortText(request.resource.data.get('name', ''), 80)
         && shortText(request.resource.data.get('at', ''), 40)
         && request.resource.data.get('kind', 'group') in ['group', 'dm']
         && request.resource.data.boxes is map
-        && request.resource.data.boxes.size() <= 60;
+        && request.resource.data.boxes.size() <= 120;
       allow update: if false;
       allow delete: if isMe(resource.data.from);
     }

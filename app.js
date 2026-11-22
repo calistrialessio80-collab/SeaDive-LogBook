@@ -1178,7 +1178,7 @@ async function silentDrivePush() {
 function localAccountKeys() {
   return [
     KEY, META_KEY, BRAND_KEY, SESSION_KEY, "seadive-custom-sites", "seadive-community-owner",
-    "seadive-chat-seen-at", "seadive-chat-seen-ids", "seadive-chat-outbox", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted",
+    "seadive-chat-seen-at", "seadive-chat-seen-ids", "seadive-chat-outbox", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted", "seadive-fb-moved",
   ];
 }
 
@@ -1196,6 +1196,7 @@ async function signOutAndForget() {
   clearTimeout(backupTimer);
   backupTimer = 0;
   await disablePushNotices();
+  await window.SeaDiveCloud?.signOut?.();
   await window.SeaDiveDrive?.signOutGoogle?.();
   localAccountKeys().forEach((k) => {
     try {
@@ -2776,8 +2777,78 @@ function enqueueCloud(task) {
   return job;
 }
 
+/* ---------- Registro Community su Firebase (se configurato in config.js), altrimenti Pantry ---------- */
+const FB_MOVED_KEY = "seadive-fb-moved";
+let cloudNeedsLogin = false;
+function useFirebase() {
+  return Boolean(window.SeaDiveCloud?.enabled?.());
+}
+
+// Collega la Community all'account Google dell'app. Senza un permesso Google valido serve un tocco.
+async function cloudSession() {
+  const sub = String(loadSession()?.sub || "");
+  if (!sub) throw new Error("community-auth");
+  if (await window.SeaDiveCloud.signedInAs(sub)) {
+    cloudNeedsLogin = false;
+    return;
+  }
+  try {
+    await window.SeaDiveCloud.signIn(sub, window.SeaDiveDrive?.currentToken?.() || "");
+    cloudNeedsLogin = false;
+  } catch (err) {
+    const was = cloudNeedsLogin;
+    cloudNeedsLogin = true;
+    if (!was && ["people", "chat"].includes(view.name)) setTimeout(() => render(), 0);
+    throw new Error(err?.message === "community-account" ? "community-account" : "community-auth");
+  }
+}
+
+async function connectCommunityByTap() {
+  const hint = loadSession()?.email || "";
+  const token = await window.SeaDiveDrive.ensureToken({ interactive: true, hint });
+  await window.SeaDiveCloud.signIn(String(loadSession()?.sub || ""), token);
+  cloudNeedsLogin = false;
+}
+
+function communityLoginCard() {
+  const box = document.createElement("div");
+  box.className = "backup-banner";
+  box.setAttribute("role", "status");
+  const text = document.createElement("p");
+  text.textContent = "Per vedere la Community e scrivere in chat conferma una volta il tuo account Google.";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn primary";
+  btn.textContent = "Collega la Community";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = "Collego…";
+    try {
+      await connectCommunityByTap();
+      communityBoardCache = { at: 0, data: null, flight: null };
+      linkBasketCache = { at: 0, data: null, flight: null };
+      render();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Riprova";
+      text.textContent = err?.message === "community-account"
+        ? "L'account Google scelto non è quello di questo diario: riprova con lo stesso account."
+        : "Non è andata: controlla la connessione e riprova.";
+    }
+  };
+  box.append(text, btn);
+  return box;
+}
+
 async function loadCommunityBoard(maxAge = 20000) {
   if (maxAge === Infinity && (communityBoardCache.data || lastGoodBoard)) return communityBoardCache.data || lastGoodBoard;
+  if (useFirebase()) {
+    await cloudSession();
+    const board = boardFromPayload(await window.SeaDiveCloud.board());
+    lastGoodBoard = board;
+    communityBoardCache = { at: Date.now(), data: board, flight: null };
+    return board;
+  }
   if (communityBoardCache.data && Date.now() - communityBoardCache.at < maxAge) return communityBoardCache.data;
   if (communityBoardCache.flight) return communityBoardCache.flight;
   const gen = ++communityLoadGen;
@@ -2852,6 +2923,13 @@ function cloudKeyPresent(board, key, value) {
 const outgoingMessages = new Map();
 
 async function putChatMessage(msg) {
+  if (useFirebase()) {
+    await cloudSession();
+    await window.SeaDiveCloud.putMessage(msg);
+    const board = communityBoardCache.data;
+    if (board && !(board.messages || []).some((row) => row && row._id === msg._id)) board.messages = [...(board.messages || []), msg];
+    return;
+  }
   const res = await pantryFetch(COMMUNITY_CLOUD, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -2888,6 +2966,18 @@ function resendLostMessages(board) {
    ci sono più si mandano vuoti, così l'unione li cancella (anche brevetti in chiaro di versioni vecchie). */
 async function putProfileRow(key, value) {
   const owner = key.slice(2);
+  if (useFirebase()) {
+    await cloudSession();
+    const row = scrubProfileRow(value);
+    if (String(row.portrait || "").length > 11000) delete row.portrait;
+    await window.SeaDiveCloud.putProfile(owner, row);
+    try {
+      localStorage.setItem(FB_MOVED_KEY, "1");
+    } catch {
+      /* si ripubblica al prossimo giro */
+    }
+    return;
+  }
   return enqueueCloud(async () => {
     let lastErr = new Error("network");
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -2921,7 +3011,7 @@ async function putProfileRow(key, value) {
    righe, un telefono lo riscrive con gli ultimi 200 (al massimo una volta all'ora). */
 let boardTrimAt = 0;
 function trimBoardIfLong(rawCount) {
-  if (rawCount <= 400 || Date.now() - boardTrimAt < 60 * 60 * 1000) return;
+  if (useFirebase() || rawCount <= 400 || Date.now() - boardTrimAt < 60 * 60 * 1000) return;
   boardTrimAt = Date.now();
   enqueueCloud(async () => {
     const board = await loadCommunityBoard(0);
@@ -2985,6 +3075,12 @@ function linkMapFromPayload(data) {
 }
 
 async function loadLinkBasket(maxAge = 20000) {
+  if (useFirebase()) {
+    await cloudSession();
+    const map = await window.SeaDiveCloud.linkMap();
+    linkBasketCache = { at: Date.now(), data: map, flight: null };
+    return map;
+  }
   if (linkBasketCache.data && Date.now() - linkBasketCache.at < maxAge) return linkBasketCache.data;
   if (linkBasketCache.flight) return linkBasketCache.flight;
   const gen = ++linkLoadGen;
@@ -3057,6 +3153,14 @@ async function postLinkBasket(raw) {
    Prima ogni telefono riscriveva tutto l'elenco con POST e vinceva l'ultimo: i "Segui" sparivano. */
 const BLANK_LINK_BOX = { v: 0, iv: "", ct: "", from: "", to: "" };
 async function putMyLinkSide(part) {
+  if (useFirebase()) {
+    await cloudSession();
+    await window.SeaDiveCloud.putLinkPart(part);
+    const data = { ...(linkBasketCache.data || {}) };
+    data[part.pair] = { ...(data[part.pair] || {}), ...part };
+    linkBasketCache = { at: Date.now(), data, flight: null };
+    return;
+  }
   const res = await pantryFetch(COMMUNITY_LINKS_CLOUD, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -3919,6 +4023,10 @@ async function leaveCommunity() {
   if (!owner) return { error: "short" };
   const involves = (row) => row && (row.left === owner || row.right === owner);
   try {
+    if (useFirebase()) {
+      await cloudSession();
+      await window.SeaDiveCloud.leave(owner);
+    } else
     await enqueueCloud(async () => {
       const board = await loadCommunityBoard(0);
       const next = boardFromPayload(JSON.parse(JSON.stringify(board)));
@@ -4920,6 +5028,7 @@ const chatOutbox = (() => {
   }
 })();
 let chatRedraw = null;
+let chatLivePull = null;
 
 function saveChatOutbox() {
   try {
@@ -5297,9 +5406,15 @@ function renderChat() {
       status.textContent = "";
     } catch {
       if (status.isConnected) status.textContent = "Collegamento lento, riprovo tra poco…";
+    } finally {
+      // Sempre, anche quando si esce prima (chat personale, elenco): prima restava bloccato e la chat
+      // aperta non mostrava più i messaggi in arrivo finché non la si riapriva.
+      pulling = false;
     }
-    pulling = false;
     sendWaiting();
+  };
+  chatLivePull = () => {
+    if (log.isConnected) pull();
   };
   chatRedraw = (note) => {
     if (!log.isConnected) return;
@@ -6346,6 +6461,7 @@ function renderScreen() {
   if (view.name === "edit") app.append(renderEdit());
   refreshBackupBanner();
   refreshLocalSaveBanner();
+  if (useFirebase() && cloudNeedsLogin && loadSession() && ["people", "chat"].includes(view.name)) app.prepend(communityLoginCard());
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
   if (loadSession() && location.hash === "#chat") {
@@ -8104,6 +8220,12 @@ function ratingSummaryText(board) {
 let ratingsCache = { at: 0, data: null };
 
 async function loadRatingsBoard(maxAge = 5 * 60 * 1000) {
+  if (useFirebase()) {
+    await cloudSession();
+    const board = await window.SeaDiveCloud.ratings();
+    ratingsCache = { at: Date.now(), data: board };
+    return JSON.parse(JSON.stringify(board));
+  }
   if (ratingsCache.data && Date.now() - ratingsCache.at < maxAge) return JSON.parse(JSON.stringify(ratingsCache.data));
   const res = await pantryFetch(`${RATINGS_CLOUD}?t=${Date.now()}`, {
     cache: "no-store",
@@ -8120,6 +8242,17 @@ async function publishAppRating(stars) {
   const id = await profileOwnerKey();
   const at = new Date().toISOString();
   const mark = id.replace(/[^a-f0-9]/gi, "").slice(0, 8).padEnd(8, "0");
+  if (useFirebase()) {
+    try {
+      await cloudSession();
+      await window.SeaDiveCloud.putRating(id, stars, at);
+      localStorage.removeItem(RATING_PENDING_KEY);
+      return await loadRatingsBoard(0);
+    } catch (err) {
+      localStorage.setItem(RATING_PENDING_KEY, "1");
+      throw err;
+    }
+  }
   let lastErr = new Error("network");
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -13540,6 +13673,9 @@ function vaultStatusLine() {
       queueProfilePublish();
       return;
     }
+    // Primo avvio col registro Firebase: il profilo si ripubblica lì (i "Segui" li rimanda backgroundLinkSync).
+    if (useFirebase() && loadSession() && !localStorage.getItem(FB_MOVED_KEY)) localStorage.removeItem(PROFILE_PUBLISHED_KEY);
+    if (useFirebase()) bindCloudLive();
     // Prima si apre il diario che è già sul telefono; Drive si collega dopo, senza bloccare.
     // (Su Android l'accesso silenzioso a Google può restare appeso: l'app rimaneva sul caricamento.)
     render();
@@ -13574,6 +13710,38 @@ function backgroundLinkSync() {
       if (changed && view.name === "people" && !view.personId && !document.activeElement?.matches?.("input, textarea, select")) render();
     })
     .catch(() => {});
+}
+
+/* Tempo reale: quando cambia qualcosa nel registro si aggiornano chat, avvisi e Community. */
+let cloudLiveTimer = 0;
+const cloudLiveKinds = new Set();
+function bindCloudLive() {
+  if (bindCloudLive.done) return;
+  bindCloudLive.done = true;
+  window.addEventListener("seadive-google-token", () => {
+    if (!loadSession() || state.profile?.communityOff) return;
+    cloudSession()
+      .then(() => {
+        if (["people", "chat"].includes(view.name) && !document.activeElement?.matches?.("input, textarea, select")) render();
+      })
+      .catch(() => {});
+  });
+  window.SeaDiveCloud.onChange((kind) => {
+    if (kind === "auth") {
+      cloudNeedsLogin = true;
+      return;
+    }
+    communityBoardCache.at = 0;
+    cloudLiveKinds.add(kind);
+    clearTimeout(cloudLiveTimer);
+    cloudLiveTimer = setTimeout(() => {
+      const kinds = new Set(cloudLiveKinds);
+      cloudLiveKinds.clear();
+      if (kinds.has("links")) linkBasketCache.at = 0;
+      if (kinds.has("messages") || kinds.has("links")) chatLivePull?.();
+      if (kinds.has("messages")) watchChatNotices().catch(() => {});
+    }, 250);
+  });
 }
 
 function bindVaultLife() {

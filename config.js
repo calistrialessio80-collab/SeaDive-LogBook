@@ -17,3 +17,15 @@ window.SEADIVE_OAUTH = {
    Finché l'indirizzo è vuoto le notifiche funzionano solo con l'app aperta. */
 window.SEADIVE_NOTIFY_URL = window.SEADIVE_NOTIFY_URL || "https://seadive-notifiche.calistrialessio80.workers.dev";
 window.SEADIVE_VAPID_PUBLIC = window.SEADIVE_VAPID_PUBLIC || "BOzZXwRVz-E-TfaEruPR8NbuZ4vkH4dmVpkh5KTFYvpSVQzycQq5wBmTD1Rg62gAdd7T_xx0RV2MxqFjLJYoruc";
+
+/* Registro Community su Firebase (progetto gratuito "seadive-community", piano Spark).
+   Non è un segreto: la protezione la danno le regole in firebase/firestore.rules.
+   Se si toglie, l'app torna al vecchio registro Pantry. */
+window.SEADIVE_FIREBASE = window.SEADIVE_FIREBASE || {
+  apiKey: "AIzaSyAn3eGqSKql6yQRiF_6I4Xr_pKXrJyzfQA",
+  authDomain: "seadive-community.firebaseapp.com",
+  projectId: "seadive-community",
+  storageBucket: "seadive-community.firebasestorage.app",
+  messagingSenderId: "815017263433",
+  appId: "1:815017263433:web:3c23be9577ee3c50b39a98",
+};

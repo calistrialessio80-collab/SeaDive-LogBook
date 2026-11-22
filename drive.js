@@ -61,6 +61,12 @@ function saveDriveToken(token, expiresIn) {
     /* resta solo in memoria */
   }
   setDriveWanted(true);
+  // La Community (Firebase) usa lo stesso permesso Google per collegarsi senza un'altra finestra.
+  try {
+    window.dispatchEvent(new CustomEvent("seadive-google-token"));
+  } catch {
+    /* niente */
+  }
 }
 
 function forgetDriveToken() {
@@ -250,6 +256,7 @@ window.SeaDiveDrive = {
   uploadDriveBackup,
   downloadDriveBackup,
   driveConnected,
+  currentToken: driveToken,
   driveWanted,
   setDriveWanted,
   signInGoogle,
