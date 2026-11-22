@@ -1,0 +1,145 @@
+rules_version = '2';
+
+// Regole del registro Community di SeaDive (Firestore).
+// Ognuno è identificato dal suo "codice SeaDive": i primi 32 caratteri di SHA-256("seadive|" + id Google).
+// Le regole lo ricalcolano dall'accesso Google, quindi nessuno può scrivere a nome di un altro.
+// Si legge solo da collegati; si scrive solo la propria parte.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.firebase.identities != null
+        && ('google.com' in request.auth.token.firebase.identities);
+    }
+
+    function myCode() {
+      return hashing.sha256('seadive|' + request.auth.token.firebase.identities['google.com'][0]).toHexString().lower();
+    }
+
+    function isCode(code) {
+      return code is string && code.matches('^[0-9a-f]{32}$');
+    }
+
+    // Il codice è i primi 32 caratteri del mio hash.
+    function isMe(code) {
+      return signedIn() && isCode(code) && myCode().matches('^' + code + '.*$');
+    }
+
+    function shortText(v, n) {
+      return v is string && v.size() <= n;
+    }
+
+    function okBox(b) {
+      return b is map
+        && b.keys().hasOnly(['v', 'iv', 'ct', 'from', 'to'])
+        && shortText(b.get('iv', ''), 40)
+        && shortText(b.get('ct', ''), 30000)
+        && shortText(b.get('from', ''), 20)
+        && shortText(b.get('to', ''), 20);
+    }
+
+    // ---------- Profili: profiles/{codice} ----------
+    match /profiles/{code} {
+      allow read: if signedIn();
+      allow create, update: if isMe(code)
+        && request.resource.data.keys().hasOnly(['id', 'owner', 'at', 'firstName', 'lastName', 'name', 'key', 'portrait', 'pub'])
+        && request.resource.data.owner == code
+        && request.resource.data.get('id', code) == code
+        && shortText(request.resource.data.get('at', ''), 40)
+        && shortText(request.resource.data.get('firstName', ''), 40)
+        && shortText(request.resource.data.get('lastName', ''), 40)
+        && shortText(request.resource.data.get('name', ''), 80)
+        && shortText(request.resource.data.get('key', ''), 80)
+        && shortText(request.resource.data.get('portrait', ''), 12000)
+        && (!('pub' in request.resource.data) || (
+              request.resource.data.pub is map
+              && request.resource.data.pub.keys().hasOnly(['x', 'y'])
+              && shortText(request.resource.data.pub.x, 64)
+              && shortText(request.resource.data.pub.y, 64)));
+      allow delete: if isMe(code);
+    }
+
+    // ---------- Collegamenti "Segui": links/{sinistra~destra} ----------
+    // Ognuno dei due cambia solo i campi del suo lato: il "Segui" dell'altro lo scrive l'altro.
+    match /links/{pair} {
+      function leftKeys() { return ['leftFollows', 'leftName', 'leftFirst', 'leftLast', 'leftBox']; }
+      function rightKeys() { return ['rightFollows', 'rightName', 'rightFirst', 'rightLast', 'rightBox']; }
+      function allKeys() { return ['pair', 'left', 'right'].concat(leftKeys()).concat(rightKeys()); }
+
+      function okSide(d, side) {
+        return d.get(side + 'Follows', false) is bool
+          && shortText(d.get(side + 'Name', ''), 80)
+          && shortText(d.get(side + 'First', ''), 40)
+          && shortText(d.get(side + 'Last', ''), 40)
+          && (!((side + 'Box') in d) || okBox(d[side + 'Box']));
+      }
+
+      function okShape(d) {
+        return d.keys().hasOnly(allKeys())
+          && isCode(d.left) && isCode(d.right) && d.left < d.right
+          && pair == d.left + '~' + d.right
+          && d.pair == pair
+          && okSide(d, 'left') && okSide(d, 'right');
+      }
+
+      function mySideKeys(d) {
+        return isMe(d.left) ? leftKeys() : rightKeys();
+      }
+
+      function otherSideEmpty(d) {
+        return isMe(d.left)
+          ? (d.get('rightFollows', false) == false && !('rightBox' in d))
+          : (d.get('leftFollows', false) == false && !('leftBox' in d));
+      }
+
+      allow read: if signedIn();
+      allow create: if okShape(request.resource.data)
+        && (isMe(request.resource.data.left) || isMe(request.resource.data.right))
+        && otherSideEmpty(request.resource.data);
+      allow update: if okShape(request.resource.data)
+        && request.resource.data.left == resource.data.left
+        && request.resource.data.right == resource.data.right
+        && (isMe(resource.data.left) || isMe(resource.data.right))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(mySideKeys(resource.data));
+      // Uscendo dalla Community si tolgono i propri collegamenti.
+      allow delete: if isMe(resource.data.left) || isMe(resource.data.right);
+    }
+
+    // ---------- Messaggi: messages/{id} ----------
+    // Il testo è cifrato nelle "boxes", una per destinatario. Non si modificano: si scrivono e basta.
+    match /messages/{id} {
+      allow read: if signedIn();
+      allow create: if isMe(request.resource.data.from)
+        && request.resource.data.keys().hasOnly(['_id', 'v', 'thread', 'with', 'from', 'name', 'boxes', 'at', 'kind', 'ts'])
+        && request.resource.data._id == id
+        && id.matches('^[0-9a-zA-Z]{8,40}$')
+        && request.resource.data.ts == request.time
+        && shortText(request.resource.data.get('thread', ''), 400)
+        && shortText(request.resource.data.get('with', ''), 400)
+        && shortText(request.resource.data.get('name', ''), 80)
+        && shortText(request.resource.data.get('at', ''), 40)
+        && request.resource.data.get('kind', 'group') in ['group', 'dm']
+        && request.resource.data.boxes is map
+        && request.resource.data.boxes.size() <= 60;
+      allow update: if false;
+      allow delete: if isMe(resource.data.from);
+    }
+
+    // ---------- Voti dell'app: ratings/{codice} ----------
+    match /ratings/{code} {
+      allow read: if signedIn();
+      allow create, update: if isMe(code)
+        && request.resource.data.keys().hasOnly(['stars', 'at'])
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && shortText(request.resource.data.at, 40);
+      allow delete: if isMe(code);
+    }
+
+    // Tutto il resto è chiuso.
+    match /{other=**} {
+      allow read, write: if false;
+    }
+  }
+}
