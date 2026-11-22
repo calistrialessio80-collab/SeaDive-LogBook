@@ -21,6 +21,9 @@ window.SEADIVE_VAPID_PUBLIC = window.SEADIVE_VAPID_PUBLIC || "BOzZXwRVz-E-TfaEru
 /* Registro Community su Firebase (progetto gratuito "seadive-community", piano Spark).
    Non è un segreto: la protezione la danno le regole in firebase/firestore.rules.
    Se si toglie, l'app torna al vecchio registro Pantry. */
+/* Client Google del progetto Firebase: Firebase accetta solo permessi rilasciati per il suo progetto,
+   quindi la Community si collega con questo (una volta sola, poi Firebase ricorda l'accesso). */
+window.SEADIVE_FIREBASE_CLIENT_ID = window.SEADIVE_FIREBASE_CLIENT_ID || "815017263433-085899q0is76rd1sk3s2egrsl3ho9pps.apps.googleusercontent.com";
 window.SEADIVE_FIREBASE = window.SEADIVE_FIREBASE || {
   apiKey: "AIzaSyAn3eGqSKql6yQRiF_6I4Xr_pKXrJyzfQA",
   authDomain: "seadive-community.firebaseapp.com",

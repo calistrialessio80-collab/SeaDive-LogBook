@@ -134,6 +134,26 @@ function requestGoogleToken({ silent = false, hint = "" } = {}) {
   );
 }
 
+// Permesso Google per la Community (progetto Firebase): solo nome ed email, chiesto con un tocco.
+function requestCommunityToken({ hint = "" } = {}) {
+  const clientId = String(window.SEADIVE_FIREBASE_CLIENT_ID || "").trim();
+  if (!clientId) return Promise.reject(new Error("community-off"));
+  if (!googleLoginAllowed()) return Promise.reject(new Error("community-auth"));
+  return loadGsi().then(
+    () =>
+      new Promise((resolve, reject) => {
+        const client = google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: "openid email profile",
+          hint: hint || undefined,
+          callback: (resp) => (resp.error ? reject(new Error(resp.error_description || resp.error)) : resolve(resp.access_token)),
+          error_callback: (err) => reject(new Error(err?.type || err?.message || String(err))),
+        });
+        client.requestAccessToken();
+      })
+  );
+}
+
 async function ensureToken({ interactive = false, hint = "" } = {}) {
   const existing = driveToken();
   if (existing) return existing;
@@ -257,6 +277,7 @@ window.SeaDiveDrive = {
   downloadDriveBackup,
   driveConnected,
   currentToken: driveToken,
+  communityToken: requestCommunityToken,
   driveWanted,
   setDriveWanted,
   signInGoogle,

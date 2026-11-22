@@ -2793,21 +2793,28 @@ async function cloudSession() {
     return;
   }
   try {
-    await window.SeaDiveCloud.signIn(sub, window.SeaDiveDrive?.currentToken?.() || "");
+    await window.SeaDiveCloud.signIn(sub, "");
     cloudNeedsLogin = false;
   } catch (err) {
     const was = cloudNeedsLogin;
     cloudNeedsLogin = true;
-    if (!was && ["people", "chat"].includes(view.name)) setTimeout(() => render(), 0);
+    if (!was && COMMUNITY_LOGIN_VIEWS.includes(view.name) && !document.activeElement?.matches?.("input, textarea, select")) setTimeout(() => render(), 0);
     throw new Error(err?.message === "community-account" ? "community-account" : "community-auth");
   }
 }
 
+const COMMUNITY_LOGIN_VIEWS = ["home", "people", "chat"];
+
 async function connectCommunityByTap() {
   const hint = loadSession()?.email || "";
-  const token = await window.SeaDiveDrive.ensureToken({ interactive: true, hint });
+  const token = window.SEADIVE_FB_EMULATOR ? "" : await window.SeaDiveDrive.communityToken({ hint });
   await window.SeaDiveCloud.signIn(String(loadSession()?.sub || ""), token);
   cloudNeedsLogin = false;
+  // Appena collegati: profilo, "Segui" e avvisi della chat ripartono subito.
+  queueProfilePublish(400);
+  linkSyncAt = 0;
+  setTimeout(backgroundLinkSync, 1200);
+  watchChatNotices().catch(() => {});
 }
 
 function communityLoginCard() {
@@ -2815,7 +2822,7 @@ function communityLoginCard() {
   box.className = "backup-banner";
   box.setAttribute("role", "status");
   const text = document.createElement("p");
-  text.textContent = "Per vedere la Community e scrivere in chat conferma una volta il tuo account Google.";
+  text.textContent = "Community nuova e più sicura: conferma una volta il tuo account Google per vedere chi segui e scrivere in chat.";
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn primary";
@@ -6461,7 +6468,7 @@ function renderScreen() {
   if (view.name === "edit") app.append(renderEdit());
   refreshBackupBanner();
   refreshLocalSaveBanner();
-  if (useFirebase() && cloudNeedsLogin && loadSession() && ["people", "chat"].includes(view.name)) app.prepend(communityLoginCard());
+  if (useFirebase() && cloudNeedsLogin && loadSession() && !state.profile?.communityOff && COMMUNITY_LOGIN_VIEWS.includes(view.name)) app.prepend(communityLoginCard());
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
   if (loadSession() && location.hash === "#chat") {
@@ -13718,14 +13725,6 @@ const cloudLiveKinds = new Set();
 function bindCloudLive() {
   if (bindCloudLive.done) return;
   bindCloudLive.done = true;
-  window.addEventListener("seadive-google-token", () => {
-    if (!loadSession() || state.profile?.communityOff) return;
-    cloudSession()
-      .then(() => {
-        if (["people", "chat"].includes(view.name) && !document.activeElement?.matches?.("input, textarea, select")) render();
-      })
-      .catch(() => {});
-  });
   window.SeaDiveCloud.onChange((kind) => {
     if (kind === "auth") {
       cloudNeedsLogin = true;
