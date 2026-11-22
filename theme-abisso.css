@@ -697,3 +697,82 @@ body.abisso .profile-coffee a.btn.coffee-btn { background: rgba(251, 191, 36, 0.
   .dive-edit .form-grid.sec-g3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .dive-edit .dive-sec .stage-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
+
+/* Chat personale (versione A): bottone nella scheda della persona, schermata a due, elenco "Personali". */
+.dm-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 14px 0 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(14, 116, 144, 0.12));
+  color: #eaf6ff;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dm-cta .ico { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: #22d3ee; color: #04202c; }
+.dm-cta .ico .ui-ico { display: grid; place-items: center; }
+.dm-cta .t { flex: 1; min-width: 0; }
+.dm-cta b { display: block; font-size: 16px; }
+.dm-cta small { display: block; margin-top: 2px; font-size: 12px; color: #9cc3d3; }
+.dm-cta .badge, .dm-row .badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  background: #f97316;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+.dm-cta .badge[hidden] { display: none; }
+.dm-cta .chev { flex: none; width: 8px; height: 8px; margin: 0 4px 0 2px; border-right: 2px solid #6fa8c0; border-bottom: 2px solid #6fa8c0; transform: rotate(-45deg); }
+.dm-av {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0ea5b7, #0b3a52);
+  color: #fff;
+  font-weight: 800;
+  font-size: 17px;
+}
+.dm-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.dm-head .people-avatar, .dm-row .people-avatar { flex: none; width: 46px; height: 46px; margin: 0; border-radius: 50%; object-fit: cover; }
+.dm-head b { display: block; font-size: 19px; color: #eaf6ff; }
+.dm-head small { font-size: 12px; color: #86a7b8; }
+.dm-lock { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); font-size: 12px; color: #86a7b8; }
+.dm-lock .ui-ico svg { width: 16px; height: 16px; }
+.chat-seg { display: flex; gap: 6px; margin: 10px 0 12px; padding: 4px; border-radius: 14px; background: rgba(255, 255, 255, 0.05); }
+.chat-seg button { flex: 1; padding: 9px; border: 0; border-radius: 10px; background: none; color: #9cc3d3; font: inherit; font-weight: 700; cursor: pointer; }
+.chat-seg button.on { background: #22d3ee; color: #04202c; }
+.dm-list { display: flex; flex-direction: column; }
+.dm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dm-row .dm-av { width: 44px; height: 44px; }
+.dm-row .t { flex: 1; min-width: 0; }
+.dm-row b { font-size: 15px; color: #eaf6ff; }
+.dm-row small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; color: #86a7b8; }
+.dm-row .m { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.dm-row time { font-size: 11px; color: #6f8fa0; }

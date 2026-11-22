@@ -1178,7 +1178,7 @@ async function silentDrivePush() {
 function localAccountKeys() {
   return [
     KEY, META_KEY, BRAND_KEY, SESSION_KEY, "seadive-custom-sites", "seadive-community-owner",
-    "seadive-chat-seen-at", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted",
+    "seadive-chat-seen-at", "seadive-chat-seen-ids", "seadive-chat-outbox", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted",
   ];
 }
 
@@ -3407,6 +3407,25 @@ function personPortrait(person) {
   return "";
 }
 
+// Foto della persona, oppure le iniziali in un cerchio se la foto non c'è.
+function dmFace(src, name) {
+  return avatarHtml(src, name) || `<span class="dm-av" aria-hidden="true">${escapeHtml(chatInitials(name))}</span>`;
+}
+
+// Numero di messaggi personali non letti sul bottone "Scrivi a…" della scheda aperta.
+function paintDmBadges() {
+  document.querySelectorAll("[data-dmopen]").forEach((btn) => {
+    profileOwnerKey().then((mine) => {
+      const n = chatPending.get(dmKey(chatPair(mine, btn.dataset.dmopen))) || 0;
+      const badge = btn.querySelector(".badge");
+      if (badge) {
+        badge.textContent = String(n);
+        badge.hidden = !n;
+      }
+    }).catch(() => {});
+  });
+}
+
 function avatarHtml(src, alt) {
   const photo = portraitImage(src);
   if (!photo) return "";
@@ -3464,9 +3483,9 @@ function shrinkPhoto(dataUrl, maxSide = 720, limit = 90000) {
   });
 }
 
-async function loadOnlineProfiles() {
+async function loadOnlineProfiles(maxAge = 20000) {
   try {
-    const board = await loadCommunityBoard().catch((err) => {
+    const board = await loadCommunityBoard(maxAge).catch((err) => {
       if (lastGoodBoard) return lastGoodBoard;
       throw err;
     });
@@ -3996,8 +4015,26 @@ function stopChatPoll() {
 }
 
 const chatPending = new Map();
-const chatSeen = new Set();
+// Messaggi già visti, per numero: un messaggio arrivato in ritardo (Pantry lento) conta lo stesso
+// come non letto. Prima si guardava solo l'ora, e quelli in ritardo andavano persi.
+const CHAT_SEEN_KEY = "seadive-chat-seen-ids";
+const chatSeen = new Set((() => {
+  try {
+    const list = JSON.parse(localStorage.getItem(CHAT_SEEN_KEY) || "null");
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch {
+    return [];
+  }
+})());
 let chatNoticeReady = false;
+
+function saveChatSeen() {
+  try {
+    localStorage.setItem(CHAT_SEEN_KEY, JSON.stringify([...chatSeen].slice(-500)));
+  } catch {
+    /* spazio pieno: si ricorda solo in memoria */
+  }
+}
 
 function askChatNotice() {
   if (!("Notification" in window)) return;
@@ -4091,10 +4128,12 @@ function paintChatBadge() {
   label.textContent = n > 0 ? "Community " + n : "Community";
 }
 
-function openMainChat(roomKey) {
+function openMainChat(roomKey, tab) {
   view.chatRoom = String(roomKey || "");
+  view.chatDm = "";
+  view.chatTab = tab === "dm" ? "dm" : "group";
   if (view.chatRoom) chatPending.delete(view.chatRoom);
-  else chatPending.clear();
+  else if (view.chatTab === "group") [...chatPending.keys()].forEach((key) => { if (!key.startsWith("dm:")) chatPending.delete(key); });
   paintChatBadge();
   view.name = "chat";
   view.chatPersonId = null;
@@ -4104,8 +4143,15 @@ function openMainChat(roomKey) {
 }
 
 function openChatFromOwner(from) {
-  view.chatFocus = String(from || "");
-  openMainChat("");
+  const who = String(from || "");
+  const group = () => {
+    view.chatFocus = who;
+    openMainChat("");
+  };
+  if (!who) return group();
+  profileOwnerKey()
+    .then((mine) => (chatPending.get(dmKey(chatPair(mine, who))) ? openDmChat(who) : group()))
+    .catch(group);
 }
 
 function mutualAdj(links) {
@@ -4218,8 +4264,51 @@ function pickChatRoom(rooms, key, focus) {
   return rooms.length === 1 ? rooms[0] : null;
 }
 
+/* Chat personali: una per ogni persona che vi seguite a vicenda. I messaggi hanno kind "dm" e
+   "with" uguale alla coppia; la busta cifrata c'è solo per voi due. Non compaiono nelle chat di gruppo. */
+// "a Bruno" ma "ad Anna": davanti alla stessa vocale si usa "ad".
+function toName(name) {
+  return (/^a/i.test(String(name || "").trim()) ? "ad " : "a ") + String(name || "");
+}
+
+function dmKey(pair) {
+  return "dm:" + pair;
+}
+
+function dmRooms(mine, links) {
+  const me = String(mine || "");
+  if (!me) return [];
+  const out = [];
+  Object.values(links || {}).forEach((row) => {
+    if (!row?.left || !row?.right || row.left === row.right) return;
+    if (!row.leftFollows || !row.rightFollows) return;
+    if (row.left !== me && row.right !== me) return;
+    const other = String(row.left === me ? row.right : row.left);
+    const pair = chatPair(me, other);
+    if (out.some((room) => room.pair === pair)) return;
+    out.push({ key: dmKey(pair), pair, members: new Set([me, other]), dm: true, other });
+  });
+  return out;
+}
+
+function openDmChat(remote) {
+  const other = String(remote || "");
+  if (!other) return;
+  const person = (state.people || []).find((p) => p.remoteOwner === other);
+  view.chatBackPerson = person?.id || view.personId || null;
+  view.name = "chat";
+  view.chatDm = other;
+  view.chatTab = "dm";
+  view.chatPersonId = null;
+  view.personId = null;
+  view.peopleHint = "";
+  render();
+}
+
 function messageInRoom(row, room, rooms) {
   if (!row || !room) return false;
+  if (room.dm) return row.kind === "dm" && String(row.with || "") === room.pair && room.members.has(String(row.from || ""));
+  if (row.kind === "dm") return false;
   const from = String(row.from || "");
   if (!from || !room.members.has(from)) return false;
   const ids = String(row.with || "").split("~").filter(Boolean);
@@ -4394,13 +4483,17 @@ async function watchChatNotices() {
   }
   const mine = await profileOwnerKey();
   let rooms = [];
+  let dms = [];
   try {
-    rooms = chatRooms(mine, await loadMergedLinks(false));
+    const links = await loadMergedLinks(false);
+    rooms = chatRooms(mine, links);
+    dms = dmRooms(mine, links);
   } catch {
     return;
   }
   const since = localStorage.getItem("seadive-chat-seen-at") || "";
-  const firstOpen = !chatNoticeReady && !since;
+  // Prima volta (o primo avvio di questa versione): tutto quello che c'è già conta come letto.
+  const firstOpen = !chatNoticeReady && (!since || localStorage.getItem(CHAT_SEEN_KEY) === null);
   for (const row of rows) {
     const id = String(row._id || "");
     if (!id || chatSeen.has(id)) continue;
@@ -4408,10 +4501,12 @@ async function watchChatNotices() {
     const text = String(await chatText(row, mine).catch(() => "")).trim();
     const from = String(row.from || "");
     const at = String(row.at || "");
-    const room = rooms.find((item) => messageInRoom(row, item, rooms));
+    const room = rooms.find((item) => messageInRoom(row, item, rooms)) || dms.find((item) => messageInRoom(row, item, rooms));
     if (!room || !text || !from || from === mine) continue;
-    if (firstOpen || (since && at <= since)) continue;
-    const looking = view.name === "chat" && document.visibilityState === "visible" && (!view.chatRoom || view.chatRoom === room.key);
+    if (firstOpen) continue;
+    const looking = view.name === "chat" && document.visibilityState === "visible" && (room.dm
+      ? view.chatDm === room.other
+      : !view.chatDm && view.chatTab !== "dm" && (!view.chatRoom || view.chatRoom === room.key));
     if (looking) {
       chatPending.delete(room.key);
       continue;
@@ -4419,17 +4514,20 @@ async function watchChatNotices() {
     chatPending.set(room.key, (chatPending.get(room.key) || 0) + 1);
     paintChatBadge();
     paintCommunityChats(document.querySelector(".community-page"));
+    paintDmBadges();
     const person = (state.people || []).find((p) => p.remoteOwner === from);
     const title = String(row.name || person?.name || "SeaDive").slice(0, 80);
     await showChatNotice(title, text.slice(0, 140), from);
   }
   chatNoticeReady = true;
   localStorage.setItem("seadive-chat-seen-at", new Date().toISOString());
+  saveChatSeen();
 }
 
 function armChatNotices() {
   if (armChatNotices.started || !loadSession()) return;
   armChatNotices.started = true;
+  resumeChatOutbox();
   enablePushNotices().catch(() => {});
   watchChatNotices().catch(() => {});
   // Ogni 60 s e solo con l'app in primo piano: la chat aperta ha già il suo aggiornamento ogni 15 s.
@@ -4736,8 +4834,38 @@ async function syncIncomingLinks() {
 
 /* Messaggi in uscita: restano qui anche se la schermata si ridisegna. Ogni messaggio riprova da solo
    (fino a 4 giri, con pause crescenti); solo dopo compare "non inviato · tocca per riprovare". */
-const chatOutbox = [];
+// Restano anche nella memoria del telefono: se l'app si chiude subito dopo "Invia", partono alla riapertura.
+const CHAT_OUTBOX_KEY = "seadive-chat-outbox";
+const chatOutbox = (() => {
+  try {
+    const list = JSON.parse(localStorage.getItem(CHAT_OUTBOX_KEY) || "[]");
+    return Array.isArray(list)
+      ? list.filter((item) => item && item.id && item.room && item.text).map((item) => ({ ...item, state: "wait", tries: 0, busy: false }))
+      : [];
+  } catch {
+    return [];
+  }
+})();
 let chatRedraw = null;
+
+function saveChatOutbox() {
+  try {
+    const keep = chatOutbox
+      .filter((item) => item.state !== "sent")
+      .map(({ id, room, from, name, text, at }) => ({ id, room, from, name, text, at }));
+    if (keep.length) localStorage.setItem(CHAT_OUTBOX_KEY, JSON.stringify(keep.slice(-30)));
+    else localStorage.removeItem(CHAT_OUTBOX_KEY);
+  } catch {
+    /* senza spazio resta solo in memoria */
+  }
+}
+
+function resumeChatOutbox() {
+  chatOutbox.forEach((item) => {
+    chatTextCache.set(item.id, item.text);
+    if (item.state === "wait" && !item.busy) setTimeout(() => deliverChatItem(item), 3000 + Math.random() * 3000);
+  });
+}
 
 async function deliverChatItem(item) {
   if (item.busy) return;
@@ -4746,28 +4874,33 @@ async function deliverChatItem(item) {
   try {
     const owner = await profileOwnerKey();
     const links = await loadMergedLinks("board").catch(() => null) || await loadMergedLinks(false);
-    const rooms = chatRooms(owner, links);
-    const room = rooms.find((r) => r.key === item.room) || pickChatRoom(rooms, item.room, "");
+    const isDm = String(item.room).startsWith("dm:");
+    const rooms = isDm ? dmRooms(owner, links) : chatRooms(owner, links);
+    const room = isDm ? rooms.find((r) => r.key === item.room) : rooms.find((r) => r.key === item.room) || pickChatRoom(rooms, item.room, "");
     if (!room?.members.has(owner)) {
       chatOutbox.splice(chatOutbox.indexOf(item), 1);
+      saveChatOutbox();
       item.busy = false;
       chatRedraw?.("Sei uscito dalla chat: non vi seguite più.");
       return;
     }
     const boxes = await sealChatText(item.text, room.members, item.id);
     if (!boxes) throw new Error("seal");
-    await cloudSet(`m-${item.id}`, {
+    const msg = {
       _id: item.id,
       v: 2,
       thread: room.key,
-      with: room.key,
+      with: room.dm ? room.pair : room.key,
       from: owner,
       name: item.name,
       boxes,
       at: item.at,
-    });
+    };
+    if (room.dm) msg.kind = "dm";
+    await cloudSet(`m-${item.id}`, msg);
     item.state = "sent";
     item.busy = false;
+    saveChatOutbox();
     pushChatMembers(owner, room.members);
     chatRedraw?.();
   } catch {
@@ -4778,6 +4911,7 @@ async function deliverChatItem(item) {
     } else {
       item.state = "fail";
     }
+    saveChatOutbox();
     chatRedraw?.();
   }
 }
@@ -4792,8 +4926,31 @@ function renderChat() {
     view.chatPersonId = null;
     render();
   };
-  card.innerHTML = `
+  const dmMode = Boolean(view.chatDm);
+  const listMode = !dmMode && view.chatTab === "dm";
+  card.classList.toggle("dm-mode", dmMode);
+  const dmPerson = dmMode ? (state.people || []).find((p) => p.remoteOwner === view.chatDm) : null;
+  const dmName = dmMode ? personNames(dmPerson || publicNameFromBoard(view.chatDm) || { name: "" }).name || "Subacqueo" : "";
+  const dmFirst = dmMode ? (personNames(dmPerson || { name: dmName }).firstName || dmName) : "";
+  card.innerHTML = dmMode ? `
+    <div class="dm-head">${dmFace(dmPerson ? personPortrait(dmPerson) : "", dmName)}<span><b>${escapeHtml(dmName)}</b><small>Chat personale</small></span></div>
+    <div class="dm-lock">${uiIcon("lock")}<span>Solo tu e ${escapeHtml(dmFirst)} potete leggere questi messaggi.</span></div>
+    <p class="hint" data-gate>Carico i messaggi…</p>
+    <div class="chat-log" data-log hidden></div>
+    <form class="chat-compose" hidden>
+      <input name="text" maxlength="400" placeholder="Scrivi ${escapeHtml(toName(dmFirst))}" autocomplete="off" enterkeyhint="send" />
+      <button class="btn primary" type="submit">Invia</button>
+    </form>
+    <p class="hint" data-chatstatus></p>
+    <button class="btn ghost" type="button" data-back>${dmPerson ? "Torna " + escapeHtml(toName(dmFirst)) : "Torna alla Chat"}</button>
+  ` : `
     <h2 class="serif" style="margin:0">Chat</h2>
+    <div class="chat-seg" role="tablist">
+      <button type="button" role="tab" data-tab="group" class="${listMode ? "" : "on"}">Di gruppo</button>
+      <button type="button" role="tab" data-tab="dm" class="${listMode ? "on" : ""}">Personali</button>
+    </div>
+    <div class="dm-list" data-dmlist ${listMode ? "" : "hidden"}></div>
+    <div data-groupbox ${listMode ? "hidden" : ""}>
     <p class="hint">La chat è solo di chi è seguito in comune. Se due persone si seguono e seguono anche le stesse persone, la chat diventa una sola e la vedono tutti loro. Chi resta fuori non legge i messaggi. Quando scrivi, gli altri nella chat ricevono una notifica. Il diario non viene inviato.</p>
     <div class="chat-members" data-members></div>
     <div class="chat-list" data-rooms hidden></div>
@@ -4803,12 +4960,28 @@ function renderChat() {
       <input name="text" maxlength="400" placeholder="Scrivi a chi è in questa chat" autocomplete="off" enterkeyhint="send" />
       <button class="btn primary" type="submit">Invia</button>
     </form>
+    </div>
     <p class="hint" data-chatstatus></p>
     <button class="btn ghost" type="button" data-back>Torna a Community</button>
   `;
-  card.querySelector("[data-back]").onclick = back;
-  const members = card.querySelector("[data-members]");
-  const roomBox = card.querySelector("[data-rooms]");
+  card.querySelector("[data-back]").onclick = dmMode
+    ? () => {
+      const back = view.chatBackPerson && (state.people || []).some((p) => p.id === view.chatBackPerson) ? view.chatBackPerson : null;
+      view.chatDm = "";
+      if (back) {
+        view.name = "people";
+        view.personId = back;
+        render();
+      } else openMainChat("", "dm");
+    }
+    : back;
+  card.querySelectorAll("[data-tab]").forEach((btn) => {
+    btn.onclick = () => openMainChat("", btn.dataset.tab);
+  });
+  const dmList = card.querySelector("[data-dmlist]");
+  const tabDm = card.querySelector('[data-tab="dm"]');
+  const members = card.querySelector("[data-members]") || document.createElement("div");
+  const roomBox = card.querySelector("[data-rooms]") || document.createElement("div");
   const gate = card.querySelector("[data-gate]");
   const log = card.querySelector("[data-log]");
   const status = card.querySelector("[data-chatstatus]");
@@ -4876,7 +5049,7 @@ function renderChat() {
     rows.forEach((row) => {
       const bubble = document.createElement("div");
       bubble.className = "chat-bubble" + (row.from === owner ? " mine" : "") + (row.state === "wait" ? " sending" : "");
-      if (row.from !== owner) {
+      if (row.from !== owner && !dmMode) {
         const who = document.createElement("strong");
         who.className = "chat-who";
         who.textContent = row.name || "Subacqueo";
@@ -4908,6 +5081,51 @@ function renderChat() {
     if (stick || near) log.scrollTop = log.scrollHeight;
     stick = false;
   };
+  const paintDmTab = (dms) => {
+    if (!tabDm) return;
+    const n = dms.reduce((sum, room) => sum + (chatPending.get(room.key) || 0), 0);
+    tabDm.textContent = n ? `Personali · ${n}` : "Personali";
+  };
+  const paintDmList = async (dms, all, profiles) => {
+    if (!dmList) return;
+    const byOwner = new Map((profiles || []).filter((c) => c.owner).map((c) => [c.owner, c]));
+    const items = [];
+    for (const room of dms) {
+      const rows = (await readableChatRows(all.filter((row) => messageInRoom(row, room, [])), owner))
+        .filter((row) => String(row.text || "").trim())
+        .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+      const last = rows[rows.length - 1] || null;
+      const person = (state.people || []).find((p) => p.remoteOwner === room.other);
+      const card = byOwner.get(room.other);
+      const name = personNames(person || (card ? { firstName: card.firstName, lastName: card.lastName } : { name: "" })).name || "Subacqueo";
+      items.push({ room, last, name, portrait: person ? personPortrait(person) : card?.portrait || "" });
+    }
+    items.sort((a, b) => String(b.last?.at || "").localeCompare(String(a.last?.at || "")) || a.name.localeCompare(b.name));
+    if (!dmList.isConnected) return;
+    dmList.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "hint";
+      empty.textContent = "Nessuna chat personale. Si apre con chi vi seguite a vicenda: entra nella sua scheda e tocca Scrivi.";
+      dmList.append(empty);
+      return;
+    }
+    items.forEach(({ room, last, name, portrait }) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "dm-row";
+      const unread = chatPending.get(room.key) || 0;
+      const when = last ? new Date(last.at) : null;
+      const today = when && when.toDateString() === new Date().toDateString();
+      const time = !when || Number.isNaN(when.getTime()) ? "" : today
+        ? when.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })
+        : when.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit" });
+      const line = last ? (last.from === owner ? "Tu: " : "") + last.text : "Nessun messaggio. Scrivi tu il primo.";
+      row.innerHTML = `${dmFace(portrait, name)}<span class="t"><b>${escapeHtml(name)}</b><small>${escapeHtml(line)}</small></span><span class="m"><time>${escapeHtml(time)}</time>${unread ? `<span class="badge">${unread}</span>` : ""}</span>`;
+      row.onclick = () => openDmChat(room.other);
+      dmList.append(row);
+    });
+  };
   const pull = async (quick) => {
     if (view.name !== "chat" || !log.isConnected || !owner || pulling) return;
     if (!quick && lastRows.length && (pantryWriting() || chatOutbox.some((item) => item.busy))) return;
@@ -4915,8 +5133,42 @@ function renderChat() {
     try {
       const links = await loadMergedLinks(quick ? "cache" : "board");
       const all = quick ? (await loadCommunityBoard(Infinity)).messages || [] : await crudList(COMMUNITY_MESSAGES, false);
-      const profiles = await loadOnlineProfiles();
+      // Con "quick" tutto dalla memoria: la chat compare subito, il giro dopo aggiorna.
+      const profiles = await loadOnlineProfiles(quick ? Infinity : 20000);
       if (!log.isConnected) return;
+      const dms = dmRooms(owner, links);
+      paintDmTab(dms);
+      if (listMode) {
+        await paintDmList(dms, all, profiles.list || []);
+        status.textContent = "";
+        return;
+      }
+      if (dmMode) {
+        active = dms.find((room) => room.other === view.chatDm) || null;
+        knownRooms = active ? [active] : [];
+        if (active) {
+          chatPending.delete(active.key);
+          paintChatBadge();
+        }
+        gate.hidden = Boolean(active);
+        log.hidden = !active;
+        form.hidden = !active;
+        if (!active) {
+          gate.textContent = `Potete scrivervi solo se vi seguite a vicenda. Quando anche ${dmFirst} ti segue, la chat si apre.`;
+          return;
+        }
+        const readableDm = await readableChatRows(all.filter((row) => messageInRoom(row, active, [])), owner);
+        draw(readableDm
+          .filter((row) => String(row.text || "").trim())
+          .map((row) => {
+            if (row._id) chatSeen.add(String(row._id));
+            return { id: String(row._id || ""), from: String(row.from || ""), name: String(row.name || "").slice(0, 80), text: String(row.text || "").slice(0, 400), at: String(row.at || "") };
+          })
+          .sort((a, b) => a.at.localeCompare(b.at)));
+        saveChatSeen();
+        status.textContent = "";
+        return;
+      }
       knownRooms = chatRooms(owner, links);
       active = pickChatRoom(knownRooms, view.chatRoom, view.chatFocus);
       if (active) {
@@ -4952,6 +5204,7 @@ function renderChat() {
         })
         .sort((a, b) => a.at.localeCompare(b.at));
       draw(rows);
+      saveChatSeen();
       status.textContent = "";
     } catch {
       if (status.isConnected) status.textContent = "Collegamento lento, riprovo tra poco…";
@@ -4980,6 +5233,7 @@ function renderChat() {
     };
     chatTextCache.set(item.id, text);
     outbox.push(item);
+    saveChatOutbox();
     input.value = "";
     stick = true;
     draw(lastRows);
@@ -10439,6 +10693,7 @@ function renderStats() {
 // Icone a linea per Community e Profilo, nello stile di quelle della Biologia.
 const UI_ICONS = {
   chat: '<path d="M4 5h16v10H9l-5 4z"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14c2.8 0 5 2.2 5 5"/>',
   book: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
   add: '<circle cx="10" cy="8" r="3.5"/><path d="M3 20c0-3.6 3.1-6.5 7-6.5 1.4 0 2.6.3 3.7.9M18 14v6M15 17h6"/>',
@@ -10854,11 +11109,19 @@ function renderPerson() {
   const shownLevel = privateRemote ? "" : current.level || "";
   // La firma di chi è su SeaDive arriva dal suo profilo: qui si vede soltanto, non si ridisegna.
   const remoteSign = !creating && Boolean(current.remoteOwner) && current.role !== "center";
+  // Chat personale: solo con chi è su SeaDive e vi seguite a vicenda.
+  const canDm = !creating && Boolean(current.remoteOwner) && Boolean(current.followIn) && Boolean(current.followOut) && !state.profile?.communityOff;
+  const dmFirstName = personNames(names.firstName ? names : current).firstName || names.name || current.name;
   form.innerHTML = `
     <div class="person-head">
         ${avatarHtml(personPortrait(current), names.name || current.name)}
         <h2 class="serif">${creating ? "Nuova persona" : escapeHtml(names.name || current.name)}</h2>
     </div>
+    ${canDm ? `<button class="dm-cta" type="button" data-dmopen="${escapeHtml(current.remoteOwner)}">
+      <span class="ico">${uiIcon("chat", 20)}</span>
+      <span class="t"><b>Scrivi ${escapeHtml(toName(dmFirstName))}</b><small>Chat personale · la leggete solo voi due</small></span>
+      <span class="badge" hidden>0</span><i class="chev" aria-hidden="true"></i>
+    </button>` : ""}
     <p class="hint">${creating ? "Scegli se è un buddy, un istruttore o un diving. Per un diving servono indirizzo, foto e firma del responsabile: il punto entra da solo nella Mappa." : privateRemote ? "Nome e cognome sono già qui. Brevetto e firma compaiono quando lo segui." : "Nome, cognome, brevetto e firma restano in questo contatto e nel diario su Drive."}</p>
     <p class="hint" style="margin-top:12px">Ruolo</p>
     <div class="chips" data-roles></div>
@@ -10919,6 +11182,14 @@ function renderPerson() {
       ${creating ? "" : `<button class="btn danger" type="button" data-del>Elimina contatto</button>`}
     </div>
   `;
+  const dmBtn = form.querySelector("[data-dmopen]");
+  if (dmBtn) {
+    dmBtn.onclick = (e) => {
+      e.preventDefault();
+      openDmChat(dmBtn.dataset.dmopen);
+    };
+    queueMicrotask(paintDmBadges);
+  }
   const roleInput = form.querySelector("[name=role]");
   const roles = form.querySelector("[data-roles]");
   [["buddy", "Buddy"], ["guide", "Istruttore"], ["center", "Diving"]].forEach(([id, label]) => {
