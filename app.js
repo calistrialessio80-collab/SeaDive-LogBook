@@ -4275,6 +4275,17 @@ function dmKey(pair) {
   return "dm:" + pair;
 }
 
+// Chat personale ricavata da quello che il telefono sa già (vi seguite a vicenda): pronta senza aspettare la rete.
+function localDmRoom(mine, other) {
+  const me = String(mine || "");
+  const them = String(other || "");
+  if (!me || !them || me === them) return null;
+  const p = (state.people || []).find((x) => x.remoteOwner === them);
+  if (!p?.followIn || !p?.followOut) return null;
+  const pair = chatPair(me, them);
+  return { key: dmKey(pair), pair, members: new Set([me, them]), dm: true, other: them };
+}
+
 function dmRooms(mine, links) {
   const me = String(mine || "");
   if (!me) return [];
@@ -4876,7 +4887,8 @@ async function deliverChatItem(item) {
     const links = await loadMergedLinks("board").catch(() => null) || await loadMergedLinks(false);
     const isDm = String(item.room).startsWith("dm:");
     const rooms = isDm ? dmRooms(owner, links) : chatRooms(owner, links);
-    const room = isDm ? rooms.find((r) => r.key === item.room) : rooms.find((r) => r.key === item.room) || pickChatRoom(rooms, item.room, "");
+    const dmOther = isDm ? String(item.room).slice(3).split("~").find((id) => id !== owner) : "";
+    const room = isDm ? rooms.find((r) => r.key === item.room) || localDmRoom(owner, dmOther) : rooms.find((r) => r.key === item.room) || pickChatRoom(rooms, item.room, "");
     if (!room?.members.has(owner)) {
       chatOutbox.splice(chatOutbox.indexOf(item), 1);
       saveChatOutbox();
@@ -4937,7 +4949,7 @@ function renderChat() {
     <div class="dm-lock">${uiIcon("lock")}<span>Solo tu e ${escapeHtml(dmFirst)} potete leggere questi messaggi.</span></div>
     <p class="hint" data-gate>Carico i messaggi…</p>
     <div class="chat-log" data-log hidden></div>
-    <form class="chat-compose" hidden>
+    <form class="chat-compose">
       <input name="text" maxlength="400" placeholder="Scrivi ${escapeHtml(toName(dmFirst))}" autocomplete="off" enterkeyhint="send" />
       <button class="btn primary" type="submit">Invia</button>
     </form>
@@ -4956,7 +4968,7 @@ function renderChat() {
     <div class="chat-list" data-rooms hidden></div>
     <p class="hint" data-gate>Carico chi è dentro…</p>
     <div class="chat-log" data-log hidden></div>
-    <form class="chat-compose" hidden>
+    <form class="chat-compose">
       <input name="text" maxlength="400" placeholder="Scrivi a chi è in questa chat" autocomplete="off" enterkeyhint="send" />
       <button class="btn primary" type="submit">Invia</button>
     </form>
@@ -4996,6 +5008,15 @@ function renderChat() {
   let stick = true;
   let pulling = false;
   let lastRows = [];
+  let waitingSend = false;
+  const sendWaiting = () => {
+    if (!waitingSend || !card.isConnected) return;
+    if (owner && active?.members.has(owner) && !form.hidden) form.requestSubmit();
+    else if (form.hidden) {
+      waitingSend = false;
+      status.textContent = "Messaggio non inviato: in questa chat non puoi ancora scrivere.";
+    }
+  };
   const outbox = chatOutbox;
   const paintMembers = (people) => {
     members.replaceChildren();
@@ -5036,7 +5057,9 @@ function renderChat() {
       roomBox.append(button);
     });
   };
-  const draw = (got) => {
+  let loadedOnce = false;
+  const draw = (got, early = false) => {
+    if (!early) loadedOnce = true;
     lastRows = got;
     const sentIds = new Set(got.map((row) => row.id).filter(Boolean));
     for (let i = outbox.length - 1; i >= 0; i -= 1) if (sentIds.has(outbox[i].id)) outbox.splice(i, 1);
@@ -5046,7 +5069,7 @@ function renderChat() {
     if (!rows.length) {
       const empty = document.createElement("p");
       empty.className = "hint";
-      empty.textContent = "Nessun messaggio. Scrivi tu il primo.";
+      empty.textContent = loadedOnce ? "Nessun messaggio. Scrivi tu il primo." : "Carico i messaggi… puoi già scrivere.";
       log.append(empty);
       return;
     }
@@ -5075,7 +5098,7 @@ function renderChat() {
         bubble.onclick = () => {
           row.tries = 0;
           row.state = "wait";
-          draw(lastRows);
+          draw(lastRows, true);
           deliverChatItem(row);
         };
       }
@@ -5148,7 +5171,7 @@ function renderChat() {
         return;
       }
       if (dmMode) {
-        active = dms.find((room) => room.other === view.chatDm) || null;
+        active = dms.find((room) => room.other === view.chatDm) || localDmRoom(owner, view.chatDm);
         knownRooms = active ? [active] : [];
         if (active) {
           chatPending.delete(active.key);
@@ -5214,18 +5237,26 @@ function renderChat() {
       if (status.isConnected) status.textContent = "Collegamento lento, riprovo tra poco…";
     }
     pulling = false;
+    sendWaiting();
   };
   chatRedraw = (note) => {
     if (!log.isConnected) return;
     if (note) status.textContent = note;
     stick = true;
-    draw(lastRows);
+    draw(lastRows, true);
   };
   form.onsubmit = (e) => {
     e.preventDefault();
     const input = form.querySelector("[name=text]");
     const text = String(input.value || "").trim().slice(0, 400);
-    if (!text || !owner || !active?.members.has(owner)) return;
+    if (!text) return;
+    if (!owner || !active?.members.has(owner)) {
+      // La chat non è ancora pronta: il messaggio resta nel campo e parte da solo appena si apre.
+      waitingSend = true;
+      status.textContent = "Apro la chat: il messaggio parte appena è pronta…";
+      return;
+    }
+    waitingSend = false;
     const item = {
       id: uid().replace(/-/g, ""),
       room: active.key,
@@ -5240,7 +5271,7 @@ function renderChat() {
     saveChatOutbox();
     input.value = "";
     stick = true;
-    draw(lastRows);
+    draw(lastRows, true);
     status.textContent = "";
     input.focus();
     deliverChatItem(item);
@@ -5248,6 +5279,17 @@ function renderChat() {
   profileOwnerKey().then((mine) => {
     if (!card.isConnected) return;
     owner = mine;
+    // Chat personale: si può scrivere subito, i messaggi vecchi arrivano dopo.
+    if (dmMode && !active) {
+      active = localDmRoom(owner, view.chatDm);
+      if (active) {
+        knownRooms = [active];
+        gate.hidden = true;
+        log.hidden = false;
+        draw(lastRows, true);
+        sendWaiting();
+      }
+    }
     // Prima si disegna con i dati già scaricati, poi si aggiorna.
     const fresh = () => pull();
     if (communityBoardCache.data || lastGoodBoard) pull(true).then(fresh, fresh);
@@ -13436,8 +13478,19 @@ function vaultStatusLine() {
       queueProfilePublish();
       return;
     }
-    if (loadSession()) await silentDrivePush();
+    // Prima si apre il diario che è già sul telefono; Drive si collega dopo, senza bloccare.
+    // (Su Android l'accesso silenzioso a Google può restare appeso: l'app rimaneva sul caricamento.)
     render();
+    if (loadSession()) {
+      const before = JSON.stringify([...diveFingerprintsNow()]);
+      silentDrivePush()
+        .then((res) => {
+          if (!res?.ok || JSON.stringify([...diveFingerprintsNow()]) === before) return;
+          const typing = document.activeElement?.matches?.("input, textarea, select");
+          if (!typing && !["edit", "chat"].includes(view.name)) render();
+        })
+        .catch(() => {});
+    }
     bindVaultLife();
     queueProfilePublish();
   } catch (err) {

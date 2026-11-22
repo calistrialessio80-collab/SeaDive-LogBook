@@ -1078,6 +1078,7 @@ button.people-row { cursor: pointer; }
   font-size: 16px;
 }
 .chat-compose .btn { flex: none; }
+.chat-compose[hidden] { display: none; }
 .chat-list {
   display: flex;
   flex-direction: column;

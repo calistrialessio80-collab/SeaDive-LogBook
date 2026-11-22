@@ -76,6 +76,7 @@ function forgetDriveToken() {
 function loadGsi() {
   return new Promise((resolve, reject) => {
     if (window.google?.accounts?.oauth2) return resolve();
+    setTimeout(() => reject(new Error("Impossibile caricare l’accesso Google.")), 20000);
     const s = document.createElement("script");
     s.src = "https://accounts.google.com/gsi/client";
     s.async = true;
@@ -102,6 +103,14 @@ function requestGoogleToken({ silent = false, hint = "" } = {}) {
   return loadGsi().then(
     () =>
       new Promise((resolve, reject) => {
+        // Senza tocco dell'utente Google a volte non risponde mai (Android, app installata): dopo 15 s si lascia perdere.
+        const quiet = silent ? setTimeout(() => reject(new Error("Google non risponde.")), 15000) : 0;
+        const done = (fn) => (v) => {
+          clearTimeout(quiet);
+          fn(v);
+        };
+        resolve = done(resolve);
+        reject = done(reject);
         const client = google.accounts.oauth2.initTokenClient({
           client_id: clientId,
           scope: oauthCfg().google.scope,
@@ -132,7 +141,7 @@ async function ensureToken({ interactive = false, hint = "" } = {}) {
 }
 
 async function userFromGoogleToken(token) {
-  const res = await fetch(oauthCfg().google.userinfo, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await driveFetch(oauthCfg().google.userinfo, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error("Google ha accettato l’accesso ma il profilo non è arrivato.");
   const user = await res.json();
   return {
@@ -159,9 +168,16 @@ async function authHeader({ interactive = false } = {}) {
   return { Authorization: `Bearer ${token}` };
 }
 
+// Le chiamate a Drive non restano appese: dopo 30 s (60 s per il diario) si rinuncia e si riprova più tardi.
+function driveFetch(url, init = {}, ms = 30000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { ...init, signal: ctl.signal }).finally(() => clearTimeout(t));
+}
+
 async function findDriveFile(headers) {
   const q = encodeURIComponent("name = 'seadive-logbook.json'");
-  const res = await fetch(
+  const res = await driveFetch(
     `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime)&q=${q}`,
     { headers }
   );
@@ -187,7 +203,7 @@ async function uploadDriveBackup(payload) {
   const url = existing
     ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart`
     : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
-  const res = await fetch(url, { method: existing ? "PATCH" : "POST", headers, body });
+  const res = await driveFetch(url, { method: existing ? "PATCH" : "POST", headers, body }, 60000);
   if (!res.ok) throw new Error("Upload su Drive fallito.");
   return await res.json();
 }
@@ -196,7 +212,7 @@ async function downloadDriveBackup() {
   const headers = await authHeader({ interactive: false });
   const file = await findDriveFile(headers);
   if (!file) return null;
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, { headers });
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, { headers }, 60000);
   if (!res.ok) throw new Error("Download da Drive fallito.");
   return await res.json();
 }
