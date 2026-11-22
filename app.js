@@ -1319,7 +1319,8 @@ async function pushCloudVault() {
       if (!d?.id) continue;
       const id = vaultDocId(d.id);
       diveIds.add(id);
-      const f = diveFingerprint(d);
+      // Impronta corta: quella completa (con foto e firme) supera i 200 caratteri ammessi dalle regole.
+      const f = fastHash(diveFingerprint(d));
       if (fp.dives[id] !== f) dives.push({ id, fp: f, json: await sealVault(JSON.stringify(await cloudDiveCopy(d)), km) });
     }
     const people = [];
