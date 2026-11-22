@@ -3003,6 +3003,38 @@ async function postLinkBasket(raw) {
   linkBasketCache = { at: Date.now(), data: map, flight: null };
 }
 
+/* Scrive solo la mia metà di un collegamento. Con PUT Pantry unisce invece di sostituire: due telefoni che
+   scrivono insieme (anche sui due lati dello stesso collegamento) non si cancellano più a vicenda.
+   Prima ogni telefono riscriveva tutto l'elenco con POST e vinceva l'ultimo: i "Segui" sparivano. */
+const BLANK_LINK_BOX = { v: 0, iv: "", ct: "", from: "", to: "" };
+async function putMyLinkSide(part) {
+  const res = await pantryFetch(COMMUNITY_LINKS_CLOUD, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ links: { [part.pair]: part } }),
+  });
+  if (!res.ok) throw new Error("network");
+  linkLoadGen += 1;
+  const data = { ...(linkBasketCache.data || {}) };
+  data[part.pair] = { ...(data[part.pair] || {}), ...part };
+  linkBasketCache = { at: 0, data, flight: null };
+}
+
+// I miei campi di un lato (nomi e busta) da mettere in una scrittura parziale.
+async function myLinkSidePart(pair, side, otherId) {
+  const tmp = { pair };
+  if (!communityBoardCache.data) {
+    try { await loadCommunityBoard(0); } catch { /* senza bacheca la busta arriva al prossimo giro */ }
+  }
+  await fillMyLinkSide(tmp, side, remotePubKey(otherId));
+  return {
+    [side + "Name"]: tmp[side + "Name"] || "",
+    [side + "First"]: tmp[side + "First"] || "",
+    [side + "Last"]: tmp[side + "Last"] || "",
+    [side + "Box"]: tmp[side + "Box"] || BLANK_LINK_BOX,
+  };
+}
+
 function fitCloudProfile(body) {
   const size = () => JSON.stringify(body).length;
   if (size() > 80000) delete body.portrait;
@@ -4578,18 +4610,7 @@ async function ensureCommunityLink(mine, other) {
       const links = await loadMergedLinks(true);
       if (links[pair]) return;
       const leftIsMine = mine < remote;
-      const body = {
-        pair,
-        left: leftIsMine ? mine : remote,
-        right: leftIsMine ? remote : mine,
-        leftName: "",
-        rightName: "",
-        leftCert: "",
-        rightCert: "",
-        leftFollows: false,
-        rightFollows: false,
-      };
-      await postLinkBasket({ ...links, [pair]: body });
+      await putMyLinkSide({ pair, left: leftIsMine ? mine : remote, right: leftIsMine ? remote : mine });
     }, (fresh) => Boolean(fresh[pair])));
   } catch (err) {
     return { error: err?.message === "verify" ? "verify" : "network" };
@@ -4668,50 +4689,17 @@ async function setMyFollow(other, on) {
     const body = await enqueueCloud(() => linkWriteVerified(async () => {
       const links = await loadMergedLinks(true);
       const current = links[pair] || null;
-      const local = (state.people || []).find((p) => p.remoteOwner === remote);
       const left = current?.left || (mine < remote ? mine : remote);
       const right = current?.right || (left === mine ? remote : mine);
-      const mineIsLeft = left === mine;
-      const nextBody = {
-        pair,
-        left,
-        right,
-        leftName: String(current?.leftName || ""),
-        rightName: String(current?.rightName || ""),
-        leftFirst: String(current?.leftFirst || ""),
-        rightFirst: String(current?.rightFirst || ""),
-        leftLast: String(current?.leftLast || ""),
-        rightLast: String(current?.rightLast || ""),
-        leftFollows: Boolean(current?.leftFollows),
-        rightFollows: Boolean(current?.rightFollows),
-      };
-      if (current?.leftBox) nextBody.leftBox = current.leftBox;
-      if (current?.rightBox) nextBody.rightBox = current.rightBox;
-      const theyFollow = Boolean(local?.followIn) || (mineIsLeft ? Boolean(current?.rightFollows) : Boolean(current?.leftFollows));
-      if (theyFollow) {
-        if (mineIsLeft) nextBody.rightFollows = true;
-        else nextBody.leftFollows = true;
-      }
-      if (mineIsLeft) nextBody.leftFollows = Boolean(on);
-      else nextBody.rightFollows = Boolean(on);
-      const mutual = nextBody.leftFollows && nextBody.rightFollows;
-      if (!mutual) {
-        blankLinkSide(nextBody, "left");
-        blankLinkSide(nextBody, "right");
-      } else {
-        const side = mineIsLeft ? "left" : "right";
-        const otherSide = mineIsLeft ? "right" : "left";
-        const otherId = mineIsLeft ? right : left;
-        if (!communityBoardCache.data) {
-          try { await loadCommunityBoard(0); } catch { /* senza bacheca niente chiave dell'altro: la busta arriva al prossimo giro */ }
-        }
-        await fillMyLinkSide(nextBody, side, remotePubKey(otherId));
-        // Dell'altra persona si copiano solo i nomi, già pubblici nel suo profilo.
-        const otherFields = profileSideFields(communityBoardCache.data?.profiles?.[otherId]);
-        if (otherFields) fillLinkSide(nextBody, otherSide, { name: otherFields.name, firstName: otherFields.firstName, lastName: otherFields.lastName }, true);
-      }
-      await postLinkBasket({ ...links, [pair]: nextBody });
-      return nextBody;
+      const side = left === mine ? "left" : "right";
+      const otherId = side === "left" ? right : left;
+      const theyFollow = Boolean(side === "left" ? current?.rightFollows : current?.leftFollows);
+      // Solo il mio lato: il "Segui" dell'altra persona lo scrive lei, dal suo telefono.
+      const part = { pair, left, right, [side + "Follows"]: Boolean(on) };
+      if (on && theyFollow) Object.assign(part, await myLinkSidePart(pair, side, otherId));
+      else Object.assign(part, { [side + "Name"]: "", [side + "First"]: "", [side + "Last"]: "", [side + "Box"]: BLANK_LINK_BOX });
+      await putMyLinkSide(part);
+      return { ...(current || {}), ...part };
     }, (fresh) => {
       const row = fresh[pair];
       if (!row) return !on;
@@ -4757,11 +4745,35 @@ async function refreshMyLinkBoxes(links, mine) {
       if (!row || !(row.leftFollows && row.rightFollows)) continue;
       const side = row.left === mine ? "left" : row.right === mine ? "right" : "";
       if (!side) continue;
-      const next = { ...row };
-      await fillMyLinkSide(next, side, remotePubKey(side === "left" ? row.right : row.left));
-      fresh[pair] = next;
+      const part = await myLinkSidePart(pair, side, side === "left" ? row.right : row.left);
+      await putMyLinkSide({ pair, left: row.left, right: row.right, ...part });
     }
-    await postLinkBasket(fresh);
+  });
+}
+
+/* Se nel registro manca un "Segui" che su questo telefono risulta dato (scrittura persa quando più
+   telefoni scrivevano insieme), lo si rimanda. Solo in quella direzione: un "Non seguire più" non si
+   ripete da solo, per non togliere un seguito vero partendo da una copia vecchia del diario.
+   Ogni persona al massimo una volta ogni 10 minuti, tre per giro. */
+const followHealAt = new Map();
+function healMyFollows(rows, mine) {
+  if (!mine || state.profile?.communityOff) return;
+  const byRemote = new Map();
+  (rows || []).forEach((row) => {
+    if (row?.left === mine) byRemote.set(row.right, row);
+    else if (row?.right === mine) byRemote.set(row.left, row);
+  });
+  const now = Date.now();
+  const todo = (state.people || []).filter((p) =>
+    p?.remoteOwner && p.remoteOwner !== mine && p.followOut === true && p.role !== "center" &&
+    !personIsGone(p, state.deletedPeople) &&
+    !linkFollowFlags(byRemote.get(p.remoteOwner), mine).followOut &&
+    now - Number(p.followRev || 0) > 30000 &&
+    now - (followHealAt.get(p.remoteOwner) || 0) > 10 * 60 * 1000
+  );
+  todo.slice(0, 3).forEach((p) => {
+    followHealAt.set(p.remoteOwner, now);
+    setMyFollow({ owner: p.remoteOwner }, true).catch(() => {});
   });
 }
 
@@ -4779,6 +4791,7 @@ async function syncIncomingLinks() {
   const cardByOwner = new Map(cards.filter((c) => c.owner).map((c) => [c.owner, c]));
   await openLinkBoxes(links, mine).catch(() => {});
   refreshMyLinkBoxes(links, mine).catch(() => {});
+  healMyFollows(links, mine);
   links.forEach((row) => {
     if (row.left !== mine && row.right !== mine) return;
     const remote = row.left === mine ? row.right : row.left;
