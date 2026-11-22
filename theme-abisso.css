@@ -554,6 +554,10 @@ body.abisso .certs-fold summary .ui-ico {
 }
 body.abisso .community-page .sea-strip,
 body.abisso .community-page .people-list { padding: 12px; border-radius: 18px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--ab-line); }
+/* Righe "Immersioni insieme" nel profilo di una persona: senza questa regola restavano bianche col testo chiaro. */
+body.abisso .people-row { background: var(--ab-glass); border-color: var(--ab-line-2); color: var(--ab-text); }
+body.abisso button.people-row:active { background: var(--ab-glass-2); }
+body.abisso .people-row small { color: var(--ab-text-2); opacity: 1; }
 body.abisso .community-page .sea-photo { box-shadow: 0 0 0 2px #0b1430, 0 0 0 4px rgba(167, 139, 250, 0.55); }
 body.abisso .community-page .contact-photo { box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.45); }
 body.abisso .people-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
