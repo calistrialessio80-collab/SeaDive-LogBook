@@ -1,0 +1,48 @@
+/* Pagina "Installa SeaDive": stesso stile scuro dell'app (Abisso). */
+* { box-sizing: border-box; }
+html { background: #04121c; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: #e6f6fb;
+  background: radial-gradient(120% 70% at 50% -10%, #0e4a63 0%, #072638 45%, #04121c 100%) fixed;
+}
+.wrap { max-width: 440px; margin: 0 auto; padding: calc(28px + env(safe-area-inset-top)) 18px calc(36px + env(safe-area-inset-bottom)); display: grid; gap: 14px; }
+.hero { text-align: center; padding: 6px 0 8px; }
+.logo { width: 76px; height: 76px; border-radius: 20px; display: block; margin: 0 auto 12px; }
+h1 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
+.sub { margin: 6px 0 0; font-size: 15px; color: #9cc3d3; }
+.card { border-radius: 20px; padding: 18px 18px 16px; background: rgba(14, 52, 72, 0.55); border: 1px solid rgba(120, 200, 230, 0.16); }
+.card h2 { margin: 0 0 12px; font-size: 19px; }
+.card p { margin: 0; }
+.tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; margin-bottom: 8px !important; background: rgba(34, 211, 238, 0.15); color: #67e8f9; }
+button { font-family: inherit; -webkit-tap-highlight-color: transparent; }
+.big {
+  width: 100%;
+  border: 0;
+  border-radius: 16px;
+  padding: 17px 16px;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  background: linear-gradient(180deg, #38e1f5, #12b5d6);
+  color: #04202c;
+  box-shadow: 0 10px 24px rgba(34, 211, 238, 0.25);
+}
+.big:disabled { opacity: 0.6; }
+.ghost { margin-top: 12px; width: 100%; border-radius: 14px; padding: 13px; font-size: 15px; font-weight: 600; cursor: pointer; background: transparent; border: 1px solid rgba(120, 200, 230, 0.35); color: #cdeef7; }
+.note { margin-top: 12px !important; font-size: 13.5px; color: #9cc3d3; }
+.done { margin-top: 12px !important; font-size: 15px; color: #86efac; }
+.link { margin-top: 10px !important; padding: 10px 12px; border-radius: 12px; background: rgba(0, 0, 0, 0.25); font-size: 13.5px; word-break: break-all; color: #cdeef7; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.steps li { display: flex; align-items: center; gap: 12px; font-size: 15.5px; }
+.ico { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: #22d3ee; color: #04202c; }
+.ico svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.n { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: rgba(34, 211, 238, 0.18); color: #67e8f9; }
+.warn { background: rgba(120, 80, 10, 0.45); border-color: rgba(251, 191, 36, 0.4); }
+.soft { background: rgba(255, 255, 255, 0.05); }
+.foot { text-align: center; font-size: 13px; color: #7fa9ba; margin: 4px 0 0; }
+.foot a { color: #9cc3d3; }
+[hidden] { display: none !important; }
