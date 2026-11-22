@@ -2792,9 +2792,11 @@ async function loadCommunityBoard(maxAge = 20000) {
         throw new Error("network");
       }
       if (!res.ok) throw new Error("network");
-      const board = boardFromPayload(await res.json());
+      const raw = await res.json();
+      const board = boardFromPayload(raw);
       lastGoodBoard = board;
       resendLostMessages(board);
+      trimBoardIfLong(Array.isArray(raw?.messages) ? raw.messages.length : 0);
       if (gen === communityLoadGen) communityBoardCache = { at: Date.now(), data: board, flight: null };
       return board;
     })
@@ -2881,6 +2883,52 @@ function resendLostMessages(board) {
   });
 }
 
+/* Profilo: anche lui con PUT, solo la mia riga. Prima si riscriveva tutta la bacheca (POST) e poteva
+   sparire un messaggio o un profilo scritto nello stesso momento da un altro telefono. I campi che non
+   ci sono più si mandano vuoti, così l'unione li cancella (anche brevetti in chiaro di versioni vecchie). */
+async function putProfileRow(key, value) {
+  const owner = key.slice(2);
+  return enqueueCloud(async () => {
+    let lastErr = new Error("network");
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const prev = (await loadCommunityBoard(attempt === 0 ? 4000 : 0).catch(() => lastGoodBoard))?.profiles?.[owner] || {};
+        const row = scrubProfileRow(value);
+        Object.keys(prev).forEach((k) => {
+          if (!(k in row)) row[k] = "";
+        });
+        const res = await pantryFetch(COMMUNITY_CLOUD, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profiles: { [owner]: row } }),
+        });
+        if (!res.ok) throw new Error("network");
+        await cloudJitter(900, 1400);
+        communityBoardCache = { at: 0, data: null, flight: null };
+        if (cloudKeyPresent(await loadCommunityBoard(0), key, value)) return;
+        lastErr = new Error("network");
+      } catch (err) {
+        lastErr = err;
+      }
+      communityBoardCache = { at: 0, data: null, flight: null };
+      if (attempt < 4) await cloudJitter(1000 * (attempt + 1), 1500);
+    }
+    throw lastErr;
+  });
+}
+
+/* Con le scritture PUT l'elenco dei messaggi si allunga e basta (Pantry accoda). Quando supera 400
+   righe, un telefono lo riscrive con gli ultimi 200 (al massimo una volta all'ora). */
+let boardTrimAt = 0;
+function trimBoardIfLong(rawCount) {
+  if (rawCount <= 400 || Date.now() - boardTrimAt < 60 * 60 * 1000) return;
+  boardTrimAt = Date.now();
+  enqueueCloud(async () => {
+    const board = await loadCommunityBoard(0);
+    if (Object.keys(board.profiles || {}).length) await postCommunityBoard(boardFromPayload(JSON.parse(JSON.stringify(board))));
+  }).catch(() => {});
+}
+
 async function cloudSet(key, value) {
   if (key.startsWith("m-")) {
     let lastErr = new Error("network");
@@ -2894,6 +2942,7 @@ async function cloudSet(key, value) {
     }
     throw lastErr;
   }
+  if (key.startsWith("p-")) return putProfileRow(key, value);
   return enqueueCloud(async () => {
     let lastErr = new Error("network");
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -13513,7 +13562,22 @@ function vaultStatusLine() {
   }
 })();
 
+/* I "Segui" si allineano col registro anche senza aprire Community: poco dopo l'avvio e poi ogni
+   5 minuti quando l'app torna in primo piano. Così un "Segui" perso si rimanda appena si apre l'app. */
+let linkSyncAt = 0;
+function backgroundLinkSync() {
+  if (!loadSession() || state.profile?.communityOff) return;
+  if (Date.now() - linkSyncAt < 5 * 60 * 1000) return;
+  linkSyncAt = Date.now();
+  syncIncomingLinks()
+    .then((changed) => {
+      if (changed && view.name === "people" && !view.personId && !document.activeElement?.matches?.("input, textarea, select")) render();
+    })
+    .catch(() => {});
+}
+
 function bindVaultLife() {
+  setTimeout(backgroundLinkSync, 5000);
   const tick = () => {
     if (!loadSession()) return;
     if (loadMeta().pendingBackup || dueFifteenDaySync()) silentDrivePush();
@@ -13528,6 +13592,7 @@ function bindVaultLife() {
     }
     tick();
     queueProfilePublish();
+    setTimeout(backgroundLinkSync, 3000);
   });
   window.addEventListener("online", tick);
 }
