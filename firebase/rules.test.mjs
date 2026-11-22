@@ -56,6 +56,16 @@ await t("anna vota 5", assertSucceeds(setDoc(doc(anna, "ratings", ANNA), { stars
 await t("voto 9 rifiutato", assertFails(setDoc(doc(anna, "ratings", ANNA), { stars: 9, at: "2026-11-22" })));
 await t("bruno NON vota per anna", assertFails(setDoc(doc(bruno, "ratings", ANNA), { stars: 1, at: "2026-11-22" })));
 
+// Copia privata del diario
+await t("anna salva la sua copia", assertSucceeds(setDoc(doc(anna, "vaults", ANNA), { json: "{}", fp: "x", at: "2026" })));
+await t("anna salva una immersione", assertSucceeds(setDoc(doc(anna, "vaults", ANNA, "dives", "d1"), { json: "{\"id\":\"d1\"}", fp: "f", at: "2026" })));
+await t("anna legge la sua copia", assertSucceeds(getDocs(collection(anna, "vaults", ANNA, "dives"))));
+await t("bruno NON legge la copia di anna", assertFails(getDoc(doc(bruno, "vaults", ANNA))));
+await t("bruno NON legge le immersioni di anna", assertFails(getDocs(collection(bruno, "vaults", ANNA, "dives"))));
+await t("bruno NON scrive nella copia di anna", assertFails(setDoc(doc(bruno, "vaults", ANNA, "dives", "d2"), { json: "{}", fp: "f", at: "2026" })));
+await t("sotto-raccolta sconosciuta rifiutata", assertFails(setDoc(doc(anna, "vaults", ANNA, "altro", "x"), { json: "{}", fp: "f", at: "2026" })));
+await t("anna cancella una sua immersione", assertSucceeds(deleteDoc(doc(anna, "vaults", ANNA, "dives", "d1"))));
+
 // Altro
 await t("raccolte sconosciute chiuse", assertFails(setDoc(doc(anna, "altro", "x"), { a: 1 })));
 await t("anna esce: cancella il collegamento", assertSucceeds(deleteDoc(doc(anna, "links", PAIR))));

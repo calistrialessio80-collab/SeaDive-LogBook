@@ -284,7 +284,62 @@
     });
   }
 
+  /* ---------- Copia privata del diario (vaults/{codice}) ----------
+     Ogni parte è salvata come testo JSON: Firestore non accetta tutte le forme di dato del diario
+     (per esempio elenchi dentro elenchi nei profili del computer). */
+  async function vaultLoad(code) {
+    await load();
+    if (!auth?.currentUser) throw new Error("community-auth");
+    const fs = mods.fs;
+    const base = fs.doc(db, "vaults", code);
+    const [main, dives, people] = await Promise.all([
+      fs.getDoc(base),
+      fs.getDocs(fs.collection(base, "dives")),
+      fs.getDocs(fs.collection(base, "people")),
+    ]);
+    const rows = (qs) => qs.docs.map((d) => ({ id: d.id, json: d.data().json, fp: d.data().fp || "" }));
+    return {
+      main: main.exists() ? { json: main.data().json, fp: main.data().fp || "" } : null,
+      dives: rows(dives),
+      people: rows(people),
+    };
+  }
+
+  // Scrive solo le parti cambiate, a gruppi sotto i limiti di Firestore (500 operazioni, ~10 MB).
+  async function vaultWrite(code, { main, dives = [], removeDives = [], people = [], removePeople = [] }) {
+    await load();
+    if (!auth?.currentUser) throw new Error("community-auth");
+    const fs = mods.fs;
+    const base = fs.doc(db, "vaults", code);
+    const at = new Date().toISOString();
+    const ops = [];
+    if (main) ops.push({ size: main.json.length, run: (b) => b.set(base, { json: main.json, fp: main.fp, at }) });
+    dives.forEach((d) => ops.push({ size: d.json.length, run: (b) => b.set(fs.doc(base, "dives", d.id), { json: d.json, fp: d.fp, at }) }));
+    people.forEach((p) => ops.push({ size: p.json.length, run: (b) => b.set(fs.doc(base, "people", p.id), { json: p.json, fp: p.fp, at }) }));
+    removeDives.forEach((id) => ops.push({ size: 100, run: (b) => b.delete(fs.doc(base, "dives", id)) }));
+    removePeople.forEach((id) => ops.push({ size: 100, run: (b) => b.delete(fs.doc(base, "people", id)) }));
+    let batch = null;
+    let size = 0;
+    let count = 0;
+    const commits = [];
+    for (const op of ops) {
+      if (!batch || count >= 400 || size + op.size > 7000000) {
+        if (batch) commits.push(batch.commit());
+        batch = fs.writeBatch(db);
+        size = 0;
+        count = 0;
+      }
+      op.run(batch);
+      size += op.size;
+      count += 1;
+    }
+    if (batch) commits.push(batch.commit());
+    await Promise.all(commits);
+  }
+
   window.SeaDiveCloud = {
+    vaultLoad,
+    vaultWrite,
     enabled,
     load,
     signedInAs,

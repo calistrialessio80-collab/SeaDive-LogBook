@@ -761,6 +761,9 @@ function mergeProfiles(a, b) {
   const keyL = left.commKey?.priv?.d ? left.commKey : null;
   const keyR = right.commKey?.priv?.d ? right.commKey : null;
   if (keyL || keyR) out.commKey = keyL && keyR ? (String(keyR.at || "") < String(keyL.at || "") ? keyR : keyL) : keyL || keyR;
+  const vkL = left.vaultKey?.k ? left.vaultKey : null;
+  const vkR = right.vaultKey?.k ? right.vaultKey : null;
+  if (vkL || vkR) out.vaultKey = vkL && vkR ? (String(vkR.at || "") < String(vkL.at || "") ? vkR : vkL) : vkL || vkR;
   if (order) {
     Object.keys(emptyProfile()).forEach((k) => {
       if (k !== "certs" && k in newer) out[k] = newer[k];
@@ -768,6 +771,7 @@ function mergeProfiles(a, b) {
     out.certs = Array.isArray(newer.certs) ? newer.certs : [];
     // La firma non si perde: se la copia più recente non ce l'ha, resta quella dell'altra.
     if (!isSafeImage(out.sign) && isSafeImage(older.sign)) out.sign = older.sign;
+    if (vkL || vkR) out.vaultKey = vkL && vkR ? (String(vkR.at || "") < String(vkL.at || "") ? vkR : vkL) : vkL || vkR;
     return out;
   }
   Object.keys(emptyProfile()).forEach((k) => {
@@ -1035,7 +1039,7 @@ function absorbRenderChanges(before) {
 }
 
 function profileFingerprint(p) {
-  const { updatedAt, commKey, sign, portrait, ...rest } = p || {};
+  const { updatedAt, commKey, vaultKey, sign, portrait, ...rest } = p || {};
   return fastHash(JSON.stringify(rest, skipEmpty)) + "|" + imageMark(sign) + "|" + imageMark(portrait);
 }
 
@@ -1116,7 +1120,10 @@ let lastDrivePushAt = 0;
 
 function scheduleDriveBackup() {
   if (!loadSession()) return;
+  scheduleCloudVault();
   const meta = loadMeta();
+  meta.lastChangeAt = new Date().toISOString();
+  saveMeta(meta);
   if (!meta.pendingBackup) {
     meta.pendingBackup = true;
     saveMeta(meta);
@@ -1124,6 +1131,249 @@ function scheduleDriveBackup() {
   clearTimeout(backupTimer);
   const wait = Math.max(BACKUP_DEBOUNCE_MS, lastDrivePushAt + BACKUP_MIN_GAP_MS - Date.now());
   backupTimer = setTimeout(flushDriveBackup, wait);
+}
+
+/* ---------- Copia privata automatica su Firebase ----------
+   Parte da sola a ogni modifica, senza tocchi: Firebase tiene l'accesso per mesi, mentre il permesso
+   di Drive dura un'ora. Si manda solo quello che è cambiato (un documento per immersione e per contatto).
+   Prima del primo invio si scarica e si unisce la copia online, così un telefono rimasto indietro non
+   cancella le modifiche fatte da un altro. */
+const CLOUD_VAULT_FP_KEY = "seadive-fbvault-fp";
+let cloudVaultTimer = 0;
+let cloudVaultBusy = false;
+let cloudVaultAgain = false;
+let cloudVaultPulledAt = 0;
+
+function loadVaultFp() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CLOUD_VAULT_FP_KEY) || "{}") || {};
+    return { main: String(raw.main || ""), dives: raw.dives || {}, people: raw.people || {} };
+  } catch {
+    return { main: "", dives: {}, people: {} };
+  }
+}
+
+function saveVaultFp(fp) {
+  try {
+    localStorage.setItem(CLOUD_VAULT_FP_KEY, JSON.stringify(fp));
+  } catch {
+    /* al prossimo giro si rimanda tutto: nessun danno */
+  }
+}
+
+function vaultDocId(id) {
+  return String(id || "").replace(/[/\\.#$\[\]]/g, "_").slice(0, 150) || "x";
+}
+
+function vaultMainPart(payload) {
+  const { dives, people, ...rest } = payload;
+  return rest;
+}
+
+// Foto più leggera solo per la copia online (sul telefono resta quella originale).
+async function cloudDiveCopy(d) {
+  let copy = d;
+  if (d?.photo && String(d.photo).length > 260000) {
+    // Sempre più piccola finché sta sotto il limite di un documento (1 MB); se proprio non entra, la foto
+    // resta solo sul telefono e su Drive.
+    for (const [side, limit] of [[1280, 220000], [960, 150000], [640, 90000]]) {
+      const small = await shrinkPhoto(d.photo, side, limit).catch(() => "");
+      if (small) copy = { ...d, photo: small };
+      if (small && small.length <= limit * 1.6) break;
+    }
+  }
+  if (JSON.stringify(copy).length > 650000) copy = { ...copy, photo: "" };
+  return copy;
+}
+
+/* La copia online è cifrata. La chiave nasce sul telefono e viaggia solo dentro la copia su Drive
+   (che legge solo il proprietario): chi gestisce Firebase vede solo testo illeggibile. Su un telefono
+   nuovo la chiave torna da Drive all'accesso con Google, e con lei si apre la copia online.
+   La chiave si crea solo dopo aver sentito Drive, così un telefono nuovo non ne inventa una diversa. */
+let vaultKeyCache = null;
+let vaultRemoteState = "";
+async function vaultKeyMaterial(create) {
+  let vk = state.profile?.vaultKey;
+  // Si può creare solo se Drive è già stato sentito o se online non c'è nessuna copia (nessun rischio
+  // di inventare una chiave diversa da quella di una copia che c'è già).
+  if (!vk?.k && create && (cloudHydrated || vaultRemoteState === "none") && crypto?.subtle) {
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    const k = b64FromBytes(raw);
+    vk = { k, id: fastHash(k).replace(/[^a-z0-9]/g, "").slice(0, 10), at: new Date().toISOString() };
+    state.profile.vaultKey = vk;
+    save(state);
+  }
+  if (!vk?.k) return null;
+  if (vaultKeyCache?.id === vk.id) return vaultKeyCache;
+  const key = await crypto.subtle.importKey("raw", bytesFromB64(vk.k), "AES-GCM", false, ["encrypt", "decrypt"]);
+  vaultKeyCache = { key, id: vk.id, at: String(vk.at || "") };
+  return vaultKeyCache;
+}
+
+async function sealVault(text, km) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, km.key, new TextEncoder().encode(text));
+  return `enc1:${km.id}:${km.at}:${b64FromBytes(iv)}:${b64FromBytes(new Uint8Array(ct))}`;
+}
+
+function vaultKeyIdOf(text) {
+  const parts = String(text || "").split(":");
+  return parts[0] === "enc1" ? { id: parts[1], at: parts.slice(2, parts.length - 2).join(":") } : null;
+}
+
+async function openVaultText(text, km) {
+  if (!String(text || "").startsWith("enc1:")) return String(text || "");
+  const parts = String(text).split(":");
+  if (!km || parts[1] !== km.id) throw new Error("other-key");
+  const ct = parts.pop();
+  const iv = parts.pop();
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytesFromB64(iv) }, km.key, bytesFromB64(ct));
+  return new TextDecoder().decode(plain);
+}
+
+function scheduleCloudVault(delay = 4000) {
+  if (!useFirebase() || !loadSession()) return;
+  clearTimeout(cloudVaultTimer);
+  cloudVaultTimer = setTimeout(() => pushCloudVault().catch(() => {}), delay);
+}
+
+async function pullCloudVault() {
+  const code = await profileOwnerKey();
+  const km = await vaultKeyMaterial(false);
+  const data = await window.SeaDiveCloud.vaultLoad(code);
+  const fp = loadVaultFp();
+  let changed = false;
+  vaultRemoteState = "none";
+  if (data.main?.json) {
+    const remote = vaultKeyIdOf(data.main.json);
+    if (remote && (!km || remote.id !== km.id)) {
+      // Copia fatta con un'altra chiave: si aspetta la chiave da Drive. Se però la nostra è la più vecchia
+      // (quella che tutti i telefoni finiranno per usare), si riscrive la copia con la nostra.
+      vaultRemoteState = km && km.at && km.at < remote.at ? "replace" : "foreign";
+      if (vaultRemoteState === "replace") saveVaultFp({ main: "", dives: {}, people: {} });
+      cloudVaultPulledAt = Date.now();
+      return false;
+    }
+    vaultRemoteState = "ok";
+    const readable = async (rows) => {
+      const out = [];
+      for (const row of rows) {
+        try {
+          out.push({ row, obj: JSON.parse(await openVaultText(row.json, km)) });
+        } catch {
+          /* parte illeggibile: si salta, verrà riscritta */
+        }
+      }
+      return out;
+    };
+    const payload = JSON.parse(await openVaultText(data.main.json, km));
+    const dives = await readable(data.dives);
+    const people = await readable(data.people);
+    data.dives = dives.map((x) => x.row);
+    data.people = people.map((x) => x.row);
+    payload.dives = dives.map((x) => x.obj);
+    payload.people = people.map((x) => x.obj);
+    const before = JSON.stringify([...diveFingerprintsNow()]) + "|" + (state.people || []).length;
+    applyBackupExtras(payload);
+    state = mergeVaults(state, parseBackup(payload));
+    snapshotStamps(state);
+    persistLocal(state);
+    rememberCatalogFromDives();
+    changed = before !== JSON.stringify([...diveFingerprintsNow()]) + "|" + (state.people || []).length;
+    // Quello che è online è già a posto: non si rimanda.
+    fp.main = data.main.fp || "";
+    data.dives.forEach((row) => {
+      if (row.fp) fp.dives[row.id] = row.fp;
+    });
+    data.people.forEach((row) => {
+      if (row.fp) fp.people[row.id] = row.fp;
+    });
+    saveVaultFp(fp);
+  }
+  cloudVaultPulledAt = Date.now();
+  if (changed && !["edit"].includes(view.name) && !document.activeElement?.matches?.("input, textarea, select")) render();
+  return changed;
+}
+
+async function pushCloudVault() {
+  if (!useFirebase() || !loadSession()) return;
+  if (cloudVaultBusy) {
+    cloudVaultAgain = true;
+    return;
+  }
+  cloudVaultBusy = true;
+  try {
+    await cloudSession();
+    const code = await profileOwnerKey();
+    if (!cloudVaultPulledAt) await pullCloudVault();
+    if (vaultRemoteState === "foreign") return;
+    const km = await vaultKeyMaterial(true);
+    if (!km) return;
+    const fp = loadVaultFp();
+    const payload = backupPayload();
+    const mainJson = JSON.stringify(vaultMainPart(payload));
+    const mainFp = fastHash(mainJson);
+    const dives = [];
+    const diveIds = new Set();
+    for (const d of payload.dives || []) {
+      if (!d?.id) continue;
+      const id = vaultDocId(d.id);
+      diveIds.add(id);
+      const f = diveFingerprint(d);
+      if (fp.dives[id] !== f) dives.push({ id, fp: f, json: await sealVault(JSON.stringify(await cloudDiveCopy(d)), km) });
+    }
+    const people = [];
+    const personIds = new Set();
+    for (const person of payload.people || []) {
+      const id = vaultDocId(person?.id || personKey(person?.role, person?.name));
+      personIds.add(id);
+      const json = JSON.stringify(person);
+      const f = fastHash(json);
+      if (fp.people[id] !== f) people.push({ id, fp: f, json: await sealVault(json, km) });
+    }
+    const removeDives = Object.keys(fp.dives).filter((id) => !diveIds.has(id));
+    const removePeople = Object.keys(fp.people).filter((id) => !personIds.has(id));
+    const mainChanged = fp.main !== mainFp;
+    if (!mainChanged && !dives.length && !people.length && !removeDives.length && !removePeople.length) return;
+    await window.SeaDiveCloud.vaultWrite(code, {
+      main: mainChanged ? { json: await sealVault(mainJson, km), fp: mainFp } : null,
+      dives,
+      removeDives,
+      people,
+      removePeople,
+    });
+    fp.main = mainFp;
+    dives.forEach((d) => {
+      fp.dives[d.id] = d.fp;
+    });
+    people.forEach((x) => {
+      fp.people[x.id] = x.fp;
+    });
+    removeDives.forEach((id) => delete fp.dives[id]);
+    removePeople.forEach((id) => delete fp.people[id]);
+    saveVaultFp(fp);
+    vaultRemoteState = "ok";
+    const meta = loadMeta();
+    meta.cloudVaultAt = new Date().toISOString();
+    saveMeta(meta);
+    refreshBackupBanner();
+  } finally {
+    cloudVaultBusy = false;
+    if (cloudVaultAgain) {
+      cloudVaultAgain = false;
+      scheduleCloudVault(2000);
+    }
+  }
+}
+
+// All'avvio e ogni 6 ore: si prende quello che è cambiato da un altro telefono, poi si manda il resto.
+function syncCloudVault() {
+  if (!useFirebase() || !loadSession()) return;
+  const stale = Date.now() - cloudVaultPulledAt > 6 * 60 * 60 * 1000;
+  cloudSession()
+    .then(() => (stale ? pullCloudVault() : null))
+    .then(() => pushCloudVault())
+    .catch(() => {});
 }
 
 function flushDriveBackup() {
@@ -1178,7 +1428,7 @@ async function silentDrivePush() {
 function localAccountKeys() {
   return [
     KEY, META_KEY, BRAND_KEY, SESSION_KEY, "seadive-custom-sites", "seadive-community-owner",
-    "seadive-chat-seen-at", "seadive-chat-seen-ids", "seadive-chat-outbox", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted", "seadive-fb-moved",
+    "seadive-chat-seen-at", "seadive-chat-seen-ids", "seadive-chat-outbox", "seadive-profile-published", "seadive-privacy-ok", "seadive-drive-wanted", "seadive-fb-moved", "seadive-fbvault-fp",
   ];
 }
 
@@ -1240,6 +1490,7 @@ async function maybeBackupDrive() {
     const meta = loadMeta();
     meta.lastBackup = new Date().toISOString();
     meta.drive = true;
+    if (state.profile?.vaultKey?.id) meta.vaultKeyOnDrive = state.profile.vaultKey.id;
     meta.diveCount = state.dives.length;
     meta.pendingBackup = false;
     saveMeta(meta);
@@ -2803,7 +3054,7 @@ async function cloudSession() {
   }
 }
 
-const COMMUNITY_LOGIN_VIEWS = ["home", "people", "chat"];
+const COMMUNITY_LOGIN_VIEWS = ["home", "people", "chat", "profile"];
 
 async function connectCommunityByTap() {
   const hint = loadSession()?.email || "";
@@ -2814,6 +3065,8 @@ async function connectCommunityByTap() {
   queueProfilePublish(400);
   linkSyncAt = 0;
   setTimeout(backgroundLinkSync, 1200);
+  cloudVaultPulledAt = 0;
+  syncCloudVault();
   watchChatNotices().catch(() => {});
 }
 
@@ -2822,7 +3075,9 @@ function communityLoginCard() {
   box.className = "backup-banner";
   box.setAttribute("role", "status");
   const text = document.createElement("p");
-  text.textContent = "Community nuova e più sicura: conferma una volta il tuo account Google per vedere chi segui e scrivere in chat.";
+  text.textContent = state.profile?.communityOff
+    ? "Conferma una volta il tuo account Google: da lì il diario si salva da solo in una copia privata."
+    : "Conferma una volta il tuo account Google: il diario si salva da solo in una copia privata e la Community si collega.";
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn primary";
@@ -6468,7 +6723,7 @@ function renderScreen() {
   if (view.name === "edit") app.append(renderEdit());
   refreshBackupBanner();
   refreshLocalSaveBanner();
-  if (useFirebase() && cloudNeedsLogin && loadSession() && !state.profile?.communityOff && COMMUNITY_LOGIN_VIEWS.includes(view.name)) app.prepend(communityLoginCard());
+  if (useFirebase() && cloudNeedsLogin && loadSession() && COMMUNITY_LOGIN_VIEWS.includes(view.name)) app.prepend(communityLoginCard());
   document.body.append(renderNav());
   if (loadSession()) armChatNotices();
   if (loadSession() && location.hash === "#chat") {
@@ -6501,7 +6756,7 @@ function renderAuth() {
           <p><strong>Titolare.</strong> I dati del diario sono tuoi.</p>
           <p><strong>Cosa.</strong> Nome, email del login; anagrafica e brevetto; schede immersione; firme; foto e note.</p>
           <p><strong>Perché.</strong> Libretto digitale e firme L. 70/2026 art. 12 c. 8.</p>
-          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. In Community compare chi usa l’app. Nome, cognome, brevetto, numero e firma si scambiano solo se due persone si seguono a vicenda. La foto del profilo resta visibile. I messaggi della chat arrivano a chi è nella stessa chat. Diario, foto delle immersioni, telefono e dati medici restano sul telefono e sul Drive.</p>
+          <p><strong>Dove.</strong> Sul telefono (anche se chiudi l’app) e in copia nascosta sul tuo Google Drive, legata all’account. Se perdi o rompi il telefono, rientra con lo stesso Google: il diario torna, anche a distanza di anni. In Community compare chi usa l’app. Nome, cognome, brevetto, numero e firma si scambiano solo se due persone si seguono a vicenda. La foto del profilo resta visibile. I messaggi della chat arrivano a chi è nella stessa chat. Diario, foto delle immersioni, telefono e dati medici restano sul telefono, sul Drive e in una copia automatica cifrata che solo tu puoi aprire.</p>
           <p><strong>Diritti.</strong> Accesso, rettifica, cancellazione, portabilità. Reclami: Garante privacy.</p>
         </div>
       </details>
@@ -13336,7 +13591,13 @@ function compressImage(file) {
       c.height = Math.round(img.height * scale);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
-      resolve(c.toDataURL("image/jpeg", 0.72));
+      let quality = 0.72;
+      let out = c.toDataURL("image/jpeg", quality);
+      while (out.length > 220000 && quality > 0.45) {
+        quality -= 0.07;
+        out = c.toDataURL("image/jpeg", quality);
+      }
+      resolve(out);
     };
     img.onerror = reject;
     img.src = url;
@@ -13594,7 +13855,15 @@ function drawProfile(canvas, points, editable, onChange, deco) {
 
 function backupNeedsUser() {
   const meta = loadMeta();
-  return Boolean(loadSession() && meta.pendingBackup && meta.backupFailed);
+  if (!(loadSession() && meta.pendingBackup && meta.backupFailed)) return false;
+  // Con la copia privata automatica aggiornata il diario è già al sicuro: per Drive si chiede un tocco
+  // solo se l'ultima copia lì ha più di 7 giorni.
+  const vaultFresh = useFirebase() && meta.cloudVaultAt && meta.cloudVaultAt >= (meta.lastChangeAt || "");
+  if (!vaultFresh) return true;
+  // La chiave della copia online deve essere arrivata su Drive almeno una volta.
+  if (state.profile?.vaultKey?.id && meta.vaultKeyOnDrive !== state.profile.vaultKey.id) return true;
+  const last = new Date(meta.lastBackup || 0).getTime();
+  return !Number.isFinite(last) || Date.now() - last > 7 * 24 * 60 * 60 * 1000;
 }
 
 function fmtBackupWhen(iso) {
@@ -13652,6 +13921,10 @@ function vaultStatusLine() {
     return last
       ? `Attenzione: le ultime modifiche non sono su Google Drive. Ultima copia riuscita: ${last}.`
       : "Attenzione: il diario non è ancora stato copiato su Google Drive.";
+  }
+  if (useFirebase() && meta.cloudVaultAt && meta.cloudVaultAt >= (meta.lastChangeAt || "") && meta.vaultKeyOnDrive === state.profile?.vaultKey?.id) {
+    const at = fmtBackupWhen(meta.cloudVaultAt);
+    return `Diario al sicuro: ${n} immersioni nella copia privata automatica (${at})${meta.lastBackup ? " e su Google Drive (" + fmtBackupWhen(meta.lastBackup) + ")" : ""}.`;
   }
   if (meta.lastBackup) {
     const when = new Date(meta.lastBackup);
@@ -13745,6 +14018,7 @@ function bindCloudLive() {
 
 function bindVaultLife() {
   setTimeout(backgroundLinkSync, 5000);
+  setTimeout(syncCloudVault, 3000);
   const tick = () => {
     if (!loadSession()) return;
     if (loadMeta().pendingBackup || dueFifteenDaySync()) silentDrivePush();
@@ -13754,12 +14028,18 @@ function bindVaultLife() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {
       // L'app va in secondo piano: il backup in attesa parte subito, prima che il telefono la sospenda.
+      if (cloudVaultTimer) {
+        clearTimeout(cloudVaultTimer);
+        cloudVaultTimer = 0;
+        pushCloudVault().catch(() => {});
+      }
       if (backupTimer) flushDriveBackup();
       return;
     }
     tick();
     queueProfilePublish();
     setTimeout(backgroundLinkSync, 3000);
+    setTimeout(syncCloudVault, 1500);
   });
   window.addEventListener("online", tick);
 }

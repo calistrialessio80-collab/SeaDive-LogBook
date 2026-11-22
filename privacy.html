@@ -30,8 +30,8 @@
       <p>SeaDive LogBook è un diario di immersioni gratuito, pubblicato come sito statico su GitHub Pages. Questa pagina descrive quali dati usa, dove restano e come cancellarli.</p>
 
       <h2>Chi gestisce i dati</h2>
-      <p><b>Il diario è tuo.</b> Schede, foto, firme, contatti e note restano sul tuo telefono e in una cartella nascosta del tuo Google Drive. Chi pubblica il sito non ha copie del diario e non può vederlo né cancellarlo: lo gestisci solo tu.</p>
-      <p><b>La Community</b> (profilo pubblico, chat, collegamenti tra chi si segue, voti dei siti) è salvata su un archivio online gestito da chi pubblica SeaDive LogBook su questo indirizzo. Puoi uscirne da solo in qualsiasi momento (vedi “Cancellare i dati”).</p>
+      <p><b>Il diario è tuo.</b> Schede, foto, firme, contatti e note restano sul tuo telefono, in una cartella nascosta del tuo Google Drive e in una <b>copia automatica cifrata</b> su Google Firebase. La chiave di quella copia sta solo sul tuo telefono e nella tua copia su Drive: chi pubblica il sito vede solo testo illeggibile e non può leggere il diario.</p>
+      <p><b>La Community</b> (profilo pubblico, chat, collegamenti tra chi si segue, voti dei siti) è salvata su Google Firebase, in un progetto gestito da chi pubblica SeaDive LogBook su questo indirizzo. Si entra solo con l’account Google e ognuno può scrivere solo le proprie cose. Puoi uscirne da solo in qualsiasi momento (vedi “Cancellare i dati”).</p>
 
       <h2>Dati usati</h2>
       <p>Dell’account Google: identificativo, nome, email e foto, per riconoscerti. Del diario: anagrafica, brevetti, schede immersione, firme, foto e note che scrivi tu.</p>
@@ -39,13 +39,13 @@
 
       <h2>Cosa vedono gli altri in Community</h2>
       <p>Nome, cognome, foto del profilo e una chiave tecnica pubblica. Brevetto, livello e firma passano solo tra due persone che si seguono a vicenda, cifrati: li possono leggere solo quelle due persone.</p>
-      <p><b>Attenzione:</b> l’archivio della Community è un servizio esterno (Pantry, getpantry.cloud) senza accesso con password. Chi ne conosce l’indirizzo tecnico può leggere profili pubblici e <b>messaggi della chat, che non sono cifrati</b>. Non scrivere in chat dati sensibili.</p>
+      <p>I messaggi della chat sono cifrati: li leggono solo le persone della chat. Chi gestisce l’archivio vede chi scrive a chi e quando, ma non il testo.</p>
 
       <h2>Servizi esterni</h2>
       <p>Per funzionare l’app si collega a:</p>
       <ul>
         <li><b>Google</b>: accesso, copia su Drive, mappe (Google Maps) e caratteri tipografici (Google Fonts).</li>
-        <li><b>Pantry</b> (getpantry.cloud): archivio della Community.</li>
+        <li><b>Google Firebase</b>: archivio della Community e copia automatica cifrata del diario.</li>
         <li><b>OpenStreetMap Nominatim</b> e <b>Overpass</b>: ricevono le coordinate o l’indirizzo che cerchi, per trovare luoghi e diving vicini.</li>
         <li><b>Esri ArcGIS</b>: immagini satellitari delle mappe.</li>
         <li><b>iNaturalist</b>, <b>WoRMS</b> e <b>Wikipedia</b>: schede e foto delle specie marine.</li>
@@ -61,6 +61,7 @@
         <li><b>Community</b>: nel Profilo tocca “Togli il mio profilo dalla Community”. Vengono tolti profilo, messaggi e collegamenti. Puoi rientrare quando vuoi.</li>
         <li><b>Diario su questo telefono</b>: tocca “Esci” nel Profilo. L’app salva prima su Drive, poi toglie il diario dal telefono.</li>
         <li><b>Copia su Google Drive</b>: dal tuo account Google, in Drive → Impostazioni → Gestisci app → SeaDive LogBook → “Elimina dati app nascosti”.</li>
+        <li><b>Copia automatica cifrata</b>: senza la chiave, che sta solo sul telefono e su Drive, non si può leggere. Per farla cancellare scrivi a chi pubblica l’app; cancellando la copia su Drive diventa comunque illeggibile per sempre.</li>
       </ul>
 
       <h2>Condivisione</h2>

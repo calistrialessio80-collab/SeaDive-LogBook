@@ -137,6 +137,20 @@ service cloud.firestore {
       allow delete: if isMe(code);
     }
 
+    // ---------- Copia privata del diario: vaults/{codice} e sotto-raccolte ----------
+    // La legge e la scrive solo il proprietario. Ogni documento contiene il JSON di una parte del diario.
+    match /vaults/{code} {
+      allow read, write: if isMe(code);
+      match /{part}/{doc} {
+        allow read, delete: if isMe(code);
+        allow create, update: if isMe(code)
+          && part in ['dives', 'people']
+          && request.resource.data.keys().hasOnly(['json', 'fp', 'at'])
+          && request.resource.data.json is string
+          && shortText(request.resource.data.get('fp', ''), 200);
+      }
+    }
+
     // Tutto il resto è chiuso.
     match /{other=**} {
       allow read, write: if false;
