@@ -2500,6 +2500,15 @@ body.page-people .community-page {
 }
 .bio-photo-chip .hint { margin: 0 0 6px; }
 .bio-photo-chip .btn { min-height: 36px; padding: 6px 12px; }
+.bio-photo-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.bio-crop { margin: 10px 0 4px; }
+.bio-crop[hidden] { display: none; }
+.bio-crop .hint { margin: 0 0 8px; }
+.bio-crop-stage { position: relative; display: table; margin: 0 auto; border-radius: 14px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+.bio-crop-stage img { display: block; width: auto; height: auto; max-width: 100%; max-height: 62vh; pointer-events: none; }
+.bio-crop-box { position: absolute; border: 2px solid #fff; border-radius: 6px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); pointer-events: none; }
+.bio-crop-acts { display: flex; gap: 8px; margin-top: 10px; }
+.bio-crop-acts .btn { flex: 1; }
 .bio-filters { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; }
 .bio-filters .chips {
   flex-wrap: nowrap;

@@ -10234,7 +10234,21 @@ function renderBiology() {
         <img alt="" data-biophotoprev />
         <div>
           <p class="hint" data-biophotohint></p>
-          <button class="btn ghost" type="button" data-biophotoclear>Togli foto</button>
+          <div class="bio-photo-acts">
+            <button class="btn ghost" type="button" data-biophotocrop hidden>Inquadra il soggetto</button>
+            <button class="btn ghost" type="button" data-biophotoclear>Togli foto</button>
+          </div>
+        </div>
+      </div>
+      <div class="bio-crop" data-biocrop hidden>
+        <p class="hint">Trascina il dito intorno all'animale: l'app guarda solo dentro il riquadro.</p>
+        <div class="bio-crop-stage" data-biocropstage>
+          <img alt="Foto da inquadrare" data-biocropimg />
+          <i class="bio-crop-box" data-biocropbox></i>
+        </div>
+        <div class="bio-crop-acts">
+          <button class="btn primary" type="button" data-biocropgo>Riconosci il riquadro</button>
+          <button class="btn ghost" type="button" data-biocropno>Annulla</button>
         </div>
       </div>
     </div>
@@ -10276,6 +10290,10 @@ function renderBiology() {
       sec.querySelector("[data-biophotoprev]").src = photo.preview;
       sec.querySelector("[data-biophotohint]").textContent = photo.hint;
     }
+    const cropOpen = Boolean(photo?.sightUrl && view.bioCropOpen);
+    sec.querySelector("[data-biophotocrop]").hidden = !photo?.sightUrl || photo.pending || cropOpen;
+    sec.querySelector("[data-biocrop]").hidden = !cropOpen;
+    if (cropOpen) paintCrop();
     let rows;
     if (photo) {
       rows = Array.isArray(photo.rows) ? photo.rows : [];
@@ -10531,6 +10549,13 @@ function renderBiology() {
       const sightCtx = sight.getContext("2d");
       sightCtx.imageSmoothingQuality = "high";
       sightCtx.drawImage(bitmap, 0, 0, sight.width, sight.height);
+      // Copia più grande per "Inquadra il soggetto": un riquadro piccolo resta nitido.
+      const big = document.createElement("canvas");
+      const bigFit = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height, 1));
+      big.width = Math.max(1, Math.round(bitmap.width * bigFit));
+      big.height = Math.max(1, Math.round(bitmap.height * bigFit));
+      big.getContext("2d").drawImage(bitmap, 0, 0, big.width, big.height);
+      const sightUrl = big.toDataURL("image/jpeg", 0.9);
       bitmap.close?.();
       bioPhotoSearch = {
         signals,
@@ -10538,7 +10563,10 @@ function renderBiology() {
         hint: bioPhotoHint(),
         rows: [],
         pending: true,
+        // Copia grande della foto: serve se poi si inquadra il soggetto a mano.
+        sightUrl,
       };
+      view.bioCropOpen = false;
       paint();
       sec.querySelector("[data-biophotochip]")?.scrollIntoView({ block: "start", behavior: "smooth" });
       photoButton.disabled = false;
@@ -10579,9 +10607,115 @@ function renderBiology() {
     photoButton.disabled = false;
     photoButton.textContent = "Cerca con foto";
   };
+  /* Inquadra il soggetto: il riconoscimento guarda solo il riquadro disegnato col dito.
+     Aiuta con soggetti piccoli o in mezzo a tanto fondo (nudibranchi, uova, animali in tana). */
+  let cropBox = { x0: 0.2, y0: 0.2, x1: 0.8, y1: 0.8 };
+  const cropStage = sec.querySelector("[data-biocropstage]");
+  const cropImg = sec.querySelector("[data-biocropimg]");
+  const cropRect = sec.querySelector("[data-biocropbox]");
+  function paintCrop() {
+    if (cropImg.getAttribute("src") !== bioPhotoSearch.sightUrl) cropImg.src = bioPhotoSearch.sightUrl;
+    const b = cropBox;
+    cropRect.style.left = `${Math.min(b.x0, b.x1) * 100}%`;
+    cropRect.style.top = `${Math.min(b.y0, b.y1) * 100}%`;
+    cropRect.style.width = `${Math.abs(b.x1 - b.x0) * 100}%`;
+    cropRect.style.height = `${Math.abs(b.y1 - b.y0) * 100}%`;
+  }
+  const cropPoint = (e) => {
+    const r = cropImg.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))),
+      y: Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(1, r.height))),
+    };
+  };
+  let cropDrag = null;
+  cropStage.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const pt = cropPoint(e);
+    cropDrag = { before: { ...cropBox } };
+    cropBox = { x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y };
+    cropStage.setPointerCapture?.(e.pointerId);
+    paintCrop();
+  });
+  cropStage.addEventListener("pointermove", (e) => {
+    if (!cropDrag) return;
+    const pt = cropPoint(e);
+    cropBox = { ...cropBox, x1: pt.x, y1: pt.y };
+    paintCrop();
+  });
+  const endCrop = () => {
+    if (!cropDrag) return;
+    // Un tocco senza trascinare non cancella il riquadro di prima.
+    if (Math.abs(cropBox.x1 - cropBox.x0) < 0.06 || Math.abs(cropBox.y1 - cropBox.y0) < 0.06) cropBox = cropDrag.before;
+    cropDrag = null;
+    paintCrop();
+  };
+  cropStage.addEventListener("pointerup", endCrop);
+  cropStage.addEventListener("pointercancel", endCrop);
+  sec.querySelector("[data-biophotocrop]").onclick = () => {
+    cropBox = { x0: 0.2, y0: 0.2, x1: 0.8, y1: 0.8 };
+    view.bioCropOpen = true;
+    paint();
+    sec.querySelector("[data-biocrop]")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  sec.querySelector("[data-biocropno]").onclick = () => {
+    view.bioCropOpen = false;
+    paint();
+  };
+  sec.querySelector("[data-biocropgo]").onclick = async () => {
+    const search = bioPhotoSearch;
+    if (!search?.sightUrl) return;
+    const img = new Image();
+    img.src = search.sightUrl;
+    await img.decode();
+    const x = Math.min(cropBox.x0, cropBox.x1) * img.naturalWidth;
+    const y = Math.min(cropBox.y0, cropBox.y1) * img.naturalHeight;
+    const w = Math.max(16, Math.abs(cropBox.x1 - cropBox.x0) * img.naturalWidth);
+    const h = Math.max(16, Math.abs(cropBox.y1 - cropBox.y0) * img.naturalHeight);
+    const crop = document.createElement("canvas");
+    crop.width = Math.round(w);
+    crop.height = Math.round(h);
+    const ctx = crop.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, x, y, w, h, 0, 0, crop.width, crop.height);
+    const thumb = document.createElement("canvas");
+    const tf = Math.min(1, 384 / Math.max(crop.width, crop.height));
+    thumb.width = Math.max(1, Math.round(crop.width * tf));
+    thumb.height = Math.max(1, Math.round(crop.height * tf));
+    thumb.getContext("2d").drawImage(crop, 0, 0, thumb.width, thumb.height);
+    const cropUrl = thumb.toDataURL("image/jpeg", 0.88);
+    bioPhotoToken += 1;
+    const token = bioPhotoToken;
+    bioPhotoSearch = { ...search, preview: cropUrl, hint: "Guardo il riquadro…", rows: [], pending: true };
+    view.bioCropOpen = false;
+    paint();
+    try {
+      const found = await recognizePhotoSubject(crop, null, token);
+      if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
+      bioPhotoSearch.rows = found.rows;
+      bioPhotoSearch.hint = found.hint;
+      bioPhotoSearch.pending = false;
+      const first = found.rows?.[0];
+      if (found.sure && first?.id) {
+        view.bioFromPhoto = cropUrl;
+        view.bioPhotoName = first.it;
+        view.bioPhotoNote = found.hint || "";
+        view.bioSpeciesPhoto = found.photo || "";
+        openBioGuide(first.id);
+        return;
+      }
+      paint();
+    } catch {
+      if (token !== bioPhotoToken || !bioPhotoSearch) return;
+      bioPhotoSearch.pending = false;
+      bioPhotoSearch.hint = "Non riesco a riconoscere il riquadro adesso. Riprova tra poco.";
+      paint();
+    }
+  };
   sec.querySelector("[data-biophotoclear]").onclick = () => {
     bioPhotoToken += 1;
     bioPhotoSearch = null;
+    view.bioCropOpen = false;
     paint();
   };
   paint();
@@ -10608,6 +10742,7 @@ function renderBioGuide() {
           <div class="bio-actions">
             <button class="btn primary" type="button" data-lens>Confronta su Google</button>
           </div>
+          ${bioPhotoSearch?.sightUrl ? `<div class="bio-actions"><button class="btn ghost" type="button" data-biorecrop>Non è lui? Inquadra il soggetto</button></div>` : ""}
           <p class="hint" data-lensnote hidden></p>
         </div>`
       : "";
@@ -10664,6 +10799,11 @@ function renderBioGuide() {
     render();
     window.scrollTo(0, 0);
   };
+  sec.querySelector("[data-biorecrop]")?.addEventListener("click", () => {
+    view = { ...view, name: "bio", bioId: "", bioFromPhoto: "", bioPhotoName: "", bioPhotoNote: "", bioSpeciesPhoto: "", bioCropOpen: true };
+    render();
+    document.querySelector("[data-biocrop]")?.scrollIntoView({ block: "start" });
+  });
   const lensSlot = sec.querySelector("[data-lens]")?.closest(".bio-actions");
   if (lensSlot && view.bioFromPhoto && !mountGoogleLens(lensSlot, view.bioFromPhoto, x ? `${x.la} ${x.it}` : "")) {
     const note = sec.querySelector("[data-lensnote]");
