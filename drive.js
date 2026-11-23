@@ -278,8 +278,45 @@ async function signOutGoogle() {
   }
 }
 
+// Permesso Drive chiesto dentro un tocco (per esempio "Salva immersione"): il telefono lascia aprire la
+// finestra di Google solo se la richiesta parte subito, quindi la libreria di Google deve essere già caricata.
+// Se Google ricorda il consenso la finestra si chiude da sola. Non lancia mai errori: in caso di problemi null.
+function requestTokenNow({ hint = "" } = {}) {
+  const existing = driveToken();
+  if (existing) return Promise.resolve(existing);
+  const clientId = driveClientId();
+  if (!clientId || !googleLoginAllowed() || !window.google?.accounts?.oauth2) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const quiet = setTimeout(() => resolve(null), 120000);
+    const done = (v) => {
+      clearTimeout(quiet);
+      resolve(v);
+    };
+    try {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: oauthCfg().google.scope,
+        prompt: "",
+        hint: hint || undefined,
+        callback: (resp) => {
+          if (resp.error || !resp.access_token) return done(null);
+          saveDriveToken(resp.access_token, resp.expires_in);
+          silentFailedAt = 0;
+          done(resp.access_token);
+        },
+        error_callback: () => done(null),
+      });
+      client.requestAccessToken({ prompt: "" });
+    } catch {
+      done(null);
+    }
+  });
+}
+
 window.SeaDiveDrive = {
   googleLoginAllowed,
+  requestTokenNow,
+  preloadGoogle: () => loadGsi().catch(() => {}),
   driveClientId,
   setDriveClientId,
   connectDrive,

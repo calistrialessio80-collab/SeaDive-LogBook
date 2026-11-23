@@ -1367,6 +1367,86 @@ async function pushCloudVault() {
   }
 }
 
+/* Chiave della copia privata in un file: serve se un giorno Drive non funzionasse. Su un telefono nuovo
+   si entra con Google, si collega la Community e si carica il file: la copia online torna leggibile. */
+const VAULT_KEY_TAG = "SEADIVE-CHIAVE-1";
+
+function vaultKeyFileText() {
+  const vk = state.profile?.vaultKey;
+  if (!vk?.k) return "";
+  const when = new Date(vk.at || Date.now());
+  const day = Number.isFinite(when.getTime()) ? when.toLocaleDateString("it-IT") : "";
+  return [
+    "SeaDive LogBook - chiave della copia privata",
+    `Account Google: ${loadSession()?.email || ""}`,
+    day ? `Chiave creata il ${day}` : "",
+    "",
+    "Con questa chiave si apre la copia automatica del diario, ma solo entrando con lo stesso account Google.",
+    "Tienila al sicuro e non mandarla a nessuno.",
+    "Su un telefono nuovo: entra con Google, tocca Collega la Community, poi Profilo > Carica la chiave.",
+    "",
+    `${VAULT_KEY_TAG}|${vk.id}|${vk.at || ""}|${vk.k}`,
+    "",
+  ].join("\n");
+}
+
+function downloadVaultKey() {
+  const text = vaultKeyFileText();
+  if (!text) return false;
+  saveBlobFile(new Blob([text], { type: "text/plain;charset=utf-8" }), `SeaDive-chiave-${state.profile.vaultKey.id}.txt`);
+  const meta = loadMeta();
+  meta.vaultKeySavedId = state.profile.vaultKey.id;
+  saveMeta(meta);
+  return true;
+}
+
+function parseVaultKeyFile(text) {
+  const m = String(text || "").match(/SEADIVE-CHIAVE-1\|([a-z0-9]{4,20})\|([^|\s]*)\|([A-Za-z0-9+/=_-]{40,})/);
+  if (!m) return null;
+  const [, id, at, k] = m;
+  // L'impronta della chiave deve coincidere con il suo nome: un file rovinato o modificato si rifiuta.
+  if (fastHash(k).replace(/[^a-z0-9]/g, "").slice(0, 10) !== id) return null;
+  return { id, at, k };
+}
+
+// Accetta la chiave solo se è quella della copia online di questo account (o se online non c'è niente e
+// sul telefono non c'è ancora nessuna chiave): una chiave sbagliata non deve mai riscrivere la copia.
+async function importVaultKey(text) {
+  const vk = parseVaultKeyFile(text);
+  if (!vk) return "Questo file non è una chiave di SeaDive. Scegli il file SeaDive-chiave-….txt.";
+  if (state.profile?.vaultKey?.id === vk.id) return "Questa chiave è già su questo telefono: la copia privata è a posto.";
+  if (!useFirebase() || !loadSession()) return "Prima entra con Google.";
+  try {
+    await cloudSession();
+  } catch {
+    return "Prima tocca Collega la Community, poi carica di nuovo la chiave.";
+  }
+  const data = await window.SeaDiveCloud.vaultLoad(await profileOwnerKey());
+  const remote = vaultKeyIdOf(data.main?.json);
+  if (remote && remote.id !== vk.id) return "Questa chiave non è quella della copia privata di questo account Google.";
+  if (!remote && state.profile?.vaultKey?.k) return "Su questo telefono c'è già un'altra chiave e online non c'è nessuna copia da aprire.";
+  state.profile.vaultKey = vk;
+  vaultKeyCache = null;
+  vaultRemoteState = "";
+  cloudVaultPulledAt = 0;
+  save(state);
+  if (remote) await pullCloudVault();
+  return remote
+    ? `Chiave caricata: ${realDiveCount(state.dives)} immersioni dalla copia privata.`
+    : "Chiave caricata.";
+}
+
+function vaultKeyLine() {
+  if (vaultRemoteState === "foreign") {
+    return "La copia privata online è chiusa con una chiave che questo telefono non ha ancora. Tocca Sincronizza con Google per prenderla da Drive, oppure Carica la chiave se l'avevi scaricata.";
+  }
+  const vk = state.profile?.vaultKey;
+  if (!vk?.k) return "La chiave si crea alla prima copia automatica. Torna qui tra qualche minuto per scaricarla.";
+  return loadMeta().vaultKeySavedId === vk.id
+    ? "Chiave scaricata. Se cambi o perdi il telefono, la chiave torna da Drive; il file serve se un giorno Drive non funzionasse."
+    : "La copia privata online è cifrata: si apre solo con la tua chiave, che sta su questo telefono e su Drive. Scaricane una copia e tienila al sicuro (per esempio in una email a te stesso): serve se un giorno Drive non funzionasse.";
+}
+
 // All'avvio e ogni 6 ore: si prende quello che è cambiato da un altro telefono, poi si manda il resto.
 function syncCloudVault() {
   if (!useFirebase() || !loadSession()) return;
@@ -1374,6 +1454,23 @@ function syncCloudVault() {
   cloudSession()
     .then(() => (stale ? pullCloudVault() : null))
     .then(() => pushCloudVault())
+    .catch(() => {});
+}
+
+/* Al massimo una volta a settimana, e solo salvando un'immersione: se Drive è indietro di 7 giorni o più
+   e il permesso di Google è scaduto, il tocco su "Salva immersione" lo rinnova e la copia su Drive riparte.
+   La copia privata cifrata intanto si aggiorna comunque da sola a ogni modifica. */
+const DRIVE_CATCHUP_DAYS = 7;
+
+function driveCatchUpOnSave() {
+  const drive = window.SeaDiveDrive;
+  if (!loadSession() || !drive?.driveWanted?.() || drive.currentToken?.()) return;
+  const last = new Date(loadMeta().lastBackup || 0).getTime();
+  if (Number.isFinite(last) && Date.now() - last < DRIVE_CATCHUP_DAYS * 24 * 60 * 60 * 1000) return;
+  drive
+    .requestTokenNow({ hint: loadSession()?.email || "" })
+    .then((token) => (token ? silentDrivePush() : null))
+    .then(() => refreshBackupBanner())
     .catch(() => {});
 }
 
@@ -8827,6 +8924,11 @@ function renderHome() {
     };
   });
   frag.append(rate);
+  // Privacy e termini sempre raggiungibili in fondo alla Home (nella schermata di caricamento passano troppo veloci).
+  const legal = document.createElement("p");
+  legal.className = "home-legal";
+  legal.innerHTML = `<a href="./privacy.html">Informativa privacy</a> · <a href="./termini.html">Termini di servizio</a>`;
+  frag.append(legal);
   return frag;
 }
 
@@ -12337,13 +12439,26 @@ function renderProfile() {
     <section class="profile-block vault-box">
       <h3>${uiIcon("cloud", 18)}Copia di sicurezza</h3>
       <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
-      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna da Drive, anche dopo anni. La copia su Drive si aggiorna da sola dopo ogni modifica; se Google chiede di nuovo l’accesso compare un avviso. Esci salva su Drive e poi toglie il diario da questo telefono.</p>
+      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna, anche dopo anni. Dopo ogni modifica si copia da solo nella copia privata cifrata; su Drive si copia quando tocchi Sincronizza o entri con Google. Esci salva su Drive e poi toglie il diario da questo telefono.</p>
       ${homeScreenHint() ? `<p class="hint home-screen-hint">${escapeHtml(homeScreenHint())}</p>` : ""}
       <div class="vault-actions">
         <button class="btn primary" type="button" data-syncdrive>Sincronizza con Google</button>
         <button class="btn ghost" type="button" data-sharebak>Copia sul telefono</button>
         <button class="btn ghost" type="button" data-dlbak>Scarica JSON</button>
       </div>
+      ${
+        useFirebase()
+          ? `<div class="vault-key">
+        <h4>Chiave della copia privata</h4>
+        <p class="hint" data-vaultkeyline>${escapeHtml(vaultKeyLine())}</p>
+        <div class="vault-actions">
+          <button class="btn ghost" type="button" data-dlkey ${state.profile?.vaultKey?.k ? "" : "disabled"}>Scarica la chiave</button>
+          <button class="btn ghost" type="button" data-loadkey>Carica la chiave</button>
+        </div>
+        <input type="file" accept=".txt,text/plain" data-keyfile hidden />
+      </div>`
+          : ""
+      }
     </section>
     <div class="actions profile-actions">
       <button class="btn primary" type="submit">Salva profilo</button>
@@ -12367,6 +12482,29 @@ function renderProfile() {
   };
   form.querySelector("[data-sharebak]").onclick = () => shareBackup();
   form.querySelector("[data-dlbak]").onclick = () => downloadBackup();
+  const keyLine = form.querySelector("[data-vaultkeyline]");
+  const keyFile = form.querySelector("[data-keyfile]");
+  form.querySelector("[data-dlkey]")?.addEventListener("click", () => {
+    if (downloadVaultKey() && keyLine) keyLine.textContent = vaultKeyLine();
+  });
+  form.querySelector("[data-loadkey]")?.addEventListener("click", () => keyFile?.click());
+  keyFile?.addEventListener("change", async () => {
+    const file = keyFile.files?.[0];
+    keyFile.value = "";
+    if (!file) return;
+    if (keyLine) keyLine.textContent = "Controllo la chiave…";
+    let msg;
+    try {
+      msg = await importVaultKey(await file.text());
+    } catch {
+      msg = "Non sono riuscito a controllare la chiave adesso. Riprova tra poco, con la connessione.";
+    }
+    if (keyLine) keyLine.textContent = msg;
+    const dl = form.querySelector("[data-dlkey]");
+    if (dl) dl.disabled = !state.profile?.vaultKey?.k;
+    const line = form.querySelector("[data-vaultline]");
+    if (line) line.textContent = vaultStatusLine();
+  });
   const certsBox = form.querySelector("[data-certs]");
   const bindDel = (row) => {
     row.querySelector("[data-delcert]").onclick = () => {
@@ -13300,6 +13438,9 @@ function renderEdit() {
   form.noValidate = true;
   form.onsubmit = async (e) => {
     e.preventDefault();
+    // Drive indietro di 7 giorni o più: il tocco su "Salva immersione" rinnova il permesso di Google e rimette
+    // in pari la copia. Va chiesto subito, prima di ogni attesa, altrimenti il telefono blocca la finestra.
+    driveCatchUpOnSave();
     try {
     const fd = new FormData(form);
     fd.delete("photoFile");
@@ -14077,6 +14218,10 @@ function bindCloudLive() {
 
 function bindVaultLife() {
   setTimeout(backgroundLinkSync, 5000);
+  // La libreria di Google pronta in anticipo: serve al rinnovo di Drive dentro il tocco su "Salva immersione".
+  setTimeout(() => {
+    if (loadSession() && window.SeaDiveDrive?.driveWanted?.()) window.SeaDiveDrive.preloadGoogle?.();
+  }, 4000);
   setTimeout(syncCloudVault, 3000);
   const tick = () => {
     if (!loadSession()) return;

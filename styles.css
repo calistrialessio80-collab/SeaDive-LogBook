@@ -242,6 +242,8 @@ body.page-auth #app { max-width: none; padding: 0; }
   text-align: center; font-size: 13px; color: rgba(255, 255, 255, 0.75); text-shadow: 0 1px 8px rgba(2, 16, 24, 0.8);
 }
 .splash .splash-legal a, .splash .splash-legal a:visited { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.home-legal { margin: 18px 0 8px; text-align: center; font-size: 13px; color: rgba(255, 255, 255, 0.7); }
+.home-legal a, .home-legal a:visited { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 h1, h2, h3, .serif { font-family: Outfit, system-ui, sans-serif; font-weight: 700; }
 button, input, textarea, select { font-family: inherit; }
@@ -2269,6 +2271,8 @@ body.page-profile::before {
   margin-top: 10px;
 }
 .vault-box .hint { margin-bottom: 6px; }
+.vault-key { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.vault-key h4 { margin: 0 0 6px; font-size: 15px; }
 .btn-block { width: 100%; margin-top: 8px; }
 
 .certs-box { margin-top: 8px; min-width: 0; }
