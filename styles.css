@@ -236,6 +236,13 @@ body.page-auth #app { max-width: none; padding: 0; }
   text-shadow: 0 2px 12px rgba(2, 16, 24, 0.65);
 }
 
+/* Link fisso a privacy e termini: sta nell'HTML della home page, così il controllo di Google lo trova senza avviare l'app. */
+.splash-legal {
+  position: absolute; z-index: 1; left: 0; right: 0; bottom: calc(18px + var(--safe-bottom, 0px)); margin: 0;
+  text-align: center; font-size: 13px; color: rgba(255, 255, 255, 0.75); text-shadow: 0 1px 8px rgba(2, 16, 24, 0.8);
+}
+.splash .splash-legal a, .splash .splash-legal a:visited { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
 h1, h2, h3, .serif { font-family: Outfit, system-ui, sans-serif; font-weight: 700; }
 button, input, textarea, select { font-family: inherit; }
 #app, .card, .btn, .meta { -webkit-font-smoothing: antialiased; }
