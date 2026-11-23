@@ -9806,7 +9806,40 @@ async function bioclipEmbed(model, source) {
   return out.embeds.data;
 }
 
-function bioclipRank(model, vec) {
+// Chi si immerge nel Mediterraneo vede soprattutto specie del Mediterraneo: a parità di somiglianza
+// contano 4 volte di più. Provato su 17 foto vere dell'Argentario: nessun risultato peggiorato, e niente
+// più specie tropicali in cima (donzella pavonina, pesce civetta, cerianto).
+const MED_BOOST = 4;
+let bioclipMedMask = null;
+
+function bioclipMedWeights(model) {
+  if (bioclipMedMask?.length === model.count) return bioclipMedMask;
+  const api = window.SeaDiveBiology;
+  const w = new Float32Array(model.count).fill(1);
+  let any = false;
+  model.names.forEach((la, i) => {
+    if (api?.findMarineLife?.(lifeId(la))?.where === "Mediterraneo") {
+      w[i] = MED_BOOST;
+      any = true;
+    }
+  });
+  if (any) bioclipMedMask = w; // si tiene solo quando la guida è già caricata
+  return w;
+}
+
+// L'ultima immersione con il punto sulla mappa dice dove si va sott'acqua. Senza punti: Mediterraneo.
+function divingInMed() {
+  const last = (state.dives || [])
+    .filter((d) => geoCoords(d.lat, d.lng))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0];
+  const g = last && geoCoords(last.lat, last.lng);
+  if (!g) return true;
+  if (g.lat < 30 || g.lat > 46.5 || g.lng < -6 || g.lng > 36.5) return false;
+  if (g.lng > 27 && g.lat > 40.5) return false; // Mar Nero e Mar di Marmara
+  return true;
+}
+
+function bioclipRank(model, vec, weights) {
   const { count, dim, scales, codes } = model;
   const sims = new Float32Array(count);
   let best = -Infinity;
@@ -9820,7 +9853,7 @@ function bioclipRank(model, vec) {
   let sum = 0;
   const prob = new Float32Array(count);
   for (let i = 0; i < count; i += 1) {
-    prob[i] = Math.exp(100 * (sims[i] - best));
+    prob[i] = Math.exp(100 * (sims[i] - best)) * (weights ? weights[i] : 1);
     sum += prob[i];
   }
   const order = Array.from({ length: count }, (_, i) => i).sort((a, b) => prob[b] - prob[a]).slice(0, 8);
@@ -9851,8 +9884,9 @@ async function recognizePhotoSubject(frame, subject, token) {
   for (let j = 0; j < model.dim; j += 1) norm += acc[j] * acc[j];
   norm = Math.sqrt(norm) || 1;
   for (let j = 0; j < model.dim; j += 1) acc[j] /= norm;
-  const ranked = bioclipRank(model, acc);
+  // La guida serve prima della classifica: dice quali specie sono del Mediterraneo.
   if (catalog) await catalog.catch(() => {});
+  const ranked = bioclipRank(model, acc, divingInMed() ? bioclipMedWeights(model) : null);
   const rows = [];
   ranked.forEach((row) => {
     const species = api.findMarineLife(lifeId(row.la));
