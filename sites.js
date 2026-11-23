@@ -1281,6 +1281,16 @@ function repairAutoMatches() {
   return list.length - keep.length;
 }
 
+// Toglie i siti salvati per errore nel punto di partenza della mappa (Roma, 41,9 / 12,48) quando il luogo
+// dell'immersione non era stato scelto. Non tocca i diving e i siti con indirizzo.
+function removeDefaultPins() {
+  const list = loadCustomSites();
+  const isStart = (s) => Math.abs(Number(s.lat) - 41.9) < 1e-9 && Math.abs(Number(s.lng) - 12.48) < 1e-9;
+  const keep = list.filter((s) => s.kind === "diving" || String(s.address || "").trim() || !isStart(s));
+  if (keep.length !== list.length) saveCustomSites(keep);
+  return list.length - keep.length;
+}
+
 function matchCatalog(d) {
   const list = allCatalogSites();
   const want = normName(d.site);
@@ -1417,6 +1427,7 @@ window.SeaDiveSites = {
   matchCatalog,
   isWrongAutoMatch,
   repairAutoMatches,
+  removeDefaultPins,
   ensureSiteFromDive,
   divePoint,
   fetchOsmDivePlaces,

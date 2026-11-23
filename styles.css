@@ -2060,12 +2060,14 @@ body.page-profile::before {
 .center-photo-actions { display: flex; gap: 8px; margin: 0 0 8px; }
 .center-photo-actions .btn { flex: 1; min-width: 0; }
 .dive-mini {
+  position: relative;
   height: 190px;
   margin: 8px 0 12px;
   border-radius: 16px;
   overflow: hidden;
   background: #d5e6ee;
 }
+.dive-mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dive-mini iframe,
 .dive-google {
   width: 100%;

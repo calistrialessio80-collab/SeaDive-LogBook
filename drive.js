@@ -154,14 +154,25 @@ function requestCommunityToken({ hint = "" } = {}) {
   );
 }
 
+// Senza un tocco il browser spesso blocca la finestra di Google: dopo un tentativo silenzioso fallito
+// non si riprova per 30 minuti (prima si ripeteva a ogni schermata). Un tocco su "Salva su Drive" passa sempre.
+const SILENT_RETRY_MS = 30 * 60 * 1000;
+let silentFailedAt = 0;
+
 async function ensureToken({ interactive = false, hint = "" } = {}) {
   const existing = driveToken();
   if (existing) return existing;
   if (!interactive && !driveWanted()) return null;
+  if (!interactive && Date.now() - silentFailedAt < SILENT_RETRY_MS) return null;
   try {
-    return await requestGoogleToken({ silent: !interactive, hint });
+    const token = await requestGoogleToken({ silent: !interactive, hint });
+    silentFailedAt = 0;
+    return token;
   } catch (err) {
-    if (!interactive) return null;
+    if (!interactive) {
+      silentFailedAt = Date.now();
+      return null;
+    }
     throw err;
   }
 }

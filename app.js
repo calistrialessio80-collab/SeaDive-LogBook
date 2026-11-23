@@ -6157,6 +6157,8 @@ function diveSac(d) {
   const p0 = Number(d.pressureStart);
   const p1 = Number(d.pressureEnd);
   const t = Number(d.totalTime) || diveDuration(d);
+  // Bar finali non ancora scritti: prima valevano 0 e il SAC usciva come a bombola vuota.
+  if (!String(d.pressureEnd ?? "").trim()) return 0;
   if (!(v > 0 && p0 > 0 && p1 >= 0 && p0 > p1 && t > 0)) return 0;
   const ata = Math.max(1.05, 1 + meanDepthM(d) / 10);
   const fromFit = Number(d.computerLog?.sacFit);
@@ -6316,10 +6318,14 @@ function applyDiveMetrics(d) {
     /* SAC digitato a mano, anche con virgola */
   } else if (imported > 0.5 && imported < 80) {
     d.sac = formatDecimal(imported);
+  } else if (calc > 0 && (d.sacAuto || !(already > 0.5 && already < 80))) {
+    // SAC calcolato dall'app: si ricalcola a ogni modifica (prima restava il primo valore uscito).
+    d.sac = formatDecimal(calc);
+    d.sacAuto = true;
+  } else if (d.sacAuto && !(calc > 0)) {
+    d.sac = "";
   } else if (already > 0.5 && already < 80) {
     d.sac = formatDecimal(already);
-  } else if (calc > 0) {
-    d.sac = formatDecimal(calc);
   } else {
     d.sac = d.sac || "";
   }
@@ -6590,15 +6596,62 @@ function geoMapHtml(lat, lng, name) {
   return satMapHtml({ lat, lng, site: name });
 }
 
+/* Punto di partenza della mappa quando il luogo non è ancora scelto: non è un luogo vero. */
+const MAP_START = { lat: 41.9, lng: 12.48 };
+
+function isMapStartPin(lat, lng) {
+  // Numeri scritti qui: la funzione gira anche all'avvio, prima che MAP_START sia pronta.
+  return String(lat ?? "").trim() !== "" && Math.abs(Number(lat) - 41.9) < 1e-9 && Math.abs(Number(lng) - 12.48) < 1e-9;
+}
+
+/* Ripara le immersioni salvate con due vecchi errori:
+   - SAC calcolato coi bar finali a 0 (si scrivevano i bar iniziali prima di quelli finali) e poi mai più aggiornato;
+   - coordinate del punto di partenza della mappa (Roma) salvate quando il luogo non era stato scelto. */
+function repairDiveDefaults(d) {
+  if (!d) return false;
+  let changed = false;
+  if (isMapStartPin(d.lat, d.lng)) {
+    d.lat = "";
+    d.lng = "";
+    changed = true;
+  }
+  const fit = Number(d.computerLog?.sacFit);
+  const stored = parseDecimal(d.sac);
+  if (!d.sacManual && !d.sacAuto && !(fit > 0.5 && fit < 80) && stored > 0) {
+    const calc = diveSac(d);
+    const { v } = tankForSac(d);
+    const p0 = Number(d.pressureStart);
+    const t = Number(d.totalTime) || diveDuration(d);
+    // La profondità media usata allora poteva venire dal profilo, dal campo o da 0,65 × la massima.
+    const depths = [meanDepthM(d), Number(d.avgDepth), (Number(d.maxDepth) || 0) * 0.65].filter((x) => x > 0);
+    const same = (a, b) => a > 0 && Math.abs(a - b) < 0.15;
+    const emptyTank = v > 0 && p0 > 0 && t > 0 && depths.some((m) => same((v * p0) / (t * Math.max(1.05, 1 + m / 10)), stored));
+    if (emptyTank && !same(calc, stored)) {
+      d.sac = calc > 0 ? formatDecimal(calc) : "";
+      d.sacAuto = true;
+      changed = true;
+    } else if (same(calc, stored)) {
+      d.sacAuto = true;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function rememberCatalogFromDives() {
   const sites = window.SeaDiveSites;
   // Prima si riparano le coordinate copiate per errore da un sito con un altro nome (vedi isWrongAutoMatch).
   sites?.repairAutoMatches?.();
+  sites?.removeDefaultPins?.();
   let fixed = false;
   (state.dives || []).forEach((d) => {
     if (sites?.isWrongAutoMatch?.(d.site, d.lat, d.lng)) {
       d.lat = "";
       d.lng = "";
+      fixed = true;
+    }
+    if (repairDiveDefaults(d)) {
+      d.updatedAt = new Date().toISOString();
       fixed = true;
     }
   });
@@ -7320,16 +7373,16 @@ function bindDiveSiteMap(form, d) {
   destroyDiveSiteMap();
   let pad = coordsForDive(d) ? 0.032 : 6;
   const paintStatic = (lat, lng, opts = {}) => {
-    writeDiveCoords(form, d, lat, lng);
+    if (!opts.preview) writeDiveCoords(form, d, lat, lng);
     const p = opts.wide ? 7 : pad;
-    el.innerHTML = `<img alt="Mappa del sito" src="${satBboxUrl(Number(lat), Number(lng), p)}"><i class="map-pin" aria-hidden="true"></i>`;
+    el.innerHTML = `<img alt="Mappa del sito" src="${satBboxUrl(Number(lat), Number(lng), p)}">${opts.preview ? "" : `<i class="map-pin" aria-hidden="true"></i>`}`;
     if (hint) {
       hint.textContent =
         opts.hint || "Tocca la mappa per spostare il pin sul punto esatto. Poi salva l’immersione.";
     }
     if (!opts.skipGeo) reverseFillLocation(form, d, lat, lng);
   };
-  const start = coordsForDive(d) || { lat: 41.9, lng: 12.48 };
+  const start = coordsForDive(d) || MAP_START;
   form._placePin = (lat, lng, opts = {}) => {
     if (opts.zoom && opts.zoom >= 14) pad = 0.018;
     else if (opts.zoom && opts.zoom >= 10) pad = 0.08;
@@ -7363,6 +7416,8 @@ function bindDiveSiteMap(form, d) {
   };
   paintStatic(start.lat, start.lng, {
     skipGeo: true,
+    // Luogo non ancora scelto: si mostra la zona ma non si salva nessun punto.
+    preview: !coordsForDive(d),
     wide: !coordsForDive(d),
     hint: coordsForDive(d)
       ? "Tocca la mappa per spostare il pin, senza scrivere le coordinate."
@@ -7390,11 +7445,11 @@ function bindDiveSiteMap(form, d) {
       diveSiteMap = L.map(el, { scrollWheelZoom: true, worldCopyJump: true }).setView([here.lat, here.lng], known ? 15 : 5);
       addSatTiles(diveSiteMap);
       diveSiteMap.on("click", (ev) => form._placePin(ev.latlng.lat, ev.latlng.lng));
-      form._placePin(here.lat, here.lng, {
-        skipGeo: true,
-        zoom: known ? 15 : 5,
-        hint: known ? "Trascina il pin sul punto esatto." : "Scorri e tocca il sito per piantare il pin.",
-      });
+      if (known) {
+        form._placePin(here.lat, here.lng, { skipGeo: true, zoom: 15, hint: "Trascina il pin sul punto esatto." });
+      } else if (hint) {
+        hint.textContent = "Scorri e tocca il sito per piantare il pin.";
+      }
       [80, 250, 600].forEach((ms) => setTimeout(() => diveSiteMap?.invalidateSize(), ms));
     })
     .catch(() => {
@@ -10890,7 +10945,10 @@ function applyComputerOnto(target, incoming) {
     if (!hasText(next[k]) && hasText(incoming[k])) next[k] = incoming[k];
   });
   if (hasText(incoming.pressureEnd)) next.pressureEnd = incoming.pressureEnd;
-  if (hasText(incoming.sac) && !target.sacManual) next.sac = incoming.sac;
+  if (hasText(incoming.sac) && !target.sacManual) {
+    next.sac = incoming.sac;
+    next.sacAuto = false;
+  }
   if (hasText(incoming.tss) && target.tssKind !== "manual") {
     next.tss = incoming.tss;
     if (incoming.tssKind) next.tssKind = incoming.tssKind;
@@ -10929,6 +10987,7 @@ function applyComputerOnto(target, incoming) {
   next.sigMeta = target.sigMeta;
   next.certOnDive = hasText(target.certOnDive) ? target.certOnDive : next.certOnDive;
   next.sacManual = target.sacManual;
+  if (!hasText(incoming.sac)) next.sacAuto = target.sacAuto;
   return next;
 }
 
@@ -11045,6 +11104,7 @@ function snapshotEditForm(form, d) {
     profilePoints: d.profilePoints,
     computerLog: d.computerLog || null,
     sacManual: d.sacManual,
+    sacAuto: d.sacAuto,
     id: d.id,
   };
   next.circuitOpen = fd.has("circuitOpen");
@@ -11577,17 +11637,13 @@ async function geocodeAddress(street, civic, city) {
   }
 }
 
-function placeCenterMap(el, query) {
-  const q = String(query || "").trim();
-  if (!el || !q) return;
+/* Foto satellitare del punto del diving, con la spunta al centro.
+   Prima era un riquadro di Google Maps, che la regola di sicurezza della pagina blocca: restava bianco. */
+function placeCenterMap(el, lat, lng) {
+  const g = geoCoords(lat, lng);
+  if (!el || !g) return;
   el.hidden = false;
-  const frame = document.createElement("iframe");
-  frame.className = "dive-google";
-  frame.title = "Posizione su Google Maps";
-  frame.src = `https://maps.google.com/maps?q=${encodeURIComponent(q)}&hl=it&z=18&t=k&output=embed`;
-  frame.loading = "lazy";
-  frame.referrerPolicy = "no-referrer-when-downgrade";
-  el.replaceChildren(frame);
+  el.innerHTML = `<img alt="Posizione del diving" src="${satBboxUrl(Number(g.lat), Number(g.lng), 0.004)}"><i class="map-pin" aria-hidden="true"></i>`;
 }
 
 function renderPerson() {
@@ -11770,8 +11826,7 @@ function renderPerson() {
       return;
     }
     const line = divingAddressLine(street, civic, city);
-    if (hint) hint.textContent = "Cerco l'indirizzo su Google Maps…";
-    placeCenterMap(form.querySelector("[data-minimap]"), line);
+    if (hint) hint.textContent = "Cerco l'indirizzo…";
     let hit = null;
     try {
       hit = await geocodeAddress(street, civic, city);
@@ -11780,13 +11835,14 @@ function renderPerson() {
     }
     if (!form.isConnected) return;
     if (!hit) {
-      if (hint) hint.textContent = "Google Maps mostra l'indirizzo. Per salvarlo controlla via, numero civico e città.";
+      if (hint) hint.textContent = "Indirizzo non trovato. Controlla via, numero civico e città.";
       return;
     }
+    placeCenterMap(form.querySelector("[data-minimap]"), hit.lat, hit.lng);
     form.querySelector("[name=lat]").value = String(hit.lat);
     form.querySelector("[name=lng]").value = String(hit.lng);
     form.querySelector("[name=placeCountry]").value = hit.country || "";
-    if (hint) hint.textContent = `Spunta di Google Maps su ${line}.`;
+    if (hint) hint.textContent = `Punto trovato: ${line}.`;
   };
   form.querySelector("[data-findaddr]")?.addEventListener("click", () => {
     locateCenter();
@@ -11840,8 +11896,7 @@ function renderPerson() {
       const lat = Number(current.lat);
       const lng = Number(current.lng);
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        const saved = divingAddressLine(current.addressStreet, current.addressNumber, current.addressCity) || current.address || `${lat},${lng}`;
-        placeCenterMap(form.querySelector("[data-minimap]"), saved);
+        placeCenterMap(form.querySelector("[data-minimap]"), lat, lng);
       }
     }
   });
@@ -13084,6 +13139,7 @@ function renderEdit() {
   form.querySelector("[name=sac]")?.addEventListener("input", () => {
     d.sac = form.querySelector("[name=sac]").value;
     d.sacManual = true;
+    d.sacAuto = false;
     const wrap = form.querySelector("[data-effortwrap]");
     if (wrap) wrap.innerHTML = effortHtml(d);
   });
@@ -13289,6 +13345,7 @@ function renderEdit() {
       profileFromComputer: d.profileFromComputer,
       computerLog: d.computerLog || null,
       sacManual: d.sacManual,
+      sacAuto: d.sacAuto,
     });
     next.circuitOpen = fd.has("circuitOpen");
     next.circuitClosed = fd.has("circuitClosed");
