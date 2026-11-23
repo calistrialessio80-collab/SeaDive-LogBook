@@ -2501,6 +2501,10 @@ body.page-people .community-page {
 .bio-photo-chip .hint { margin: 0 0 6px; }
 .bio-photo-chip .btn { min-height: 36px; padding: 6px 12px; }
 .bio-photo-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.bio-group-note { margin: 0 0 6px; }
+.bio-group-note[hidden] { display: none; }
+@keyframes bio-ask { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.55); } }
+.chips.ask .chip { animation: bio-ask 1.4s ease 2; }
 .bio-crop { margin: 10px 0 4px; }
 .bio-crop[hidden] { display: none; }
 .bio-crop .hint { margin: 0 0 8px; }

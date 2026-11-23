@@ -9860,7 +9860,7 @@ function bioclipRank(model, vec, weights) {
   return order.map((i) => ({ la: model.names[i], p: prob[i] / sum }));
 }
 
-async function recognizePhotoSubject(frame, subject, token) {
+async function recognizePhotoSubject(frame, subject, token, group = "all") {
   lifeClipStatus = (text) => {
     if (token !== bioPhotoToken || !bioPhotoSearch) return;
     bioPhotoSearch.hint = text;
@@ -9884,9 +9884,24 @@ async function recognizePhotoSubject(frame, subject, token) {
   for (let j = 0; j < model.dim; j += 1) norm += acc[j] * acc[j];
   norm = Math.sqrt(norm) || 1;
   for (let j = 0; j < model.dim; j += 1) acc[j] /= norm;
-  // La guida serve prima della classifica: dice quali specie sono del Mediterraneo.
+  // La guida serve prima della classifica: dice quali specie sono del Mediterraneo e di che gruppo sono.
   if (catalog) await catalog.catch(() => {});
-  const ranked = bioclipRank(model, acc, divingInMed() ? bioclipMedWeights(model) : null);
+  return { ...rankPhotoVector(model, acc, group), vec: acc };
+}
+
+/* Classifica delle specie per l'impronta di una foto. Con un gruppo scelto ("Che animale è?")
+   si guardano solo le specie di quel gruppo: niente spugne proposte per una stella marina. */
+function rankPhotoVector(model, acc, group = "all") {
+  const api = window.SeaDiveBiology;
+  let weights = divingInMed() ? bioclipMedWeights(model) : null;
+  if (group && group !== "all") {
+    const w = weights ? new Float32Array(weights) : new Float32Array(model.count).fill(1);
+    model.names.forEach((la, i) => {
+      if (api.findMarineLife(lifeId(la))?.group !== group) w[i] = 0;
+    });
+    weights = w;
+  }
+  const ranked = bioclipRank(model, acc, weights);
   const rows = [];
   ranked.forEach((row) => {
     const species = api.findMarineLife(lifeId(row.la));
@@ -9895,7 +9910,9 @@ async function recognizePhotoSubject(frame, subject, token) {
   if (!rows.length) return { rows: [], hint: "Non ho riconosciuto questo soggetto nella guida.", sure: false };
   const first = rows[0];
   const second = rows[1]?.p || 0;
-  const sure = first.p >= 0.85 && first.p >= second * 4;
+  // Con un gruppo scelto la classifica è tra poche specie: le percentuali salgono da sole, quindi non si
+  // dà mai per sicuro (si vedono le più simili e si sceglie).
+  const sure = (!group || group === "all") && first.p >= 0.85 && first.p >= second * 4;
   const who = (x) => (x.it && x.it !== x.la ? `${x.it}, ${x.la}` : x.la);
   if (sure) return { rows: [first.species], hint: `Il soggetto è ${who(first.species)}.`, sure: true };
   let cum = 0;
@@ -10227,7 +10244,7 @@ function renderBiology() {
       <input class="search" type="search" enterkeyhint="search" placeholder="Cerca per nome italiano o latino" value="${escapeHtml(view.bioQuery || "")}" data-bioq />
       <div class="bio-search-actions">
         <button class="btn ghost" type="button" data-biophoto>Cerca con foto</button>
-        <button class="btn ghost" type="button" data-bioweb>Cerca in rete</button>
+        <button class="btn ghost" type="button" data-biogroupask>Che animale è?</button>
       </div>
       <input type="file" accept="image/*" data-biophotofile />
       <div class="bio-photo-chip" data-biophotochip hidden>
@@ -10253,6 +10270,7 @@ function renderBiology() {
       </div>
     </div>
     <div class="bio-filters">
+      <p class="hint bio-group-note" data-biogroupnote hidden>Tocca il gruppo dell'animale: con una foto, il riconoscimento cerca solo lì.</p>
       <div class="chips" data-biofilters></div>
       <div class="chips" data-biowheres></div>
     </div>
@@ -10440,11 +10458,22 @@ function renderBiology() {
     b.className = `chip bio-chip${bioGroupOn() === id ? " on" : ""}`;
     b.dataset.group = id;
     b.innerHTML = `${icon ? `<span class="bio-emoji">${api.lifeIcon(icon, 18)}</span>` : ""}${escapeHtml(label)}`;
-    b.onclick = () => {
+    b.onclick = async () => {
       view.bioFilter = id;
       view.bioShow = BIO_PAGE;
       groupChips.querySelectorAll(".chip").forEach((el) => el.classList.remove("on"));
       b.classList.add("on");
+      const photo = bioPhotoSearch;
+      if (photo?.vec && !photo.pending) {
+        try {
+          const ranked = rankPhotoVector(await loadBioclip(), photo.vec, bioGroupOn());
+          if (bioPhotoSearch !== photo) return;
+          photo.rows = ranked.rows;
+          photo.hint = ranked.hint;
+        } catch {
+          /* resta la classifica di prima */
+        }
+      }
       paint();
     };
     groupChips.append(b);
@@ -10489,11 +10518,14 @@ function renderBiology() {
     if (rows[0]) openBioGuide(rows[0].id);
     else openLifePage(q);
   };
-  sec.querySelector("[data-bioweb]").onclick = () => {
-    const q = (input.value || "").trim();
-    const rows = api.filterMarineLife(q, bioGroupOn(), bioWhereOn());
-    const hit = rows.find((x) => lifeNorm(x.it) === lifeNorm(q) || lifeNorm(x.la) === lifeNorm(q)) || rows[0];
-    openLifePage(hit ? `${hit.it} ${hit.la}` : q);
+  // Che animale è?: si sceglie il gruppo (pesce, stella, spugna…) e la ricerca con foto guarda solo lì.
+  sec.querySelector("[data-biogroupask]").onclick = () => {
+    groupChips.scrollIntoView({ block: "center", behavior: "smooth" });
+    groupChips.classList.remove("ask");
+    void groupChips.offsetWidth;
+    groupChips.classList.add("ask");
+    const note = sec.querySelector("[data-biogroupnote]");
+    if (note) note.hidden = false;
   };
   const photoButton = sec.querySelector("[data-biophoto]");
   const photoFile = sec.querySelector("[data-biophotofile]");
@@ -10572,8 +10604,9 @@ function renderBiology() {
       photoButton.disabled = false;
       photoButton.textContent = "Cerca con foto";
       try {
-        const found = await recognizePhotoSubject(sight, subject, token);
+        const found = await recognizePhotoSubject(sight, subject, token, bioGroupOn());
         if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
+        bioPhotoSearch.vec = found.vec;
         bioPhotoSearch.rows = found.rows;
         bioPhotoSearch.hint = found.hint;
         bioPhotoSearch.pending = false;
@@ -10690,8 +10723,9 @@ function renderBiology() {
     view.bioCropOpen = false;
     paint();
     try {
-      const found = await recognizePhotoSubject(crop, null, token);
+      const found = await recognizePhotoSubject(crop, null, token, bioGroupOn());
       if (!found || token !== bioPhotoToken || !bioPhotoSearch) return;
+      bioPhotoSearch.vec = found.vec;
       bioPhotoSearch.rows = found.rows;
       bioPhotoSearch.hint = found.hint;
       bioPhotoSearch.pending = false;
