@@ -682,6 +682,10 @@ function copyDiveContact(target, source, role) {
 }
 
 // Quale copia è la più recente: 1 = a, -1 = b, 0 = non si sa (dati vecchi senza date).
+function isCloudPhoto(d) {
+  return Boolean(d?.photo && d.photoCloud && d.photoCloud === fastHash(d.photo));
+}
+
 function newerDive(a, b) {
   const ta = Date.parse(a?.updatedAt || "") || 0;
   const tb = Date.parse(b?.updatedAt || "") || 0;
@@ -696,6 +700,12 @@ function mergeDivePair(a, b) {
   const primary = order ? (order > 0 ? a : b) : diveScore(a) >= diveScore(b) ? a : b;
   const other = primary === a ? b : a;
   const base = { ...primary };
+  // La foto ridotta della copia privata non prende mai il posto dell'originale (telefono o Drive):
+  // se questa è la copia leggera e l'altra ha la foto intera, si tiene quella intera.
+  if (isCloudPhoto(base) && other.photo && !isCloudPhoto(other)) {
+    base.photo = other.photo;
+    delete base.photoCloud;
+  }
   if (primary.signSkipped) base.signSkipped = { ...primary.signSkipped };
   if (primary.contactGen) base.contactGen = { ...primary.contactGen };
   if (primary.sigMeta) base.sigMeta = { ...primary.sigMeta };
@@ -1173,12 +1183,14 @@ function vaultMainPart(payload) {
 // Foto più leggera solo per la copia online (sul telefono resta quella originale).
 async function cloudDiveCopy(d) {
   let copy = d;
-  if (d?.photo && String(d.photo).length > 260000) {
-    // Sempre più piccola finché sta sotto il limite di un documento (1 MB); se proprio non entra, la foto
-    // resta solo sul telefono e su Drive.
-    for (const [side, limit] of [[1280, 220000], [960, 150000], [640, 90000]]) {
+  if (d?.photo && String(d.photo).length > 150000) {
+    // Copia di riserva più leggera (1024 px, ~105 KB): sul telefono e su Drive la foto resta intera.
+    // Così nel limite gratuito di 1 GB di Firebase entrano quasi il doppio delle immersioni con foto.
+    // Se proprio non entra nel limite di un documento (1 MB), la foto resta solo sul telefono e su Drive.
+    for (const [side, limit] of [[1024, 110000], [800, 75000], [640, 50000]]) {
       const small = await shrinkPhoto(d.photo, side, limit).catch(() => "");
-      if (small) copy = { ...d, photo: small };
+      // photoCloud = impronta della foto ridotta: dice che è la copia leggera, non l'originale.
+      if (small) copy = { ...d, photo: small, photoCloud: fastHash(small) };
       if (small && small.length <= limit * 1.6) break;
     }
   }
@@ -1320,7 +1332,8 @@ async function pushCloudVault() {
       const id = vaultDocId(d.id);
       diveIds.add(id);
       // Impronta corta: quella completa (con foto e firme) supera i 200 caratteri ammessi dalle regole.
-      const f = fastHash(diveFingerprint(d));
+      // "p2": foto a 1024 px. Cambiando il prefisso tutte le immersioni si rimandano una volta, già alleggerite.
+      const f = fastHash("p2|" + diveFingerprint(d));
       if (fp.dives[id] !== f) dives.push({ id, fp: f, json: await sealVault(JSON.stringify(await cloudDiveCopy(d)), km) });
     }
     const people = [];
