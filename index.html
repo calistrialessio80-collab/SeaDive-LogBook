@@ -94,8 +94,26 @@
         <div class="splash-veil"></div>
         <div class="splash-mark">
           <img src="./icon-192.png" alt="SeaDive LogBook" />
-          <p>Caricamento del diario…</p>
+          <p class="splash-load"><i class="splash-spin"></i>Caricamento del diario…</p>
         </div>
+        <svg width="0" height="0" class="splash-icons" aria-hidden="true">
+          <symbol id="sp-log" viewBox="0 0 24 24"><path d="M4 18l4-6 4 3 4-7 4 5" /><path d="M4 4v16h16" /></symbol>
+          <symbol id="sp-map" viewBox="0 0 24 24"><path d="M12 21s-6-5.5-6-11a6 6 0 0112 0c0 5.5-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></symbol>
+          <symbol id="sp-fish" viewBox="0 0 24 24"><path d="M3 12c3-4 8-6 12-4 2 1 4 2.5 5 4-1 1.5-3 3-5 4-4 2-9 0-12-4z" /><path d="M3 12l-1-3m1 3l-1 3" /><circle cx="15.5" cy="11" r=".8" /></symbol>
+          <symbol id="sp-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2.4" /><path d="M3 19c0-3.3 2.7-5 6-5s6 1.7 6 5" /><path d="M15 14.5c3 0 6 1.3 6 4.5" /></symbol>
+        </svg>
+        <!-- Presentazione dell'app: sta nell'HTML, così chi apre la home page (anche il controllo di Google) sa cos'è l'app e a cosa servono i dati. -->
+        <section class="splash-about">
+          <p class="splash-eyebrow">SeaDive LogBook</p>
+          <h1>Il diario di bordo del subacqueo</h1>
+          <ul>
+            <li><span><svg><use href="#sp-log" /></svg></span>Immersioni con il profilo dal computer</li>
+            <li><span><svg><use href="#sp-map" /></svg></span>Mappa con migliaia di siti e diving</li>
+            <li><span><svg><use href="#sp-fish" /></svg></span>Specie marine riconosciute da una foto</li>
+            <li><span><svg><use href="#sp-people" /></svg></span>Buddy, brevetti, firme e chat</li>
+          </ul>
+          <p class="splash-data">Con Google salvi una copia del diario sul tuo Drive e usi la Community. I dati restano tuoi.</p>
+        </section>
         <p class="splash-legal"><a href="./privacy.html">Informativa privacy</a> · <a href="./termini.html">Termini di servizio</a></p>
       </div>
       <noscript>
