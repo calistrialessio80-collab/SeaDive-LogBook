@@ -9748,6 +9748,10 @@ function loadBioclip() {
             return res.arrayBuffer();
           }),
         ]);
+        // Impronte delle foto vere (facoltative: senza, si riconosce solo dai nomi).
+        const ref = await fetch(`./models/bioclip-ref.bin?v=${BIOCLIP_REF_V}`)
+          .then((res) => (res.ok ? res.arrayBuffer() : null))
+          .catch(() => null);
         lifeClipStatus("Avvio il riconoscimento…");
         const session = await ort.InferenceSession.create(model, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
         const head = new DataView(vecs);
@@ -9756,7 +9760,7 @@ function loadBioclip() {
         const scales = new Float32Array(vecs, 8, count);
         const codes = new Int8Array(vecs, 8 + 4 * count, count * dim);
         if (!Array.isArray(names) || names.length !== count) throw new Error("Elenco delle specie non valido.");
-        return { ort, session, names, count, dim, scales, codes };
+        return { ort, session, names, count, dim, scales, codes, ref: readBioclipRef(ref, count, dim) };
       })
       .catch((err) => {
         bioclipPromise = null;
@@ -9764,6 +9768,42 @@ function loadBioclip() {
       });
   }
   return bioclipPromise;
+}
+
+/* Impronte di riferimento: per ogni specie del Mediterraneo, la media delle impronte di circa 8 foto vere
+   (osservazioni verificate di iNaturalist, licenze libere; autori in models/bioclip-ref-crediti.json).
+   Una foto che somiglia alle foto vere di una specie le dà un bonus. Provato su 13.436 foto: la specie
+   giusta prima passa dal 26% al 46%; sulle 17 foto dell'Argentario da 8 a 12. */
+const BIOCLIP_REF_V = "1";
+const BIOCLIP_REF_WEIGHT = 60;
+
+function readBioclipRef(buf, count, dim) {
+  if (!buf || buf.byteLength < 8) return null;
+  const head = new DataView(buf);
+  const n = head.getUint32(0, true);
+  if (head.getUint32(4, true) !== dim || buf.byteLength !== 8 + n * (2 + 4 + dim)) return null;
+  const idx = new Uint16Array(buf, 8, n);
+  if (idx.some((i) => i >= count)) return null;
+  return { n, idx, scales: new Float32Array(buf, 8 + 2 * n, n), codes: new Int8Array(buf, 8 + 6 * n, n * dim) };
+}
+
+function bioclipRefBonus(model, vec) {
+  const ref = model.ref;
+  if (!ref) return null;
+  const { n, idx, scales, codes } = ref;
+  const dim = model.dim;
+  const sims = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) {
+    let dot = 0;
+    const base = i * dim;
+    for (let j = 0; j < dim; j += 1) dot += codes[base + j] * vec[j];
+    sims[i] = dot * scales[i];
+  }
+  const sorted = Float32Array.from(sims).sort();
+  const median = sorted[Math.floor(n / 2)];
+  const bonus = new Float32Array(model.count);
+  for (let i = 0; i < n; i += 1) bonus[idx[i]] = BIOCLIP_REF_WEIGHT * (sims[i] - median);
+  return bonus;
 }
 
 // Come in BioCLIP: lato corto a 224 px, ritaglio centrale, colori normalizzati.
@@ -9839,7 +9879,7 @@ function divingInMed() {
   return true;
 }
 
-function bioclipRank(model, vec, weights) {
+function bioclipRank(model, vec, weights, bonus = null) {
   const { count, dim, scales, codes } = model;
   const sims = new Float32Array(count);
   let best = -Infinity;
@@ -9847,7 +9887,7 @@ function bioclipRank(model, vec, weights) {
     let dot = 0;
     const base = i * dim;
     for (let j = 0; j < dim; j += 1) dot += codes[base + j] * vec[j];
-    sims[i] = dot * scales[i];
+    sims[i] = dot * scales[i] + (bonus ? bonus[i] / 100 : 0);
     if (sims[i] > best) best = sims[i];
   }
   let sum = 0;
@@ -9901,7 +9941,9 @@ function rankPhotoVector(model, acc, group = "all") {
     });
     weights = w;
   }
-  const ranked = bioclipRank(model, acc, weights);
+  // Le foto vere sono di specie del Mediterraneo: fuori dal Mediterraneo non si usano.
+  const bonus = divingInMed() ? bioclipRefBonus(model, acc) : null;
+  const ranked = bioclipRank(model, acc, weights, bonus);
   const rows = [];
   ranked.forEach((row) => {
     const species = api.findMarineLife(lifeId(row.la));
@@ -9912,7 +9954,11 @@ function rankPhotoVector(model, acc, group = "all") {
   const second = rows[1]?.p || 0;
   // Con un gruppo scelto la classifica è tra poche specie: le percentuali salgono da sole, quindi non si
   // dà mai per sicuro (si vedono le più simili e si sceglie).
-  const sure = (!group || group === "all") && first.p >= 0.85 && first.p >= second * 4;
+  // Con le foto vere le percentuali sono più nette: per dire "il soggetto è…" serve più margine
+  // (98% e 20 volte la seconda). Sulle 17 foto dell'Argentario: 6 "sicuri", nessuno sbagliato
+  // (con 95% passava un calamaro tropicale per una scena con gorgonie).
+  const [minP, minRatio] = bonus ? [0.98, 20] : [0.85, 4];
+  const sure = (!group || group === "all") && first.p >= minP && first.p >= second * minRatio;
   const who = (x) => (x.it && x.it !== x.la ? `${x.it}, ${x.la}` : x.la);
   if (sure) return { rows: [first.species], hint: `Il soggetto è ${who(first.species)}.`, sure: true };
   let cum = 0;
