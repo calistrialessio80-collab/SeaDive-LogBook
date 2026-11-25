@@ -12,7 +12,7 @@
     }
   } catch (e) {}
   var next = new URL("./index.html", location.href);
-  next.searchParams.set("v", "252");
+  next.searchParams.set("v", "253");
   next.searchParams.set("t", String(Date.now()));
   location.replace(next.href);
 })();
