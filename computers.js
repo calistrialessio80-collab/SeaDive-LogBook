@@ -522,18 +522,16 @@ function parseUDDF(xml) {
   return dives;
 }
 
-/* Acqua in superficie: la temperatura nell'ultima parte dell'immersione tra 0,5 e 6 m, quando il sensore
-   si è assestato (all'inizio risente ancora dell'aria o del sole). La più fredda va in "Fondo". */
+/* Acqua in superficie: la lettura più calda entro i 10 m nella prima parte dell'immersione.
+   A fine immersione non va bene: il sensore resta freddo dopo il fondo (Suunto: 26 °C a 3 m, all'inizio 28 °C).
+   La più fredda va in "Fondo". */
 function surfaceWaterTemp(points) {
   const pts = (points || []).filter((p) => p && p.c != null && Number.isFinite(Number(p.c)));
   if (!pts.length) return "";
   const end = Number(pts[pts.length - 1].t) || 0;
-  const late = pts.filter((p) => Number(p.t) >= end * 0.6 && Number(p.d) >= 0.5 && Number(p.d) <= 6).map((p) => Number(p.c));
-  if (late.length >= 3) {
-    late.sort((a, b) => a - b);
-    return String(Math.round(late[Math.floor(late.length / 2)] * 10) / 10);
-  }
-  return String(Math.max(...pts.map((p) => Number(p.c))));
+  const early = pts.filter((p) => Number(p.t) <= Math.max(3, end * 0.25) && Number(p.d) <= 10).map((p) => Number(p.c));
+  const pool = early.length ? early : pts.map((p) => Number(p.c));
+  return String(Math.round(Math.max(...pool) * 10) / 10);
 }
 
 // Il Ratio conta i secondi dal 1° gennaio 2008 (come in libdivecomputer), non dal 1970:
@@ -2803,10 +2801,8 @@ function parseFitBlock(bytes, origin) {
       if (sec > 20 && sec < 24 * 3600) wetMin = Math.round((sec / 60) * 10) / 10;
     }
     const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => fitDurationMin(v) || 0);
-    let totalMin = wetMin >= 1 ? wetMin : Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
-    // Suunto: la durata è quella del computer (es. 52:20), che conta anche i secondi vicino alla superficie.
-    const fileMin = fitDurationMin(s.elapsed) || fitDurationMin(s.timer) || 0;
-    if (bag.mfg === 23 && fileMin >= 1 && Math.abs(fileMin - totalMin) <= 3) totalMin = Math.round(fileMin * 10) / 10;
+    // Tempo sott'acqua: è quello che l'app Suunto chiama "Tempo di immersione" (51'44" = 51,7 min).
+    const totalMin = wetMin >= 1 ? wetMin : Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
     const mins = totalMin >= 1 ? String(totalMin) : "";
     let lastC = null;
     const rawProfile = curve.some((x) => x.depth > 0)
@@ -3037,6 +3033,7 @@ function parseFitBlock(bytes, origin) {
       "Fuori curva": extras.deco ? (extras.ndlFromFile ? "Sì" : "Sì (calcolato)") : extras.ndlFromFile ? "No" : "No (calcolato)",
       Circuito: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
       GF: extras.gf,
+      Algoritmo: extras.gf && suunto ? "Bühlmann 16 GF" : "",
       TTS: extras.tts,
       Elio: extras.helium,
       Modo: mode,
