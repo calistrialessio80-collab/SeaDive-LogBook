@@ -6748,6 +6748,54 @@ function repairDiveDefaults(d) {
   return changed;
 }
 
+/* Immersioni importate da FIT con la versione vecchia (fino alla 251): si tolgono solo i valori che l'app aveva
+   messo da sola, riconoscibili perché uguali a quelli calcolati allora. Quello scritto a mano resta.
+   - Note: il riassunto tecnico ("prof. media … · 312 campioni profilo"), già presente nei dati del computer;
+   - Prof. programmata uguale alla massima; Aria = acqua vicino alla superficie; Acqua = temperatura sul fondo;
+   - "NDL residuo" accanto a un fuori curva calcolato. */
+const OLD_FIT_NOTE = [/^prof\. media [\d.,]+ m$/, /^modo \S+$/, /^CNS [\d.,]+%$/, /^OTU [\d.,]+$/, /^TSS [\d.,]+$/, /^SAC [\d.,]+ L\/min$/,
+  /^risalita [\d.,]+ m\/min$/, /^GF \d+\/\d+$/, /^NDL [\d.,]+ min( \(Bühlmann 16 GF\))?$/, /^(fuori|in) curva$/, /^n° serie \d+$/,
+  /^sosta [\d.,]+ min$/, /^\d+ campioni profilo$/];
+
+function repairOldFitImport(d) {
+  if (!d || d.importFix >= 2 || !/fit/i.test(String(d.sourceComputer || ""))) return false;
+  const pts = (d.profilePoints || []).filter((p) => p && Number.isFinite(Number(p.d)));
+  const log = d.computerLog || {};
+  const parts = String(d.notes || "").split(" · ").map((x) => x.trim()).filter(Boolean);
+  const auto = parts.filter((x) => OLD_FIT_NOTE.some((re) => re.test(x)));
+  if (auto.length < 4) return false; // non è un import della versione vecchia: non si tocca niente
+  d.notes = parts.filter((x) => !auto.includes(x)).join(" · ");
+  if (String(d.plannedDepth || "") !== "" && Number(d.plannedDepth) === Number(d.maxDepth)) d.plannedDepth = "";
+  const temps = pts.filter((p) => p.c != null);
+  if (d.airTemp !== "" && d.airTemp != null && temps.some((p) => Number(p.d) <= 1.5 && Number(p.c) === Number(d.airTemp))) d.airTemp = "";
+  const deepest = temps.reduce((a, p) => (!a || Number(p.d) > Number(a.d) ? p : a), null);
+  const surface = window.SeaDiveComputers?.surfaceWaterTemp?.(pts) || "";
+  if (deepest && surface && Number(d.waterTemp) === Number(deepest.c)) d.waterTemp = surface;
+  if (d.deco && log.ndlCalc && !log.ndlFromFile) {
+    d.ndl = "";
+    log.ndl = "";
+  }
+  const all = log.all;
+  if (all) {
+    if (/^\d+$/.test(String(all["Modo immersione"] || "")) && all.Modo) delete all["Modo immersione"];
+    if (all["Profondità"] && parseFloat(all["Profondità"]) === parseFloat(all["Prof. max"])) delete all["Profondità"];
+    if (all["N° in serie"] != null) {
+      all["N° nella serie"] = all["N° in serie"];
+      delete all["N° in serie"];
+    }
+    if (log.tankAssumed) delete all.Bombola;
+    if (deepest) all["Temp. a prof. max"] = `${deepest.c} °C`;
+    if (surface) all["Temp. acqua"] = `${surface} °C`;
+    if (d.deco && !log.ndlFromFile) {
+      all["Fuori curva"] = "Sì (calcolato)";
+      delete all.NDL;
+    }
+    if (log.gf && /suunto/i.test(String(log.format || d.instruments || "")) && !all.Algoritmo) all.Algoritmo = "Bühlmann 16 GF";
+  }
+  d.importFix = 2;
+  return true;
+}
+
 function rememberCatalogFromDives() {
   const sites = window.SeaDiveSites;
   // Prima si riparano le coordinate copiate per errore da un sito con un altro nome (vedi isWrongAutoMatch).
@@ -6760,7 +6808,8 @@ function rememberCatalogFromDives() {
       d.lng = "";
       fixed = true;
     }
-    if (repairDiveDefaults(d)) {
+    const oldImport = repairOldFitImport(d);
+    if (repairDiveDefaults(d) || oldImport) {
       d.updatedAt = new Date().toISOString();
       fixed = true;
     }

@@ -4032,6 +4032,7 @@ function diveKey(d) {
 
 window.SeaDiveComputers = {
   COMPUTERS,
+  surfaceWaterTemp,
   parseComputerFile,
   parseComputerBytes,
   parseEonSteelLog,
