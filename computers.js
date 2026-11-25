@@ -132,7 +132,7 @@ function addMinutes(time, mins) {
   if (!time || mins === "" || mins == null) return "";
   const p = String(time).split(":").map(Number);
   if (p.length < 2 || !Number.isFinite(p[0])) return "";
-  let t = p[0] * 60 + p[1] + Number(mins);
+  let t = Math.round(p[0] * 60 + p[1] + Number(mins));
   if (!Number.isFinite(t)) return "";
   t = ((t % 1440) + 1440) % 1440;
   return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Math.round(t % 60)).padStart(2, "0")}`;
@@ -540,7 +540,20 @@ function surfaceWaterTemp(points) {
 // prima l'immersione dell'8 luglio 2023 risultava dell'8 luglio 1985.
 const RATIO_EPOCH_S = 1199145600;
 
-function ratioWhen(unixSec) {
+// Fusi del Ratio (firmware 4 e successivi), in minuti: l'indice nel file è il doppio della posizione qui.
+const RATIO_TZ_MIN = [-720, -660, -600, -570, -540, -480, -420, -360, -300, -270, -240, -210, -180, -120, -60, 0, 60, 120, 180, 210,
+  240, 270, 300, 330, 345, 360, 390, 420, 480, 525, 540, 570, 585, 600, 630, 660, 690, 720, 765, 780, 825, 840];
+
+function ratioWhen(unixSec, tzIdx, firmware) {
+  const p2 = (n) => String(n).padStart(2, "0");
+  const idx = Number(tzIdx);
+  // Con il fuso salvato nel computer l'ora è quella del posto dell'immersione, ovunque sia il telefono.
+  if (Math.floor(Number(firmware) / 10000000) >= 4 && Number.isInteger(idx) && idx >= 0 && idx % 2 === 0 && idx / 2 < RATIO_TZ_MIN.length) {
+    const u = new Date((Number(unixSec) + RATIO_EPOCH_S + RATIO_TZ_MIN[idx / 2] * 60) * 1000);
+    if (Number.isFinite(u.getTime())) {
+      return { date: `${u.getUTCFullYear()}-${p2(u.getUTCMonth() + 1)}-${p2(u.getUTCDate())}`, time: `${p2(u.getUTCHours())}:${p2(u.getUTCMinutes())}` };
+    }
+  }
   const d = new Date((Number(unixSec) + RATIO_EPOCH_S) * 1000);
   if (!Number.isFinite(d.getTime())) return { date: "", time: "" };
   const p = (n) => String(n).padStart(2, "0");
@@ -591,7 +604,7 @@ function parseRatioXml(xml, fileName) {
     .map((seg) => {
       const header = findOne(seg, "segmentheader") || seg;
       const sampleNodes = findAll(seg, "sample");
-      const when = ratioWhen(txt(header, ["utcstartingtimes"]));
+      const when = ratioWhen(txt(header, ["utcstartingtimes"]), txt(header, ["timezoneidx"]), txt(header, ["softwareversion"]));
       const depthCm = num(txt(header, ["depthmax"]));
       const avgCm = num(txt(header, ["avgdepth"]));
       let maxDm = 0;
@@ -2790,7 +2803,10 @@ function parseFitBlock(bytes, origin) {
       if (sec > 20 && sec < 24 * 3600) wetMin = Math.round((sec / 60) * 10) / 10;
     }
     const durCandidates = [s.elapsed, s.timer, s.bottom, s.duration].map((v) => fitDurationMin(v) || 0);
-    const totalMin = wetMin >= 1 ? wetMin : Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
+    let totalMin = wetMin >= 1 ? wetMin : Math.round(Math.max(spanMin, ...durCandidates) * 10) / 10;
+    // Suunto: la durata è quella del computer (es. 52:20), che conta anche i secondi vicino alla superficie.
+    const fileMin = fitDurationMin(s.elapsed) || fitDurationMin(s.timer) || 0;
+    if (bag.mfg === 23 && fileMin >= 1 && Math.abs(fileMin - totalMin) <= 3) totalMin = Math.round(fileMin * 10) / 10;
     const mins = totalMin >= 1 ? String(totalMin) : "";
     let lastC = null;
     const rawProfile = curve.some((x) => x.depth > 0)
@@ -3030,7 +3046,8 @@ function parseFitBlock(bytes, origin) {
       baseImported({
         date,
         timeIn,
-        timeOut: timeIn && mins ? addMinutes(timeIn, mins) : "",
+        timeOut:
+          bag.mfg === 23 && s.ts && s.start && s.ts > s.start ? fitClock(s.ts, bag.tz).time : timeIn && mins ? addMinutes(timeIn, mins) : "",
         maxDepth: maxM ? String(maxM) : "",
         avgDepth: avgM ? String(avgM) : "",
         plannedDepth: "", // la profondità programmata non è nel file: non è la massima raggiunta
