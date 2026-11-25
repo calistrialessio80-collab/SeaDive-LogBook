@@ -371,7 +371,8 @@ function normalizeImported(d) {
   const avgN = Number(d.avgDepth);
   d.avgDepth = Number.isFinite(avgN) && avgN > 0.05 ? String(Math.round(avgN * 10) / 10) : "";
   if (Number.isNaN(Number(d.maxDepth))) d.maxDepth = "";
-  d.plannedDepth = strField(d.plannedDepth) || d.maxDepth;
+  // Solo se il file la contiene: la profondità programmata non è la massima raggiunta.
+  d.plannedDepth = strField(d.plannedDepth);
   d.visibility = strField(d.visibility);
   d.current = strField(d.current);
   d.seaConditions = strField(d.seaConditions);
@@ -521,8 +522,26 @@ function parseUDDF(xml) {
   return dives;
 }
 
+/* Acqua in superficie: la temperatura nell'ultima parte dell'immersione tra 0,5 e 6 m, quando il sensore
+   si è assestato (all'inizio risente ancora dell'aria o del sole). La più fredda va in "Fondo". */
+function surfaceWaterTemp(points) {
+  const pts = (points || []).filter((p) => p && p.c != null && Number.isFinite(Number(p.c)));
+  if (!pts.length) return "";
+  const end = Number(pts[pts.length - 1].t) || 0;
+  const late = pts.filter((p) => Number(p.t) >= end * 0.6 && Number(p.d) >= 0.5 && Number(p.d) <= 6).map((p) => Number(p.c));
+  if (late.length >= 3) {
+    late.sort((a, b) => a - b);
+    return String(Math.round(late[Math.floor(late.length / 2)] * 10) / 10);
+  }
+  return String(Math.max(...pts.map((p) => Number(p.c))));
+}
+
+// Il Ratio conta i secondi dal 1° gennaio 2008 (come in libdivecomputer), non dal 1970:
+// prima l'immersione dell'8 luglio 2023 risultava dell'8 luglio 1985.
+const RATIO_EPOCH_S = 1199145600;
+
 function ratioWhen(unixSec) {
-  const d = new Date(Number(unixSec) * 1000);
+  const d = new Date((Number(unixSec) + RATIO_EPOCH_S) * 1000);
   if (!Number.isFinite(d.getTime())) return { date: "", time: "" };
   const p = (n) => String(n).padStart(2, "0");
   return {
@@ -587,6 +606,10 @@ function parseRatioXml(xml, fileName) {
       let ndlLast = "";
       let stopDm = 0;
       let stopSec = 0;
+      let decoStart = "";
+      let decoEnd = "";
+      let ttsMax = 0;
+      let tissueMax = 0;
       const stopCounts = new Map();
       let he = "";
       let o2 = "";
@@ -624,13 +647,23 @@ function parseRatioXml(xml, fileName) {
         last = s;
         if (!battStart) battStart = txt(s, ["vbatcv"]);
         battEnd = txt(s, ["vbatcv"]) || battEnd;
+        // Con una sosta obbligatoria (firstStopDepth > 0) lo stesso campo contiene il tempo di risalita (TTS), non l'NDL.
+        const stop = num(txt(s, ["firststopdepth"]));
+        const inDeco = stop !== "" && Number(stop) > 0;
         const ndlSec = num(txt(s, ["ndlortts"]));
-        if (ndlSec !== "" && Number(ndlSec) < 1000) {
+        if (inDeco) {
+          if (ndlSec !== "" && Number(ndlSec) < 32767) ttsMax = Math.max(ttsMax, Number(ndlSec));
+          if (decoStart === "") decoStart = Number(sec);
+          decoEnd = Number(sec);
+        } else if (ndlSec !== "" && Number(ndlSec) < 1000) {
           ndlLast = Number(ndlSec);
           ndlMin = ndlMin === "" ? Number(ndlSec) : Math.min(ndlMin, Number(ndlSec));
         }
-        const stop = num(txt(s, ["firststopdepth"]));
-        if (stop !== "" && Number(stop) > 0) {
+        for (let i = 1; i <= 16; i++) {
+          const g = Number(num(txt(s, [`tissuegroup${i}percent`])));
+          if (g > tissueMax) tissueMax = g;
+        }
+        if (inDeco) {
           const dmStop = Number(stop);
           stopCounts.set(dmStop, (stopCounts.get(dmStop) || 0) + 1);
           if (dmStop > stopDm) {
@@ -654,18 +687,15 @@ function parseRatioXml(xml, fileName) {
         if (cnsNow !== "") cns = cnsNow;
         if (otuNow !== "") otu = otuNow;
       });
-      if (last) {
-        let peak = 0;
-        for (let i = 1; i <= 16; i++) {
-          const g = num(txt(last, [`tissuegroup${i}percent`]));
-          if (g !== "" && Number(g) > peak) peak = Number(g);
-        }
-        if (peak > 0) tissue = String(peak);
-      }
+      if (tissueMax > 0) tissue = String(tissueMax);
+      let deepTemp = "";
       if (profilePoints.length) {
         const deepest = profilePoints.reduce((a, b) => (b.d > a.d ? b : a));
-        if (deepest.c != null) bottomTemp = String(deepest.c);
+        if (deepest.c != null) deepTemp = String(deepest.c);
       }
+      // Fondo = la più fredda; Acqua = in superficie a fine immersione.
+      bottomTemp = tempMin !== "" ? String(tempMin) : deepTemp;
+      const surfaceTemp = surfaceWaterTemp(profilePoints);
       const maxM = depthCm !== "" ? Number(depthCm) / 100 : maxDm / 10;
       const avgM = avgCm !== "" ? Number(avgCm) / 100 : "";
       const runtime = last ? num(txt(last, ["runtimes"])) : "";
@@ -678,7 +708,8 @@ function parseRatioXml(xml, fileName) {
       const desatS = num(txt(header, ["desaturationtimes"]));
       const surfaceMbar = num(txt(header, ["surfacepressurembar"]));
       const gf = gfLo && gfHi ? `${gfLo}/${gfHi}` : "";
-      const deco = ndlMin === 0;
+      const deco = decoStart !== "" || ndlMin === 0;
+      const serial = (String(fileName || "").match(/_(\d{4,})-dive/i) || [])[1] || "";
       const circuitN = Number(circuit);
       const closed = circuitN === 2;
       const open = circuitN === 0 || circuitN === 1;
@@ -714,8 +745,11 @@ function parseRatioXml(xml, fileName) {
         GF: gf,
         Algoritmo: algName,
         "NDL minimo": ratioClock(ndlMin),
-        "NDL residuo": ratioClock(ndlLast),
+        "NDL residuo": deco ? "" : ratioClock(ndlLast),
         "Fuori curva": deco ? "Sì" : "No",
+        Decompressione:
+          decoStart !== "" ? `dal minuto ${Math.floor(decoStart / 60)} al ${Math.ceil(decoEnd / 60)}` : "",
+        "TTS massimo": ttsMax ? ratioClock(ttsMax) : "",
         "Sosta sicurezza": safetySet
           ? `${safetyDepthDm !== "" ? m1(Number(safetyDepthDm) / 10) + " m · " : ""}${safetyDone || safetySet} min`
           : safetyDone
@@ -724,8 +758,10 @@ function parseRatioXml(xml, fileName) {
         "Sosta indicata": stopLabel,
         Risalita: ascent.avg ? `${ascent.avg} m/min` : "",
         "Risalita max": ascent.max ? `${ascent.max} m/min` : "",
-        "Temp. acqua": tempN ? `${m1(tempSum / tempN)} °C` : "",
+        "Temp. acqua": surfaceTemp ? `${surfaceTemp} °C` : "",
         "Temp. fondo": bottomTemp ? `${bottomTemp} °C` : "",
+        "Temp. media": tempN ? `${m1(tempSum / tempN)} °C` : "",
+        "Temp. a prof. max": deepTemp ? `${deepTemp} °C` : "",
         "Temp. min": tempMin !== "" ? `${tempMin} °C` : "",
         "Temp. max": tempMax !== "" ? `${tempMax} °C` : "",
         Miscela: o2 ? `EAN ${o2}${he && Number(he) > 0 ? " / He " + he + "%" : ""}` : "",
@@ -737,7 +773,7 @@ function parseRatioXml(xml, fileName) {
         Desaturazione: desatS > 60 ? `${Math.round(desatS / 60)} min` : "",
         Batteria: volts(battEnd) ? `${volts(battStart)} → ${volts(battEnd)}` : "",
         "Tessuto più carico": tissue ? `${tissue}%` : "",
-        Avvisi: Number(txt(header, ["alertflag"])) > 0 ? `Codice ${txt(header, ["alertflag"])}` : "",
+        "N° di serie": serial,
         Software: txt(header, ["softwareversion"]),
         Campioni: String(profilePoints.length || txt(header, ["divesamples"]) || ""),
       };
@@ -750,7 +786,8 @@ function parseRatioXml(xml, fileName) {
         cns: cns === "" ? "" : String(cns),
         otu: otu === "" ? "" : String(otu),
         gf,
-        ndl: ratioNdlMin(ndlLast),
+        ndl: deco ? "" : ratioNdlMin(ndlLast),
+        tts: ttsMax ? ratioClock(ttsMax) : "",
         surfaceInterval: surfaceS > 60 ? String(Math.round(surfaceS / 60)) : "",
         mode: [algName, circuitName].filter(Boolean).join(" · "),
         samples: profilePoints.length,
@@ -766,7 +803,7 @@ function parseRatioXml(xml, fileName) {
         totalTime: mins,
         safetyStop: safetyDone || safetySet,
         surfaceInterval: extras.surfaceInterval,
-        waterTemp: tempN ? m1(tempSum / tempN) : "",
+        waterTemp: surfaceTemp,
         bottomTemp,
         mix: o2,
         cns: extras.cns,
@@ -780,7 +817,6 @@ function parseRatioXml(xml, fileName) {
         circuitOpen: open,
         circuitClosed: closed,
         regulator: circuitName,
-        seaConditions: waterName,
         instruments: model,
         sourceComputer: "ratio-ix3m",
         profilePoints,
@@ -1423,7 +1459,7 @@ function parseSuuntoDeviceLog(root) {
       timeOut: dt.time && mins ? addMinutes(dt.time, mins) : "",
       maxDepth: maxM ? String(Math.round(maxM * 10) / 10) : pts.length ? String(Math.max(...pts.map((p) => p.d))) : "",
       avgDepth: extras.avgDepth,
-      plannedDepth: maxM ? String(Math.round(maxM * 10) / 10) : "",
+      plannedDepth: "",
       bottomTime: mins,
       totalTime: mins,
       surfaceInterval,
@@ -2143,7 +2179,7 @@ const FIT_IT = {
   recovery_time: "Recupero",
   peak_epoc: "EPOC",
   surface_time: "Tempo superficie",
-  dive_number_in_series: "N° in serie",
+  dive_number_in_series: "N° nella serie",
   ndl: "NDL",
   tts: "TTS",
   helium: "Elio",
@@ -2168,6 +2204,9 @@ function catalogDump(cat, extra) {
     if (v == null || v === "") return;
     if (all[k] == null) all[k] = String(v);
   });
+  // Codici interni che ripetono una voce già scritta in chiaro (es. "Modo immersione: 3" accanto a "Modo: Air").
+  if (all.Modo && /^\d+$/.test(String(all["Modo immersione"] || ""))) delete all["Modo immersione"];
+  if (all["Prof. max"] && all["Profondità"] && parseFloat(all["Profondità"]) === parseFloat(all["Prof. max"])) delete all["Profondità"];
   return all;
 }
 
@@ -2799,8 +2838,8 @@ function parseFitBlock(bytes, origin) {
     const o2 = bag.gases[0] != null ? o2Percent(bag.gases[0]) : mode === "Air" ? "21" : "";
     const water =
       temps.length ? String(Math.round(Math.min(...temps) * 10) / 10) : tempC(s.minTemp || s.avgTemp || s.maxTemp);
-    const airCands = use.filter((x) => !(x.depth > 1.2) && x.temp != null).map((x) => x.temp);
-    const air = airCands.length ? String(airCands[0]) : tempC(s.maxTemp);
+    // Il FIT non ha la temperatura dell'aria: i campioni vicino alla superficie sono acqua. Si lascia vuota.
+    const air = "";
     const last = use[use.length - 1] || {};
     const deep = use.reduce((a, x) => ((x.depth || 0) > (a.depth || 0) ? x : a), use[0] || {});
     const bottomTemp = deep?.temp != null ? String(deep.temp) : water;
@@ -2955,6 +2994,8 @@ function parseFitBlock(bytes, origin) {
       (ceiling > 0.3 && ceiling < 120) ||
       (decoTime > 0 && decoTime < 400) ||
       Number(hang) > 5;
+    // Fuori curva calcolato: un "NDL residuo" accanto sarebbe una contraddizione.
+    if (extras.deco && !extras.ndlFromFile) extras.ndl = "";
     extras.all = catalogDump(bag.catalog, {
       Computer: brand,
       "Prof. max": maxM ? maxM + " m" : "",
@@ -2967,16 +3008,17 @@ function parseFitBlock(bytes, origin) {
       SAC: extras.sacFit ? extras.sacFit + " L/min" : "",
       "Press. inizio": pStart ? pStart + " bar" : "",
       "Press. fine": pEnd ? pEnd + " bar" : "",
-      Bombola: tankL ? tankL + " L" : "",
+      Bombola: tankL && !extras.tankAssumed ? tankL + " L" : "", // 15 L presunta: non è un dato del computer
       "Temp. fondo": water ? water + " °C" : "",
-      "Temp. acqua": bottomTemp ? bottomTemp + " °C" : "",
+      "Temp. acqua": surfaceWaterTemp(profilePoints) ? surfaceWaterTemp(profilePoints) + " °C" : "",
+      "Temp. a prof. max": bottomTemp ? bottomTemp + " °C" : "",
       Risalita: ascentRate ? ascentRate + " m/min" : "",
       "Risalita max": ascentMax ? ascentMax + " m/min" : "",
       "FC media": hrAvg ? hrAvg + " bpm" : "",
       "FC max": hrMax ? hrMax + " bpm" : "",
       NDL: extras.ndl !== "" && extras.ndl != null ? extras.ndl + " min" : "",
       "Int. superficie": extras.surfaceInterval ? extras.surfaceInterval + " min" : "",
-      "Fuori curva": extras.deco ? "Sì" : "No",
+      "Fuori curva": extras.deco ? (extras.ndlFromFile ? "Sì" : "Sì (calcolato)") : extras.ndlFromFile ? "No" : "No (calcolato)",
       Circuito: /ccr/i.test(mode) ? "Circuito chiuso" : "Circuito aperto",
       GF: extras.gf,
       TTS: extras.tts,
@@ -2991,14 +3033,14 @@ function parseFitBlock(bytes, origin) {
         timeOut: timeIn && mins ? addMinutes(timeIn, mins) : "",
         maxDepth: maxM ? String(maxM) : "",
         avgDepth: avgM ? String(avgM) : "",
-        plannedDepth: maxM ? String(maxM) : "",
+        plannedDepth: "", // la profondità programmata non è nel file: non è la massima raggiunta
         bottomTime: fondo,
         totalTime: mins,
         surfaceInterval: surfaceMin,
         safetyStop: hang || (maxM >= 10 ? "3" : ""),
-        waterTemp: bottomTemp,
+        waterTemp: surfaceWaterTemp(profilePoints) || bottomTemp,
         bottomTemp: water,
-        airTemp: air && air !== water ? air : air || "",
+        airTemp: air,
         cns: extras.cns !== "" && extras.cns != null ? String(extras.cns) : "",
         otu: extras.otu !== "" && extras.otu != null ? String(extras.otu) : "",
         tss: extras.tss !== "" && extras.tss != null ? String(extras.tss) : "",
@@ -3025,28 +3067,7 @@ function parseFitBlock(bytes, origin) {
         feeling: s.feeling >= 1 && s.feeling <= 5 ? s.feeling : 0,
         profilePoints,
         computerLog: extras,
-        notes: [
-          s.description ? String(s.description) : "",
-          extras.avgDepth ? `prof. media ${extras.avgDepth} m` : "",
-          extras.mode ? `modo ${extras.mode}` : "",
-          extras.cns !== "" && extras.cns != null ? `CNS ${extras.cns}%` : "",
-          extras.otu !== "" && extras.otu != null ? `OTU ${extras.otu}` : "",
-          extras.tss !== "" && extras.tss != null ? `TSS ${extras.tss}` : "",
-          extras.sacFit ? `SAC ${extras.sacFit} L/min` : "",
-          ascentRate ? `risalita ${ascentRate} m/min` : "",
-          extras.gf ? `GF ${extras.gf}` : "",
-          extras.ndl !== "" && extras.ndl != null
-            ? extras.ndlFromFile
-              ? `NDL ${extras.ndl} min`
-              : `NDL ${extras.ndl} min (Bühlmann 16 GF)`
-            : "",
-          extras.deco ? "fuori curva" : "in curva",
-          extras.diveNumber ? `n° serie ${extras.diveNumber}` : "",
-          hang ? `sosta ${hang} min` : "",
-          extras.samples ? `${extras.samples} campioni profilo` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        notes: s.description ? String(s.description) : "",
       })
     );
   };
