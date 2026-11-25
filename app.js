@@ -6753,12 +6753,13 @@ function repairDiveDefaults(d) {
    - Note: il riassunto tecnico ("prof. media … · 312 campioni profilo"), già presente nei dati del computer;
    - Prof. programmata uguale alla massima; Aria = acqua vicino alla superficie; Acqua = temperatura sul fondo;
    - "NDL residuo" accanto a un fuori curva calcolato. */
-const OLD_FIT_NOTE = [/^prof\. media [\d.,]+ m$/, /^modo \S+$/, /^CNS [\d.,]+%$/, /^OTU [\d.,]+$/, /^TSS [\d.,]+$/, /^SAC [\d.,]+ L\/min$/,
-  /^risalita [\d.,]+ m\/min$/, /^GF \d+\/\d+$/, /^NDL [\d.,]+ min( \(Bühlmann 16 GF\))?$/, /^(fuori|in) curva$/, /^n° serie \d+$/,
-  /^sosta [\d.,]+ min$/, /^\d+ campioni profilo$/];
 
 function repairOldFitImport(d) {
   if (!d || d.importFix >= 2 || !/fit/i.test(String(d.sourceComputer || ""))) return false;
+  // Dentro la funzione: rememberCatalogFromDives() gira all'avvio, prima che le costanti più in basso esistano.
+  const OLD_FIT_NOTE = [/^prof\. media [\d.,]+ m$/, /^modo \S+$/, /^CNS [\d.,]+%$/, /^OTU [\d.,]+$/, /^TSS [\d.,]+$/, /^SAC [\d.,]+ L\/min$/,
+    /^risalita [\d.,]+ m\/min$/, /^GF \d+\/\d+$/, /^NDL [\d.,]+ min( \(Bühlmann 16 GF\))?$/, /^(fuori|in) curva$/, /^n° serie \d+$/,
+    /^sosta [\d.,]+ min$/, /^\d+ campioni profilo$/];
   const pts = (d.profilePoints || []).filter((p) => p && Number.isFinite(Number(p.d)));
   const log = d.computerLog || {};
   const parts = String(d.notes || "").split(" · ").map((x) => x.trim()).filter(Boolean);
@@ -6808,10 +6809,15 @@ function rememberCatalogFromDives() {
       d.lng = "";
       fixed = true;
     }
-    const oldImport = repairOldFitImport(d);
-    if (repairDiveDefaults(d) || oldImport) {
-      d.updatedAt = new Date().toISOString();
-      fixed = true;
+    // Una correzione automatica non deve mai impedire all'app di partire.
+    try {
+      const oldImport = repairOldFitImport(d);
+      if (repairDiveDefaults(d) || oldImport) {
+        d.updatedAt = new Date().toISOString();
+        fixed = true;
+      }
+    } catch (err) {
+      console.warn("Correzione automatica saltata", err);
     }
   });
   if (fixed) save(state);
