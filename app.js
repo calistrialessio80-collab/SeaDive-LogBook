@@ -1220,25 +1220,44 @@ async function vaultKeyMaterial(create) {
   return vaultKeyCache;
 }
 
+// "enc2" = compressa (gzip) e poi cifrata: profili del computer, firme e contatti pesano molto meno
+// nel limite gratuito di Firebase. "enc1" (senza compressione) resta leggibile per le copie vecchie.
+async function zipBytes(bytes, mode) {
+  const stream = new Blob([bytes]).stream().pipeThrough(mode === "unzip" ? new DecompressionStream("gzip") : new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 async function sealVault(text, km) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, km.key, new TextEncoder().encode(text));
-  return `enc1:${km.id}:${km.at}:${b64FromBytes(iv)}:${b64FromBytes(new Uint8Array(ct))}`;
+  let data = new TextEncoder().encode(text);
+  let tag = "enc1";
+  if (typeof CompressionStream === "function") {
+    try {
+      data = await zipBytes(data, "zip");
+      tag = "enc2";
+    } catch {
+      data = new TextEncoder().encode(text);
+    }
+  }
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, km.key, data);
+  return `${tag}:${km.id}:${km.at}:${b64FromBytes(iv)}:${b64FromBytes(new Uint8Array(ct))}`;
 }
 
 function vaultKeyIdOf(text) {
   const parts = String(text || "").split(":");
-  return parts[0] === "enc1" ? { id: parts[1], at: parts.slice(2, parts.length - 2).join(":") } : null;
+  return parts[0] === "enc1" || parts[0] === "enc2" ? { id: parts[1], at: parts.slice(2, parts.length - 2).join(":") } : null;
 }
 
 async function openVaultText(text, km) {
-  if (!String(text || "").startsWith("enc1:")) return String(text || "");
-  const parts = String(text).split(":");
+  const t = String(text || "");
+  if (!t.startsWith("enc1:") && !t.startsWith("enc2:")) return t;
+  const parts = t.split(":");
+  const zipped = parts[0] === "enc2";
   if (!km || parts[1] !== km.id) throw new Error("other-key");
   const ct = parts.pop();
   const iv = parts.pop();
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytesFromB64(iv) }, km.key, bytesFromB64(ct));
-  return new TextDecoder().decode(plain);
+  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytesFromB64(iv) }, km.key, bytesFromB64(ct)));
+  return new TextDecoder().decode(zipped ? await zipBytes(plain, "unzip") : plain);
 }
 
 function scheduleCloudVault(delay = 4000) {
@@ -1322,7 +1341,8 @@ async function pushCloudVault() {
     const fp = loadVaultFp();
     const payload = backupPayload();
     const mainJson = JSON.stringify(vaultMainPart(payload));
-    const mainFp = fastHash(mainJson);
+    // "z1|": copia compressa. Cambiando il prefisso tutto si rimanda una volta, già compresso.
+    const mainFp = fastHash("z1|" + mainJson);
     const dives = [];
     const diveIds = new Set();
     for (const d of payload.dives || []) {
@@ -1331,7 +1351,7 @@ async function pushCloudVault() {
       diveIds.add(id);
       // Impronta corta: quella completa (con foto e firme) supera i 200 caratteri ammessi dalle regole.
       // "p3": senza foto. Cambiando il prefisso tutte le immersioni si rimandano una volta, senza foto.
-      const f = fastHash("p3|" + diveFingerprint(d) + (d.photoAway ? "|a" : ""));
+      const f = fastHash("p3z1|" + diveFingerprint(d) + (d.photoAway ? "|a" : ""));
       if (fp.dives[id] !== f) dives.push({ id, fp: f, json: await sealVault(JSON.stringify(cloudDiveCopy(d)), km) });
     }
     const people = [];
@@ -1340,7 +1360,7 @@ async function pushCloudVault() {
       const id = vaultDocId(person?.id || personKey(person?.role, person?.name));
       personIds.add(id);
       const json = JSON.stringify(person);
-      const f = fastHash(json);
+      const f = fastHash("z1|" + json);
       if (fp.people[id] !== f) people.push({ id, fp: f, json: await sealVault(json, km) });
     }
     const removeDives = Object.keys(fp.dives).filter((id) => !diveIds.has(id));
@@ -6077,7 +6097,7 @@ function showUpdateBanner(reg) {
   document.body.append(box);
 }
 
-const APP_VERSION = "258";
+const APP_VERSION = "259";
 const COFFEE_URL = "https://buymeacoffee.com/seadive";
 const COFFEE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>`;
 
