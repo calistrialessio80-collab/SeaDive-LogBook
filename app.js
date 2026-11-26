@@ -706,6 +706,14 @@ function mergeDivePair(a, b) {
     base.photo = other.photo;
     delete base.photoCloud;
   }
+  // photoAway: la copia privata su Firebase non porta la foto, ma la foto c'è (sul telefono o su Drive).
+  // Una copia così non cancella mai la foto dell'altra.
+  if (!base.photo && base.photoAway && other.photo) {
+    base.photo = other.photo;
+    if (other.photoCloud) base.photoCloud = other.photoCloud;
+    else delete base.photoCloud;
+  }
+  if (base.photo) delete base.photoAway;
   if (primary.signSkipped) base.signSkipped = { ...primary.signSkipped };
   if (primary.contactGen) base.contactGen = { ...primary.contactGen };
   if (primary.sigMeta) base.sigMeta = { ...primary.sigMeta };
@@ -1180,22 +1188,12 @@ function vaultMainPart(payload) {
   return rest;
 }
 
-// Foto più leggera solo per la copia online (sul telefono resta quella originale).
-async function cloudDiveCopy(d) {
-  let copy = d;
-  if (d?.photo && String(d.photo).length > 150000) {
-    // Copia di riserva più leggera (1024 px, ~105 KB): sul telefono e su Drive la foto resta intera.
-    // Così nel limite gratuito di 1 GB di Firebase entrano quasi il doppio delle immersioni con foto.
-    // Se proprio non entra nel limite di un documento (1 MB), la foto resta solo sul telefono e su Drive.
-    for (const [side, limit] of [[1024, 110000], [800, 75000], [640, 50000]]) {
-      const small = await shrinkPhoto(d.photo, side, limit).catch(() => "");
-      // photoCloud = impronta della foto ridotta: dice che è la copia leggera, non l'originale.
-      if (small) copy = { ...d, photo: small, photoCloud: fastHash(small) };
-      if (small && small.length <= limit * 1.6) break;
-    }
-  }
-  if (JSON.stringify(copy).length > 650000) copy = { ...copy, photo: "" };
-  return copy;
+// La copia online non porta le foto delle immersioni: restano sul telefono e su Drive.
+// Così nel limite gratuito di 1 GB di Firebase entrano migliaia di diari invece di un centinaio.
+// photoAway dice "la foto c'è, ma non qui", così la copia online non la cancella dagli altri telefoni.
+function cloudDiveCopy(d) {
+  const { photo, photoCloud, photoAway, ...rest } = d || {};
+  return photo || photoAway ? { ...rest, photo: "", photoAway: true } : { ...rest, photo: "" };
 }
 
 /* La copia online è cifrata. La chiave nasce sul telefono e viaggia solo dentro la copia su Drive
@@ -1332,9 +1330,9 @@ async function pushCloudVault() {
       const id = vaultDocId(d.id);
       diveIds.add(id);
       // Impronta corta: quella completa (con foto e firme) supera i 200 caratteri ammessi dalle regole.
-      // "p2": foto a 1024 px. Cambiando il prefisso tutte le immersioni si rimandano una volta, già alleggerite.
-      const f = fastHash("p2|" + diveFingerprint(d));
-      if (fp.dives[id] !== f) dives.push({ id, fp: f, json: await sealVault(JSON.stringify(await cloudDiveCopy(d)), km) });
+      // "p3": senza foto. Cambiando il prefisso tutte le immersioni si rimandano una volta, senza foto.
+      const f = fastHash("p3|" + diveFingerprint(d) + (d.photoAway ? "|a" : ""));
+      if (fp.dives[id] !== f) dives.push({ id, fp: f, json: await sealVault(JSON.stringify(cloudDiveCopy(d)), km) });
     }
     const people = [];
     const personIds = new Set();
@@ -6079,7 +6077,7 @@ function showUpdateBanner(reg) {
   document.body.append(box);
 }
 
-const APP_VERSION = "257";
+const APP_VERSION = "258";
 const COFFEE_URL = "https://buymeacoffee.com/seadive";
 const COFFEE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>`;
 
@@ -12711,7 +12709,7 @@ function renderProfile() {
     <section class="profile-block vault-box">
       <h3>${uiIcon("cloud", 18)}Copia di sicurezza</h3>
       <p class="hint" data-vaultline>${escapeHtml(vaultStatusLine())}</p>
-      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna, anche dopo anni. Dopo ogni modifica si copia da solo nella copia privata cifrata; su Drive si copia quando tocchi Sincronizza o entri con Google. Esci salva su Drive e poi toglie il diario da questo telefono.</p>
+      <p class="hint">Se perdi il telefono, reinstalli SeaDive e accedi con lo stesso Google: il diario torna, anche dopo anni. Dopo ogni modifica si copia da solo nella copia privata cifrata, senza le foto; su Drive, foto comprese, si copia quando tocchi Sincronizza o entri con Google. Esci salva su Drive e poi toglie il diario da questo telefono.</p>
       ${homeScreenHint() ? `<p class="hint home-screen-hint">${escapeHtml(homeScreenHint())}</p>` : ""}
       <div class="vault-actions">
         <button class="btn primary" type="button" data-syncdrive>Sincronizza con Google</button>
@@ -13497,6 +13495,11 @@ function renderEdit() {
     const file = e.target.files?.[0];
     if (!file) return;
     d.photo = await compressImage(file);
+    delete d.photoAway;
+    // Le foto non vanno nella copia privata: finché non arrivano su Drive si chiede un tocco.
+    const meta = loadMeta();
+    meta.lastPhotoAt = new Date().toISOString();
+    saveMeta(meta);
     const preview = form.querySelector("[data-preview]");
     preview.src = d.photo;
     preview.hidden = false;
@@ -14332,6 +14335,8 @@ function backupNeedsUser() {
   // indipendente da Firebase) si chiede un tocco al massimo una volta al mese.
   const vaultFresh = useFirebase() && meta.cloudVaultAt && meta.cloudVaultAt >= (meta.lastChangeAt || "");
   if (!vaultFresh) return true;
+  // Le foto delle immersioni stanno solo sul telefono e su Drive: una foto nuova va copiata su Drive.
+  if (meta.lastPhotoAt && String(meta.lastBackup || "") < meta.lastPhotoAt) return true;
   // La chiave della copia online deve essere arrivata su Drive almeno una volta.
   if (state.profile?.vaultKey?.id && meta.vaultKeyOnDrive !== state.profile.vaultKey.id) return true;
   const last = new Date(meta.lastBackup || 0).getTime();
