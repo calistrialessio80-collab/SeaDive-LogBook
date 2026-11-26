@@ -6097,7 +6097,7 @@ function showUpdateBanner(reg) {
   document.body.append(box);
 }
 
-const APP_VERSION = "259";
+const APP_VERSION = "260";
 const COFFEE_URL = "https://buymeacoffee.com/seadive";
 const COFFEE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 9h11v5.2A4.2 4.2 0 0 1 11.8 18H9.2A4.2 4.2 0 0 1 5 14.2V9z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 10.2h1.6a2.4 2.4 0 0 1 0 4.8H16"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 5.4c.5.6.5 1.1 0 1.8M11.2 5.4c.5.6.5 1.1 0 1.8"/></svg>`;
 
@@ -6997,7 +6997,6 @@ function topbar(subtitle, mode) {
       <div class="home-brand">
         <h1>SeaDive <small>LogBook</small></h1>
         <p>di ${escapeHtml(who || "te")}</p>
-        <p class="hint">Versione ${APP_VERSION}</p>
       </div>
       <div class="home-tools">
         <button class="icon-btn" type="button" data-act="search" aria-label="Cerca">
@@ -8962,8 +8961,13 @@ function renderHome() {
   frag.append(rate);
   // Privacy e termini sempre raggiungibili in fondo alla Home (nella schermata di caricamento passano troppo veloci).
   const legal = document.createElement("p");
-  legal.className = "home-legal";
-  legal.innerHTML = `<a href="./privacy.html">Informativa privacy</a> · <a href="./termini.html">Termini di servizio</a>`;
+  // Firma in fondo alla home: nome dell'app, copyright, privacy e termini, versione.
+  legal.className = "home-foot";
+  legal.innerHTML = `
+    <div class="home-foot-wave" aria-hidden="true"><svg width="22" height="10" viewBox="0 0 22 10"><path d="M1 6c2.5-4 5-4 7 0s4.5 4 7 0 4.5-4 6 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+    <p class="home-foot-name">SeaDive LogBook</p>
+    <p class="home-foot-copy">© ${new Date().getFullYear()} Alessio Calistri · Tutti i diritti riservati</p>
+    <p class="home-foot-links"><a href="./privacy.html">Privacy</a><span aria-hidden="true">·</span><a href="./termini.html">Termini</a><span class="home-foot-ver">v${APP_VERSION}</span></p>`;
   frag.append(legal);
   return frag;
 }

@@ -273,8 +273,16 @@ body .splash .splash-about h1 { margin: 6px 0 14px; font-family: Fraunces, Georg
   text-align: center; font-size: 13px; color: rgba(255, 255, 255, 0.75); text-shadow: 0 1px 8px rgba(2, 16, 24, 0.8);
 }
 .splash .splash-legal a, .splash .splash-legal a:visited { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-.home-legal { margin: 18px 0 8px; text-align: center; font-size: 13px; color: rgba(255, 255, 255, 0.7); }
-.home-legal a, .home-legal a:visited { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.home-foot { margin: 26px 0 6px; text-align: center; color: rgba(255, 255, 255, 0.55); }
+.home-foot p { margin: 0; }
+.home-foot-wave { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 10px; color: rgba(120, 210, 235, 0.7); }
+.home-foot-wave::before, .home-foot-wave::after { content: ""; flex: 0 0 70px; height: 1px; background: linear-gradient(90deg, transparent, rgba(120, 210, 235, 0.45), transparent); }
+.home-foot-wave svg { display: block; }
+.home-foot-name { font-size: 11px; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; color: rgba(255, 255, 255, 0.8); }
+.home-foot-copy { margin-top: 4px !important; font-size: 11.5px; }
+.home-foot-links { margin-top: 8px !important; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px; }
+body .home-foot .home-foot-links a, body .home-foot .home-foot-links a:visited { color: rgba(255, 255, 255, 0.6); text-decoration: none; padding: 4px 2px; }
+.home-foot-ver { padding: 1px 8px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 99px; font-size: 10px; color: rgba(255, 255, 255, 0.5); }
 
 h1, h2, h3, .serif { font-family: Outfit, system-ui, sans-serif; font-weight: 700; }
 button, input, textarea, select { font-family: inherit; }
@@ -3032,7 +3040,6 @@ body.page-people .community-page {
   .space-scene, .earth, .earth-flag { animation: none; }
 }
 .home-all { margin-top: 10px; }
-body .home-brand p.hint { font-size: 11px; opacity: 0.55; letter-spacing: 0.02em; margin-top: 4px; }
 .home-stats .kpi-chart .year-chart { margin-top: 16px; }
 .kpi p span svg { display: block; opacity: 0.75; }
 .home-stats .kpi em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }body.page-home .app-rate {
